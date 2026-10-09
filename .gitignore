@@ -1,0 +1,34 @@
+# Dependencies and generated builds
+/node_modules/
+/dist/
+/dist-desktop/
+/release/
+/artifacts/
+/work/
+/resources/runtime/
+/data/
+.idea/
+*.log
+.vite/
+
+# Local credentials, signing keys and editor state
+.env
+.env.*
+!.env.example
+*.p12
+*.pfx
+*.jks
+*.keystore
+ai-settings.json
+.studio/
+.workbuddy-ai/
+
+# Project recovery files and runtime caches
+*.vns.json.*
+__pycache__/
+*.pyc
+cache/
+saves/
+.DS_Store
+Thumbs.db
+desktop.ini

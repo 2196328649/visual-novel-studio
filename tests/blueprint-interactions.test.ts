@@ -1,0 +1,106 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createProject, projectSchema } from '../src/core/model';
+import { blueprintNodeDefaults, blueprintPin, createBlueprintGraph, synchronizeBlueprintSignatures } from '../src/core/blueprint';
+import { blueprintCallName, renameBlueprint } from '../src/core/blueprint-names';
+import { addInteractionBlueprintExample, addParallelMotionExample } from '../src/core/blueprint-examples';
+import { actionText, applyTextScript, projectToText, textCommandAction } from '../src/core/text-script';
+import { editTextDocument, refreshTextReferenceNames, textDocument } from '../src/core/text-document';
+import { textAssistance } from '../src/core/text-completion';
+import { initialPreviewStage, linePlaybackPlan } from '../src/core/line-preview';
+import { expandPreviewActions, previewActionContext } from '../src/core/preview-actions';
+import { validateBlueprints } from '../src/core/blueprint-validation';
+import { compileProject } from '../src/runtime/compiler';
+
+function fixture() {
+  const project = createProject();
+  const graph = createBlueprintGraph('effect', '夜雨入场');
+  graph.id = 'night_entry'; graph.exposedInputs = [blueprintPin('seconds', '时长', 'input', 'number', 1), blueprintPin('caption', '文字', 'input', 'string', '')];
+  project.blueprints.push(graph); return { project, graph };
+}
+test('named blueprint commands preserve stable identity, typed arguments and hidden references', () => {
+  const { project, graph } = fixture(); graph.callName = '入场演出';
+  const action = textCommandAction(project, '@入场演出：时长=2，文字="雨，停了"', true)!;
+  assert.deepEqual(action, { kind: 'blueprint', blueprintId: graph.id, inputs: { seconds: 2, caption: '雨，停了' } });
+  const raw = actionText(project, action), document = textDocument(raw);
+  assert.equal(document.text, '@入场演出：时长=2，文字="雨，停了"');
+  assert.deepEqual(textCommandAction(project, raw, true), action);
+  const edit = editTextDocument(document, { start: document.text.indexOf('2'), end: document.text.indexOf('2') + 1, text: '12' });
+  assert.match(edit, /入场演出【night_entry】/); assert.match(edit, /时长【seconds】=12/);
+  graph.name = 'Night Entry'; graph.callName = undefined;
+  assert.equal(textCommandAction(project, '@Night Entry')?.kind, 'blueprint');
+  assert.equal(textDocument(actionText(project, { kind: 'blueprint', blueprintId: graph.id })).text, '@Night Entry');
+});
+test('blueprint rename rewrites calls, including unbound text, without rewriting dialogue', () => {
+  const { project, graph } = fixture();
+  const nested = blueprintNodeDefaults('sceneAction'); nested.properties.command = '@夜雨入场：时长=3'; graph.nodes.push(nested);
+  project.effects.push({ id: 'rain_effect', name: '雨', commands: ['@蓝图：夜雨入场，时长=4'] });
+  project.scriptText = { format: 'vns-text-1', content: "#章节：雨\n#小章节：夜\n#段落：开始\n@夜雨入场：时长=2\n@夜雨入场【night_entry】\n旁白：夜雨入场，这是对白。\n@返回标题界面" };
+  renameBlueprint(project, graph.id, { name: '雨幕' });
+  assert.equal(blueprintCallName(graph), '雨幕');
+  assert.equal((project.scriptText.content.match(/@雨幕【night_entry】/g) ?? []).length, 2);
+  assert.match(project.scriptText.content, /旁白：夜雨入场，这是对白。/);
+  assert.equal(project.effects[0].commands[0], '@雨幕【night_entry】：时长=4');
+  assert.equal(nested.properties.command, '@雨幕【night_entry】：时长=3');
+  renameBlueprint(project, graph.id, { callName: '镜头入场' });
+  assert.equal(graph.name, '雨幕'); assert.match(project.scriptText.content, /@镜头入场【night_entry】/);
+  const result = applyTextScript(project, project.scriptText.content);
+  assert.deepEqual(result.issues.filter(issue => issue.severity === 'error'), []);
+  assert.equal(refreshTextReferenceNames(project, '@雨幕【night_entry】'), '@镜头入场【night_entry】');
+  const before = structuredClone(project);
+  for (const callName of ['背景', '背景音乐', '播放台词演出', '复用节点']) assert.throws(() => renameBlueprint(project, graph.id, { callName }), /基础指令/);
+  assert.deepEqual(project, before);
+});
+test('direct commands complete by Chinese initials, then provide typed named parameters', () => {
+  const { project, graph } = fixture(); graph.callName = '镜头入场';
+  const command = textAssistance(project, '@jtrc', 5)!;
+  assert.equal(command.items[0].label, '镜头入场'); assert.equal(command.items[0].kind, '蓝图'); assert.equal(command.items[0].group, '项目演出');
+  const parameter = textAssistance(project, '@镜头入场：s', 7)!;
+  assert.equal(parameter.items[0].label, '时长'); assert.equal(parameter.parameterIndex, 0);
+  assert.deepEqual(textAssistance(project, '@镜头入场：时长=', 9, true)?.items.map(item => item.insertText), ['1', '0', '0.5']);
+  const choices = textAssistance(project, '@', 1)!;
+  assert.equal(choices.items.find(item => item.label === '跳转')?.group, '基础');
+  assert.equal(choices.items.find(item => item.label === '显示角色')?.group, '基础');
+});
+test('a callable graph builds a playable UI game with mouse, key, timer and result', () => {
+  const project = createProject(), sample = addInteractionBlueprintExample(project);
+  assert.equal(project.minigames.length, 0); assert.equal(project.blueprints[0].kind, 'function');
+  assert.equal(project.ui.customPages[0].id, sample.pageId);
+  assert.equal(project.blueprints[0].nodes.filter(node => node.type.startsWith('event')).length, 5);
+  assert.deepEqual(validateBlueprints(project), []);
+  const source = projectToText(project), parsed = applyTextScript(project, source);
+  assert.deepEqual(parsed.issues, []);
+  const compiled = compileProject(project);
+  assert.deepEqual(compiled.diagnostics.filter(issue => issue.severity === 'error'), []);
+  assert.match(compiled.files['game/screens.rpy'], /key "K_SPACE" action \[Function\(vn_run_blueprint/);
+  assert.match(compiled.files['game/screens.rpy'], /timer 1 repeat True action Function\(vn_run_blueprint/);
+  assert.match(compiled.files['game/story.rpy'], /renpy.random.uniform/);
+  assert.match(compiled.files['game/story.rpy'], /vn_ui_open_page\(/);
+  assert.match(compiled.files['game/story.rpy'], /vn_ui_close_page\(/);
+  const timer = project.blueprints[0].nodes.find(node => node.type === 'eventTimer')!; timer.properties.interval = 0;
+  assert.ok(validateBlueprints(project).some(issue => issue.nodeId === timer.id && issue.message.includes('大于 0')));
+});
+test('authored camera and layout numbers survive parsing, saving and compilation beyond old bounds', () => {
+  const project = createProject();
+  project.characters = [{ id: 'actor', name: '穗', color: '#ffffff', expressions: [{ id: 'normal', name: '通常', assetId: 'portrait' }] }];
+  project.assets = [{ id: 'portrait', name: '立绘', kind: 'image', path: 'portrait.png' }];
+  const camera = textCommandAction(project, '@镜头：-3，2，8，120，720，匀速，否', true)!;
+  assert.deepEqual(camera, { kind: 'camera', x: -3, y: 2, zoom: 8, duration: 120, rotation: 720, easing: 'linear', wait: false });
+  const show = textCommandAction(project, '@显示角色：穗，通常，-2，5，3，-10', true)!;
+  const passage = project.nodes.find(node => node.kind === 'passage')!; passage.lines[0].actions = [show, camera];
+  project.ui.customPages.push({ id: 'free_ui', name: '自由布局', modal: false, components: [{ id: 'offscreen', kind: 'text', page: 'custom', text: '自由', x: -2, y: 3, width: 2, height: 2, layer: 5000 }] });
+  assert.equal(projectSchema.safeParse(project).success, true);
+  assert.deepEqual(textCommandAction(project, actionText(project, camera), true), camera);
+  assert.deepEqual(compileProject(project).diagnostics.filter(issue => issue.severity === 'error'), []);
+});
+test('nonblocking camera and shake start together in the preview and use independent native transforms', () => {
+  const project = createProject(), id = addParallelMotionExample(project); synchronizeBlueprintSignatures(project);
+  const context = previewActionContext(project), actions = expandPreviewActions(project, [{ kind: 'blueprint', blueprintId: id }], context);
+  const plan = linePlaybackPlan(initialPreviewStage(), actions);
+  assert.equal(context.incomplete, false); assert.equal(plan.steps.length, 2);
+  assert.deepEqual(plan.steps.map(step => step.at), [0, 0]); assert.equal(plan.dialogueAt, 1000);
+  const compiled = compileProject(project);
+  assert.deepEqual(compiled.diagnostics.filter(issue => issue.severity === 'error'), []);
+  assert.match(compiled.files['game/story.rpy'], /camera master at vn_blueprint_camera/);
+  assert.match(compiled.files['game/story.rpy'], /show layer master at vn_blueprint_shake/);
+});

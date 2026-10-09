@@ -1,0 +1,426 @@
+/**
+ * Design Tokens - 叙事工坊设计系统
+ *
+ * 这个文件定义了编辑器的所有设计令牌（Design Tokens）
+ * 包括颜色、字体、间距、圆角、阴影等视觉元素
+ *
+ * 使用方法：在其他 CSS 文件中通过 var(--token-name) 引用
+ */
+
+:root {
+  /* ========================================
+     色彩系统 - Color System
+     ======================================== */
+
+  /* --- 表面层级 Surface Ladder --- */
+  /* 从深到浅的 7 层表面，每层亮度递增 2-3%，确保可感知的视觉层次 */
+  --surface-canvas: #05070c;      /* L: 3%  - 最深层：画布背景、节点编辑器 */
+  --surface-sunken: #0a0d12;      /* L: 5%  - 下沉层：输入框内部 */
+  --surface-base: #0f131c;        /* L: 7%  - 基础层：侧边栏、工具栏 */
+  --surface-raised: #161d2b;      /* L: 10% - 抬升层：卡片、按钮 */
+  --surface-overlay: #1e2636;     /* L: 13% - 悬浮层：悬停状态 */
+  --surface-dialog: #242d3d;      /* L: 16% - 对话框层：模态窗口 */
+  --surface-peak: #2a3544;        /* L: 18% - 最高层：工具提示、下拉菜单 */
+
+  /* --- 主题色 Accent Colors --- */
+  /* 明亮青色：代表专注、创造力、平静 */
+  --accent-primary: #38bdf8;      /* 主要强调色 - 按钮、链接、选中状态 */
+  --accent-hover: #0ea5e9;        /* 悬停状态 - 比主色深 10% */
+  --accent-active: #0284c7;       /* 激活状态 - 比主色深 20% */
+  --accent-muted: #2a7a8f;        /* 柔和版本 - 禁用或次要元素 */
+  --accent-surface: #1a3a47;      /* 背景版本 - 强调区域背景 */
+  --accent-ghost: rgba(56, 189, 248, 0.12); /* 半透明版本 - 悬停、选中背景 */
+  --accent-border: rgba(56, 189, 248, 0.3); /* 边框版本 */
+  --accent-glow: rgba(56, 189, 248, 0.2);   /* 发光效果 */
+
+  /* --- 语义色 Semantic Colors --- */
+  --success: #6ee7b7;             /* 成功：翡翠绿 */
+  --success-surface: #1a3a30;     /* 成功背景 */
+  --warning: #fbbf24;             /* 警告：琥珀黄 */
+  --warning-surface: #3a3220;     /* 警告背景 */
+  --error: #f87171;               /* 错误：珊瑚红 */
+  --error-surface: #3a2020;       /* 错误背景 */
+  --info: #60a5fa;                /* 信息：天蓝色 */
+  --info-surface: #1a2a3a;        /* 信息背景 */
+
+  /* --- 文本颜色 Text Colors --- */
+  --text-primary: #e5e7eb;        /* 主要文本：高对比度 */
+  --text-secondary: #9ca3af;      /* 次要文本：中对比度 */
+  --text-tertiary: #6b7280;       /* 辅助文本：低对比度 */
+  --text-disabled: #4b5563;       /* 禁用文本：最低对比度 */
+  --text-accent: #38bdf8;         /* 强调文本：主题色 */
+  --text-on-accent: #05070c;      /* 强调色上的文本：深色 */
+  --text-success: #6ee7b7;        /* 成功文本 */
+  --text-warning: #fbbf24;        /* 警告文本 */
+  --text-error: #f87171;          /* 错误文本 */
+
+  /* --- 边界与分隔 Borders --- */
+  --border-subtle: #1f2937;       /* 轻微分隔：低对比度边框 */
+  --border-default: #374151;      /* 默认边框：中对比度 */
+  --border-emphasis: #4b5563;     /* 强调边框：高对比度 */
+  --border-focus: var(--accent-primary); /* 焦点边框：主题色 */
+  --border-error: var(--error);   /* 错误边框 */
+
+  /* ========================================
+     字体系统 - Typography System
+     ======================================== */
+
+  /* --- 字体族 Font Families --- */
+  --font-sans: "Segoe UI", "Microsoft YaHei UI", "PingFang SC", -apple-system, system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", "Cascadia Code", "Consolas", "Courier New", "Microsoft YaHei UI", monospace;
+
+  /* --- 流式字阶 Fluid Type Scale --- */
+  /* 使用 clamp() 实现响应式字号，自动适配不同屏幕尺寸 */
+  --text-xs: clamp(0.75rem, 0.7rem + 0.2vw, 0.875rem);    /* 12-14px - 极小文字 */
+  --text-sm: clamp(0.875rem, 0.825rem + 0.25vw, 1rem);    /* 14-16px - 小文字 */
+  --text-base: clamp(1rem, 0.95rem + 0.25vw, 1.125rem);   /* 16-18px - 正文 */
+  --text-lg: clamp(1.125rem, 1.05rem + 0.375vw, 1.375rem); /* 18-22px - 大标题 */
+  --text-xl: clamp(1.25rem, 1.15rem + 0.5vw, 1.625rem);   /* 20-26px - 特大标题 */
+  --text-2xl: clamp(1.5rem, 1.35rem + 0.75vw, 2rem);      /* 24-32px - 超大标题 */
+
+  /* --- 行高 Line Heights --- */
+  --leading-none: 1;              /* 无行高：图标、单行标题 */
+  --leading-tight: 1.25;          /* 紧凑：多行标题 */
+  --leading-snug: 1.375;          /* 舒适：按钮、标签 */
+  --leading-normal: 1.5;          /* 标准：正文 */
+  --leading-relaxed: 1.625;       /* 宽松：长文本 */
+  --leading-loose: 1.75;          /* 松散：说明文字 */
+
+  /* --- 字重 Font Weights --- */
+  --font-normal: 400;             /* 正常：正文 */
+  --font-medium: 500;             /* 中等：按钮 */
+  --font-semibold: 600;           /* 半粗：小标题 */
+  --font-bold: 700;               /* 粗体：大标题 */
+
+  /* --- 字偶距 Letter Spacing --- */
+  /* 针对中文优化的字距 */
+  --tracking-tight: -0.02em;      /* 紧凑：大标题 */
+  --tracking-normal: 0;           /* 标准：正文 */
+  --tracking-wide: 0.02em;        /* 宽松：小字、全大写 */
+
+  /* ========================================
+     间距系统 - Spacing System
+     ======================================== */
+
+  /* 基于 4px 网格的间距系统，确保视觉节奏一致 */
+  --space-0: 0;                   /* 0px */
+  --space-1: 0.25rem;             /* 4px - 极小间距 */
+  --space-2: 0.5rem;              /* 8px - 紧凑间距 */
+  --space-3: 0.75rem;             /* 12px - 标准间距 */
+  --space-4: 1rem;                /* 16px - 舒适间距 */
+  --space-5: 1.25rem;             /* 20px - 宽松间距 */
+  --space-6: 1.5rem;              /* 24px - 章节间距 */
+  --space-7: 1.75rem;             /* 28px */
+  --space-8: 2rem;                /* 32px - 区块间距 */
+  --space-10: 2.5rem;             /* 40px - 大区块间距 */
+  --space-12: 3rem;               /* 48px - 巨大间距 */
+  --space-16: 4rem;               /* 64px - 超大间距 */
+
+  /* ========================================
+     圆角系统 - Border Radius
+     ======================================== */
+
+  /* 简化的 4 级圆角系统 */
+  --radius-none: 0;               /* 无圆角：直角元素 */
+  --radius-sm: 0.25rem;           /* 4px - 小圆角：按钮、输入框 */
+  --radius-md: 0.5rem;            /* 8px - 中圆角：卡片、面板 */
+  --radius-lg: 0.75rem;           /* 12px - 大圆角：对话框、模态 */
+  --radius-xl: 1rem;              /* 16px - 超大圆角 */
+  --radius-full: 999px;           /* 完整圆形：头像、标记 */
+
+  /* ========================================
+     阴影系统 - Box Shadows
+     ======================================== */
+
+  /* 5 级阴影，模拟不同高度的悬浮效果 */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+  --shadow-xl: 0 24px 48px rgba(0, 0, 0, 0.7);
+  --shadow-2xl: 0 32px 64px rgba(0, 0, 0, 0.8);
+
+  /* 特殊阴影 */
+  --shadow-inner: inset 0 2px 4px rgba(0, 0, 0, 0.3); /* 内阴影：下沉效果 */
+  --shadow-focus: 0 0 0 3px var(--accent-glow);        /* 焦点阴影：发光轮廓 */
+  --shadow-focus-error: 0 0 0 3px rgba(248, 113, 113, 0.2); /* 错误焦点 */
+
+  /* ========================================
+     过渡动画 - Transitions
+     ======================================== */
+
+  /* 标准过渡时长 */
+  --duration-instant: 0ms;        /* 即时：无动画 */
+  --duration-fast: 100ms;         /* 快速：微交互 */
+  --duration-normal: 150ms;       /* 标准：按钮、链接 */
+  --duration-slow: 200ms;         /* 慢速：面板展开 */
+  --duration-slower: 300ms;       /* 更慢：模态窗口 */
+
+  /* 缓动函数 */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+
+  /* 标准过渡 */
+  --transition-fast: all var(--duration-fast) var(--ease-out);
+  --transition-normal: all var(--duration-normal) var(--ease-out);
+  --transition-slow: all var(--duration-slow) var(--ease-out);
+
+  /* ========================================
+     层级系统 - Z-Index
+     ======================================== */
+
+  /* 固定的 z-index 层级，避免混乱 */
+  --z-base: 0;                    /* 基础层 */
+  --z-dropdown: 10;               /* 下拉菜单 */
+  --z-sticky: 20;                 /* 吸附元素 */
+  --z-overlay: 30;                /* 遮罩层 */
+  --z-modal: 40;                  /* 模态窗口 */
+  --z-popover: 50;                /* 弹出层 */
+  --z-tooltip: 60;                /* 工具提示 */
+  --z-notification: 70;           /* 通知 */
+
+  /* ========================================
+     尺寸系统 - Sizes
+     ======================================== */
+
+  /* 组件尺寸 */
+  --size-icon-sm: 16px;           /* 小图标 */
+  --size-icon-md: 20px;           /* 中图标 */
+  --size-icon-lg: 24px;           /* 大图标 */
+  --size-icon-xl: 32px;           /* 超大图标 */
+
+  /* 控件高度 */
+  --height-input: 36px;           /* 输入框 */
+  --height-button: 36px;          /* 按钮 */
+  --height-toolbar: 48px;         /* 工具栏 */
+  --height-header: 56px;          /* 头部 */
+
+  /* 面板宽度 */
+  --width-sidebar: 240px;         /* 侧边栏 */
+  --width-inspector: 280px;       /* 属性面板 */
+  --width-panel-sm: 200px;        /* 小面板 */
+  --width-panel-lg: 320px;        /* 大面板 */
+
+  /* ========================================
+     断点系统 - Breakpoints
+     ======================================== */
+
+  /* 响应式断点（仅用于媒体查询） */
+  --breakpoint-sm: 640px;         /* 小屏幕 */
+  --breakpoint-md: 768px;         /* 平板 */
+  --breakpoint-lg: 1024px;        /* 笔记本 */
+  --breakpoint-xl: 1280px;        /* 桌面 */
+  --breakpoint-2xl: 1536px;       /* 大屏 */
+}
+
+/* ========================================
+   辅助类 - Utility Classes
+   ======================================== */
+
+/* 文本省略 */
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 视觉隐藏（保留给屏幕阅读器） */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* 禁用选择 */
+.select-none {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 过渡效果 */
+.transition {
+  transition: var(--transition-normal);
+}
+
+.transition-fast {
+  transition: var(--transition-fast);
+}
+
+/* ========================================
+   基础样式重置 - Base Resets
+   ======================================== */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--text-primary);
+  background: var(--surface-canvas);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 标题默认样式 */
+h1, h2, h3, h4, h5, h6 {
+  margin: 0;
+  font-weight: var(--font-semibold);
+  line-height: var(--leading-tight);
+  color: var(--text-primary);
+}
+
+/* 按钮默认样式重置 */
+button {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* 输入框默认样式 */
+input, select, textarea {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+
+/* 滚动条样式（Webkit） */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--surface-base);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-emphasis);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}
+
+/* 选中文本样式 */
+::selection {
+  background: var(--accent-ghost);
+  color: var(--text-primary);
+}
+
+/* 焦点样式 */
+*:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+/* ========================================
+   动画定义 - Keyframes
+   ======================================== */
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ========================================
+   响应式调整 - Responsive Adjustments
+   ======================================== */
+
+/* 小屏幕：缩小面板和间距 */
+@media (max-width: 1024px) {
+  :root {
+    --width-sidebar: 200px;
+    --width-inspector: 240px;
+    --space-base: 0.875rem; /* 14px */
+  }
+}
+
+/* 大屏幕：增大面板和间距 */
+@media (min-width: 1536px) {
+  :root {
+    --width-sidebar: 280px;
+    --width-inspector: 320px;
+  }
+}
+
+/* 高 DPI 屏幕：优化渲染 */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+  body {
+    -webkit-font-smoothing: subpixel-antialiased;
+  }
+}
+
+/* ========================================
+   打印样式 - Print Styles
+   ======================================== */
+
+@media print {
+  body {
+    background: white;
+    color: black;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}

@@ -1,0 +1,213 @@
+{
+  "source": {
+    "game": "TheLamentingGeese",
+    "unity": "2022.3.62f2c1",
+    "assets": "sharedassets0.assets",
+    "prefabPathId": 1402,
+    "particlePathId": 1430,
+    "assetsSha256": "ff1ced3fbfbb75dbaed59d2725decf5d0cf595124ec4e7ee9e020416b6dfc3ad",
+    "assemblySha256": "df9d9aa99719eb377ff9265ef9bd12b34d0593680c7e5330d8224e64321f6ade",
+    "methods": {
+      "setInfo": "0x437490",
+      "startParticles": "0x4350a0",
+      "defaultEase": "0x588555"
+    }
+  },
+  "timing": {
+    "duration": 7,
+    "move": 2,
+    "holdTitle": 0.5,
+    "disappear": 2,
+    "fadeIn": 2,
+    "holdBackground": 3,
+    "fadeOut": 2,
+    "fadeTarget": 1.100000023841858,
+    "ease": "outQuad",
+    "simulationSpeed": 1.5
+  },
+  "projection": {
+    "referenceWidth": 1920,
+    "referenceHeight": 1080,
+    "cameraOrthographicSize": 5.400000095367432,
+    "spritePixelsPerUnit": 100
+  },
+  "particle": {
+    "emissionDuration": 1.0,
+    "rate": 200.0,
+    "lifetime": 5.0,
+    "speedZ": 5.0,
+    "size": [
+      0.10000000149011612,
+      0.30000001192092896
+    ],
+    "alpha": [
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.285297932402533,
+        1.0
+      ],
+      [
+        0.7382314793621729,
+        1.0
+      ],
+      [
+        1.0,
+        0.0
+      ]
+    ],
+    "force": {
+      "x": {
+        "multiplier": 10.0,
+        "min": [
+          {
+            "time": 0.0,
+            "value": 0.0,
+            "inSlope": 0.0,
+            "outSlope": 0.0,
+            "weightedMode": 0,
+            "inWeight": 0.3333333432674408,
+            "outWeight": 0.3333333432674408
+          },
+          {
+            "time": 0.2362963855266571,
+            "value": -0.51810222864151,
+            "inSlope": -0.9256036281585693,
+            "outSlope": -0.9256036281585693,
+            "weightedMode": 0,
+            "inWeight": 0.3333333432674408,
+            "outWeight": 0.3333333432674408
+          },
+          {
+            "time": 1.0,
+            "value": -0.762237548828125,
+            "inSlope": 0.0,
+            "outSlope": 0.0,
+            "weightedMode": 0,
+            "inWeight": 0.3333333432674408,
+            "outWeight": 0.3333333432674408
+          }
+        ],
+        "max": [
+          {
+            "time": 0.0,
+            "value": 0.0,
+            "inSlope": 0.0,
+            "outSlope": 0.0,
+            "weightedMode": 0,
+            "inWeight": 0.3333333432674408,
+            "outWeight": 0.3333333432674408
+          },
+          {
+            "time": 0.12942630052566528,
+            "value": -0.7705795764923096,
+            "inSlope": -1.140694499015808,
+            "outSlope": -1.140694499015808,
+            "weightedMode": 0,
+            "inWeight": 1.0,
+            "outWeight": 0.3649594783782959
+          },
+          {
+            "time": 0.6632993221282959,
+            "value": -0.9367022514343262,
+            "inSlope": 0.0,
+            "outSlope": 0.0,
+            "weightedMode": 0,
+            "inWeight": 0.3333333432674408,
+            "outWeight": 0.3333333432674408
+          }
+        ]
+      },
+      "y": {
+        "multiplier": 2.0,
+        "min": [
+          {
+            "time": 0.0,
+            "value": 0.0,
+            "inSlope": 0.0,
+            "outSlope": 0.0,
+            "weightedMode": 0,
+            "inWeight": 0.3333333432674408,
+            "outWeight": 0.3333333432674408
+          },
+          {
+            "time": 0.25911077857017517,
+            "value": -0.4077256917953491,
+            "inSlope": -0.8911032676696777,
+            "outSlope": -0.8911032676696777,
+            "weightedMode": 0,
+            "inWeight": 0.3333333432674408,
+            "outWeight": 0.3333333432674408
+          },
+          {
+            "time": 0.95751953125,
+            "value": -0.615386962890625,
+            "inSlope": 0.0,
+            "outSlope": 0.0,
+            "weightedMode": 0,
+            "inWeight": 0.3333333432674408,
+            "outWeight": 0.3333333432674408
+          }
+        ],
+        "max": [
+          {
+            "time": 0.0,
+            "value": 0.0,
+            "inSlope": 0.0,
+            "outSlope": 0.0,
+            "weightedMode": 0,
+            "inWeight": 0.3333333432674408,
+            "outWeight": 0.3333333432674408
+          },
+          {
+            "time": 0.0930166244506836,
+            "value": -0.7908463478088379,
+            "inSlope": -1.7980360984802246,
+            "outSlope": -1.7980360984802246,
+            "weightedMode": 0,
+            "inWeight": 0.9095696806907654,
+            "outWeight": 0.3474758565425873
+          },
+          {
+            "time": 0.5722897052764893,
+            "value": -0.9904883503913879,
+            "inSlope": 0.0,
+            "outSlope": 0.0,
+            "weightedMode": 0,
+            "inWeight": 0.3333333432674408,
+            "outWeight": 0.3333333432674408
+          }
+        ]
+      }
+    },
+    "noise": {
+      "strength": 0.10000000149011612,
+      "frequency": 0.5,
+      "damping": true,
+      "octaves": 1
+    }
+  },
+  "shaders": {
+    "title": {
+      "pathId": 492,
+      "scale": 0.5,
+      "strengthFrom": 1,
+      "strengthTo": -1
+    },
+    "particle": {
+      "pathId": 493,
+      "vertexAlpha": false,
+      "falloff": "1 - 2 * length(uv - .5)"
+    },
+    "ripple": {
+      "pathId": 491,
+      "strength": 0.029999999329447746,
+      "speed": 0.05000000074505806,
+      "noiseScales": [5.7, 2.85, 1.425],
+      "noiseWeights": [0.125, 0.25, 0.5],
+      "hash": [12.9898, 78.233002, 43758.546875]
+    }
+  }
+}

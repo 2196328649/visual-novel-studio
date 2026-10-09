@@ -1,0 +1,24 @@
+.diagnostic-item { --diagnostic-color: var(--amber); border-bottom: 1px solid var(--border); }
+.diagnostic-item:last-child { border-bottom: 0; }
+.diagnostic-item.error { --diagnostic-color: var(--danger); }
+.diagnostic-item-heading { display: flex; align-items: flex-start; gap: 2px; }
+.diagnostic-item .diagnostic-main { display: flex; flex: 1; gap: 8px; min-width: 0; width: 100%; margin: 0; padding: 8px 5px; align-items: flex-start; text-align: left; border: 0; border-radius: 4px; color: var(--diagnostic-color); line-height: 1.45; cursor: pointer; }
+.diagnostic-item .diagnostic-main:hover, .diagnostic-help:hover { background: #ffffff0c; }
+.diagnostic-item .diagnostic-main:focus-visible, .diagnostic-help:focus-visible { outline: 1px solid var(--diagnostic-color); outline-offset: -1px; }
+.diagnostic-main > svg { flex: none; margin-top: 2px; }
+.diagnostic-main > .diagnostic-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; margin: 0; }
+.diagnostic-copy strong { font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+.diagnostic-copy small { color: var(--muted); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.diagnostic-main > .diagnostic-destination { flex: none; display: flex; align-items: center; gap: 2px; margin: 2px 0 0; font-size: 10px; white-space: nowrap; color: var(--muted); }
+.diagnostic-item .diagnostic-help { display: grid; flex: none; width: 24px; height: 30px; margin-top: 3px; place-items: center; border-radius: 4px; color: var(--muted); }
+.diagnostic-details { margin: 0 8px 10px 28px; padding: 7px 9px; border-left: 2px solid var(--diagnostic-color); background: #00000012; font-size: 11px; line-height: 1.65; color: var(--muted); }
+.diagnostic-details p { margin: 0 0 4px; }
+.diagnostic-details > small { font-size: 10px; color: var(--diagnostic-color); }
+.text-preview-panel > .diagnostic-scroll { max-height: min(230px, 30vh); min-height: 0; flex: 0 1 auto; overflow: auto; padding: 3px 8px; }
+.text-preview-panel > .text-diagnostic-summary { flex: none; width: 100%; text-align: left; cursor: pointer; }
+.text-diagnostic-summary > svg { flex: none; }
+.text-diagnostic-summary:hover { background: #ffffff08; }
+.story-entry-link { display: inline-flex; align-items: center; gap: 5px; max-width: 220px; min-width: 0; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); font-size: 11px; }
+.story-entry-link > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.story-entry-link > svg { flex: none; }
+.story-entry-link:hover { color: var(--text); background: #ffffff08; }

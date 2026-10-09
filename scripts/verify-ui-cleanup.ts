@@ -1,0 +1,57 @@
+import { expect } from '@playwright/test';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { launchDesktopFixture } from './lib/desktop-fixture';
+import { assetFiles, projectSchema } from '../src/core/model';
+
+const root = process.cwd(), output = path.join(root, 'artifacts/ui-cleanup-verification');
+await fs.mkdir(output, { recursive: true });
+const source = path.join(root, 'resources/templates/aihong');
+const project = projectSchema.parse(JSON.parse(await fs.readFile(path.join(source, 'project.vns.json'), 'utf8')));
+for (const asset of project.assets) asset.externalFiles = Object.fromEntries(assetFiles(asset).map(relative => [relative, path.join(source, relative)]));
+const projectFile = path.join(output,'project.vns.json');
+await fs.writeFile(projectFile,JSON.stringify(project));
+const app = await launchDesktopFixture({ root, profile: path.join(output,'profile'), projectFile });
+const page = await app.firstWindow(), errors: string[] = [];
+page.on('pageerror', error => errors.push(error.message));
+page.setDefaultTimeout(20000);
+try {
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setContentSize(1500,950));
+  await page.locator('[data-workspace-tab="characters"]').click();
+  await page.getByRole('button',{name:/全部角色/}).click();
+  await page.locator('[data-character-id]').first().click();
+  await expect(page.getByRole('tab',{name:'继承与功能'})).toHaveCount(0);
+  await page.getByRole('tab',{name:'构图与站位'}).click();
+  await expect(page.getByRole('heading',{name:'默认立绘构图'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'角色站位预设'})).toBeVisible();
+  await expect(page.locator('.character-staging-sections details')).toHaveCount(0);
+  await page.screenshot({path:path.join(output,'character-staging.png')});
+  await page.locator('[data-workspace-tab="assets"]').click();
+  const browser=page.getByRole('region',{name:'资源管理器'});
+  await expect(browser.locator('.content-items [data-content-key^="asset:"]')).toHaveCount(0);
+  await expect(browser.locator('.content-items [data-content-key^="character:"]')).toHaveCount(0);
+  const rootFolders=await browser.locator('.content-items .folder-item strong').allTextContents();
+  expect(rootFolders).toContain('场景'); expect(rootFolders).toContain('立绘'); expect(rootFolders).not.toContain('02 蓝图');
+  await page.screenshot({path:path.join(output,'resource-folders.png')});
+  await browser.getByRole('button',{name:'工程条目',exact:true}).first().click();
+  await expect(browser.locator('.content-items .folder-item strong').filter({hasText:'02 蓝图'})).toHaveCount(1);
+  await page.locator('[data-workspace-tab="ui"]').click();
+  const pagePicker=page.getByLabel('设计页面',{exact:true});
+  expect(await pagePicker.locator('option').allTextContents()).not.toContain('章节选择');
+  await pagePicker.selectOption('gallery');
+  await page.locator('[data-hierarchy-id="ai_gallery_items"]').click();
+  const toggle=page.getByLabel('启用图鉴分组',{exact:true});
+  await expect(toggle).toBeVisible();
+  const dimensions=await toggle.evaluate(input=>({input:input.getBoundingClientRect().toJSON(),row:input.closest('.field')!.getBoundingClientRect().toJSON()}));
+  expect(dimensions.input.width).toBeLessThan(40); expect(dimensions.row.height).toBeLessThan(48);
+  await expect(page.locator('.ui-gallery-group-list > button')).toHaveCount(8);
+  const disclosure=page.locator('summary').filter({hasText:'图鉴分组与分镜'});
+  expect((await disclosure.boundingBox())!.height).toBeGreaterThanOrEqual(40);
+  await disclosure.focus(); await page.keyboard.press('Space'); await expect(toggle).not.toBeVisible();
+  await page.keyboard.press('Space'); await expect(toggle).toBeVisible();
+  await page.screenshot({path:path.join(output,'gallery-controls.png')});
+  expect(errors).toEqual([]);
+  await fs.writeFile(path.join(output,'result.json'),JSON.stringify({status:'passed',rootFolders,dimensions,errors},null,2));
+  console.log(output);
+} catch(error) { await page.screenshot({path:path.join(output,'failure.png')}).catch(()=>undefined); throw error; }
+finally { await app.close(); }

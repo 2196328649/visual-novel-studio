@@ -1,0 +1,111 @@
+import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { expect } from '@playwright/test';
+import { createProject } from '../src/core/model';
+import { applyTextScript } from '../src/core/text-script';
+import { launchDesktopFixture } from './lib/desktop-fixture';
+import { openStoryMode } from './lib/story-workspace';
+
+const root = path.resolve('.'), output = path.join(root, 'artifacts/explicit-performance', new Date().toISOString().replaceAll(':', '-'));
+await fs.mkdir(output, { recursive: true });
+const parsed = applyTextScript(createProject('独立演出与蓝图入口验收'), '# 段落：测试\n@章节进入演出文字版：标题=进入章节，时长=0.4\n@演出转场：纯色，0.1，0.1，0.1\n@独立演出：章节进入\n旁白：转场后应留在预览区域。');
+assert.deepEqual(parsed.issues, []);
+const projectFile = path.join(output, 'project.vns.json'); await fs.writeFile(projectFile, JSON.stringify(parsed.project));
+let app = await launchDesktopFixture({ root, projectFile, profile: path.join(output, 'profile') });
+let page = await app.firstWindow();
+const errors: string[] = [], checks: string[] = [], metrics: unknown[] = [];
+page.on('pageerror', error => errors.push(error.message));
+let phase = 'launch';
+try {
+  await expect(page.locator('.project-title strong')).toHaveText(parsed.project.name, { timeout: 45000 });
+  await app.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window.unmaximize(); window.setContentSize(1440, 900); });
+  await openStoryMode(page, 'text');
+  let input = page.getByLabel('中文文本剧本', { exact: true });
+  const select = async (needle: string, control = false) => input.evaluate((element, { needle, control }) => {
+    const input = element as HTMLTextAreaElement, at = input.value.indexOf(needle); if (at < 0) throw new Error('Missing ' + needle);
+    input.focus(); input.setSelectionRange(at + 2, at + 2); input.dispatchEvent(new Event('select', { bubbles: true }));
+    if (control) input.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+  }, { needle, control });
+  const bounds = async () => {
+    const stage = page.locator('.preview-stage-viewport:visible').first();
+    const actual = await page.locator('.preview-performance-transition:visible').first().boundingBox();
+    const expected = await (await stage.count() ? stage : page.locator('.preview-stage-frame .text-stage:visible').first()).boundingBox();
+    assert.ok(expected && actual); metrics.push({ expected, actual });
+    assert.ok(Math.abs(actual.x - expected.x) < 2 && Math.abs(actual.y - expected.y) < 2 && Math.abs(actual.width - expected.width) < 2 && Math.abs(actual.height - expected.height) < 2, JSON.stringify({ expected, actual }));
+  };
+  phase = 'story playback bounds';
+  await select('@独立演出');
+  await page.getByRole('button', { name: '播放预览', exact: true }).click();
+  await expect(page.locator('.story-preview-content')).toHaveAttribute('data-preview-phase', 'finished', { timeout: 15000 });
+  await page.screenshot({ path: path.join(output, 'story-finished.png') }); await bounds();
+  checks.push('剧情预览实际播放完成后，转场层与预览画面边界一致。');
+  await page.getByRole('button', { name: '停止预览', exact: true }).click();
+  phase = 'Ctrl click blueprint';
+  await select('@章节进入演出文字版', true);
+  await expect(page.getByRole('region', { name: '演出工作区' })).toBeVisible();
+  await expect(page.locator('.performance-authoring.graph')).toBeVisible();
+  await expect(page.getByLabel('演出目标', { exact: true })).toHaveValue('graph:builtin_chapter_text');
+  await expect(page.getByLabel('时间轴画布', { exact: true })).toHaveCount(0);
+  await page.screenshot({ path: path.join(output, 'chapter-blueprint.png') });
+  checks.push('Ctrl＋左键进入外层章节蓝图，参数连到单个时间轴组件。');
+  phase = 'component navigation';
+  const graph = parsed.project.blueprints.find(graph => graph.id === 'builtin_chapter_text')!;
+  const call = graph.nodes.find(node => node.type === 'callFunction')!;
+  await page.locator(`.react-flow__node[data-id="${call.id}"] .graph-node-title`).dblclick({ position: { x: 12, y: 12 } });
+  await expect(page.getByLabel('时间轴画布', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '返回蓝图', exact: true })).toBeVisible();
+  for (const width of [1440, 1100]) {
+    await app.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0].setContentSize(width, 900), width);
+    await page.getByRole('button', { name: '播放预览', exact: true }).click();
+    await expect(page.locator('.story-preview-content')).toHaveAttribute('data-preview-phase', 'finished', { timeout: 20000 });
+    await bounds(); await page.screenshot({ path: path.join(output, 'timeline-finished-' + width + '.png') });
+    await page.getByRole('button', { name: '停止预览', exact: true }).click();
+  }
+  await page.getByRole('button', { name: '返回蓝图', exact: true }).click();
+  await expect(page.locator('.performance-authoring.graph')).toBeVisible();
+  checks.push('双击组件进入时间轴并可返回蓝图；宽窄窗口播放结束均无画面越界。');
+  phase = 'edit, save and reopen';
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 900));
+  const openInputs = async () => {
+    const expand = page.getByRole('button', { name: '展开蓝图属性', exact: true });
+    if (await expand.count()) await expand.click();
+    await page.getByRole('button', { name: '输入与输出', exact: true }).click();
+  };
+  await openInputs();
+  await page.getByLabel('标题的默认值', { exact: true }).fill('保存重开后的章节标题');
+  await page.getByRole('button', { name: '保存工程', exact: true }).click();
+  await expect(page.locator('.dirty-dot')).toHaveCount(0);
+  const saved = JSON.parse(await fs.readFile(projectFile, 'utf8'));
+  assert.equal(saved.blueprints.find((item: typeof graph) => item.id === graph.id).exposedInputs.find((pin: typeof graph.exposedInputs[number]) => pin.id === 'title').defaultValue, '保存重开后的章节标题');
+  assert.deepEqual(saved.blueprints.find((item: typeof graph) => item.id === call.properties.graphId), parsed.project.blueprints.find(item => item.id === call.properties.graphId));
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach(window => window.destroy()));
+  await app.close();
+  app = await launchDesktopFixture({ root, projectFile, profile: path.join(output, 'profile') });
+  page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message));
+  await expect(page.locator('.project-title strong')).toHaveText(parsed.project.name, { timeout: 45000 });
+  await openStoryMode(page, 'text'); input = page.getByLabel('中文文本剧本', { exact: true });
+  await expect(input).toHaveValue(saved.scriptText.content);
+  await select('@章节进入演出文字版', true);
+  await expect(page.locator('.performance-authoring.graph')).toBeVisible();
+  await openInputs();
+  await expect(page.getByLabel('标题的默认值', { exact: true })).toHaveValue('保存重开后的章节标题');
+  await page.getByRole('button', { name: '收起蓝图属性', exact: true }).click();
+  await page.locator(`.react-flow__node[data-id="${call.id}"] .graph-node-title`).dblclick({ position: { x: 12, y: 12 } });
+  await expect(page.getByLabel('时间轴画布', { exact: true })).toBeVisible();
+  await page.screenshot({ path: path.join(output, 'reopened-timeline.png') });
+  await page.getByRole('button', { name: '保存工程', exact: true }).click();
+  await expect(page.locator('.dirty-dot')).toHaveCount(0);
+  const reopened = JSON.parse(await fs.readFile(projectFile, 'utf8'));
+  assert.deepEqual(reopened.blueprints, saved.blueprints);
+  assert.equal(reopened.scriptText.content, saved.scriptText.content);
+  checks.push('修改蓝图标题默认值、保存、完全关闭后重开：参数、组件连线、时间轴数据和剧本文本保持一致，导航正常。');
+  assert.deepEqual(errors, []);
+  await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', checks, metrics, errors }, null, 2));
+} catch (error) {
+  await page.screenshot({ path: path.join(output, 'failure.png') });
+  await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'failed', phase, error: String(error), checks, metrics, errors }, null, 2));
+  throw error;
+} finally {
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach(window => window.destroy())).catch(() => {}); await app.close(); console.log(output);
+}

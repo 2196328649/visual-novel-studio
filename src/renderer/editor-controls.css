@@ -1,0 +1,65 @@
+/* Full-row disclosure controls keep native keyboard and expanded semantics. */
+#root details:not(.toolbar-menu):not(.field-help) > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 10px 12px;
+  margin: 0;
+  border: 1px solid var(--editor-border, #394249);
+  border-radius: 8px;
+  background: var(--editor-panel, #252d33);
+  color: var(--editor-text, #e5e9eb);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+#root details:not(.toolbar-menu):not(.field-help) > summary::-webkit-details-marker { display: none; }
+#root details:not(.toolbar-menu):not(.field-help) > summary::before { content: none; }
+#root details:not(.toolbar-menu):not(.field-help) > summary::after {
+  content: '展开 ＋';
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 400;
+  opacity: .75;
+  transform: none;
+}
+#root details[open]:not(.toolbar-menu):not(.field-help) > summary { margin-bottom: 12px; }
+#root details[open]:not(.toolbar-menu):not(.field-help) > summary::after { content: '收起 −'; }
+#root details:not(.toolbar-menu):not(.field-help) > summary:hover { border-color: var(--editor-accent, #70bbae); }
+#root details:not(.toolbar-menu):not(.field-help) > summary:focus-visible { outline: 2px solid var(--editor-accent, #70bbae); outline-offset: 2px; }
+#root .field.field-toggle { display: flex; flex-direction: row; align-items: center; min-height: 36px; margin: 6px 0; }
+#root .field-toggle .field-control { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; flex: 1; min-height: 36px; cursor: pointer; }
+#root .field-toggle .field-label { margin: 0; color: var(--editor-text, #e5e9eb); }
+#root .field-toggle input[type=checkbox] { appearance: none; position: relative; flex: 0 0 34px; width: 34px; height: 20px; min-height: 20px; padding: 0; margin: 0; border: 1px solid var(--editor-border, #526069); border-radius: 12px; background: var(--editor-raised, #3a454c); cursor: pointer; }
+#root .field-toggle input[type=checkbox]::after { content: ''; position: absolute; width: 14px; height: 14px; left: 2px; top: 2px; background: #eef2f3; border-radius: 50%; transition: transform .12s; }
+#root .field-toggle input[type=checkbox]:checked { background: var(--editor-accent, #428b7d); border-color: var(--editor-accent, #428b7d); }
+#root .field-toggle input[type=checkbox]:checked::after { transform: translateX(14px); }
+#root .field-toggle input[type=checkbox]:focus-visible { outline: 2px solid var(--editor-accent, #70bbae); outline-offset: 3px; }
+#root .field-toggle input[type=checkbox]:disabled { opacity: .45; cursor: default; }
+.character-staging-sections { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); align-items: start; }
+.character-setting-card { padding: 18px; border: 1px solid var(--editor-border); border-radius: 10px; background: var(--editor-panel); min-width: 0; }
+.character-setting-card h3 { font-size: 15px; margin: 0 0 8px; }
+.character-setting-card > .muted { line-height: 1.7; margin: 0 0 14px; }
+.character-setting-card .field-row > button { flex: 1; min-height: 34px; }
+.ui-gallery-group-list { display: grid; gap: 4px; max-height: 220px; overflow: auto; margin: 8px 0 12px; }
+.ui-gallery-group-list > button { display: flex; justify-content: space-between; align-items: center; text-align: left; min-height: 38px; padding: 8px 10px; border: 1px solid transparent; border-radius: 6px; }
+.ui-gallery-group-list > button[aria-pressed=true] { background: color-mix(in srgb, var(--editor-accent) 16%, var(--editor-panel)); border-color: var(--editor-accent); }
+.ui-gallery-variant > .gallery-variant-heading { display: flex; align-items: center; gap: 10px; }
+.gallery-variant-heading img { width: 72px; height: 44px; object-fit: cover; border-radius: 5px; }
+#root .ui-inspector-tabs { width: calc(100% + 34px); max-width: none; top: -17px; margin: -17px -17px 14px; padding: 10px 17px; border-bottom: 1px solid var(--editor-border); background: var(--editor-panel); }
+#root .ui-inspector-tabs > button { display: flex; align-items: center; justify-content: center; min-height: 32px; height: auto; padding: 6px 10px; line-height: 1.4; border-radius: 5px; }
+
+.number-drag-label { cursor: ew-resize; }
+.number-drag-label > input { cursor: text; }
+.number-drag-label:has(input:disabled), .number-drag-label:has(input:read-only) { cursor: default; }
+.number-dragging, .number-dragging * { cursor: ew-resize !important; user-select: none; }
+.image-transform { min-width: 0; }
+.image-transform .transform-row { display: grid; grid-template-columns: 52px repeat(2, minmax(0, 1fr)); gap: 6px; align-items: center; margin: 6px 0; }
+.image-transform .transform-row > label { display: flex; align-items: center; gap: 5px; min-width: 0; white-space: nowrap; }
+.image-transform .transform-row input { width: 100%; min-width: 0; }
+.image-transform .transform-row > span { font-size: 12px; color: var(--text-muted, #aaa); }

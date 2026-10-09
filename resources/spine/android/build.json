@@ -1,0 +1,17 @@
+{
+  "abi": 1,
+  "minimumApi": 21,
+  "alignment": 16384,
+  "upstream": {
+    "repository": "https://github.com/EsotericSoftware/spine-runtimes",
+    "branch": "4.2",
+    "commit": "e7dc1435fa4a0083ab431f1b28e083c14a1f5c68",
+    "subdirectory": "spine-c/spine-c",
+    "changes": "No changes to upstream include/ and src/. Host ABI lives in native/spine/."
+  },
+  "files": {
+    "armeabi-v7a": "0bbda034eb7a52426f895a5cc7a15cafb65122c96c089b9ff78c37b086dd7d24",
+    "arm64-v8a": "9fc60acc7f628fece6b6504183c964986f36c53e6a6b9ef9e939f12637577e48",
+    "x86_64": "22746cc29cdb66c6791616314db20fd1a36f1cdd5518516974077e1311474bcc"
+  }
+}

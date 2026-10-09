@@ -1,0 +1,51 @@
+import { addProjectGraphs, projectGraphs } from '../src/core/project-resources';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createProject, projectSchema, type StageAction } from '../src/core/model';
+import { chapterBlueprintPair, createChapterPerformance } from '../src/core/chapter-performances';
+import { commandPerformanceBlueprints } from '../src/core/builtin-performances';
+import { applyTextScript } from '../src/core/text-script';
+import { expandPreviewActions, previewActionContext } from '../src/core/preview-actions';
+import { linePlaybackAudio, linePlaybackPlan, initialPreviewStage, sampleLinePlayback } from '../src/core/line-preview';
+import { compileProject } from '../src/runtime/compiler';
+import { validateProject } from '../src/core/validate';
+const walk = (a: StageAction): StageAction[] => [a, ...(a.kind === 'visual' ? a.children?.flatMap(walk) ?? [] : [])];
+
+test('the editable chapter has four independent text/particle pairs and an optional sound input', () => {
+  const p = createProject(); p.ui.chapterTransition = { effect: 'ink', particles: true };
+  p.assets.push({ id: 'hit', name: '入场音效', kind: 'audio', category: 'sound', path: 'hit.wav' });
+  addProjectGraphs(p, ...chapterBlueprintPair(createChapterPerformance(p, 'text')));
+  const graph = projectGraphs(p)[0];
+  assert.deepEqual(graph.exposedInputs.slice(0, 4).map(p => p.name), ['第一行小字', '第二行小字', '标题', '右侧字']);
+  assert.ok(graph.exposedInputs.some(p => p.id === 'sound' && p.defaultValue === ''));
+  assert.ok(!commandPerformanceBlueprints(p).some(g => g.id.endsWith('_timeline')));
+  const parsed = applyTextScript(p, '@章节进入演出文字版：第一行小字="- 忆 -"，第二行小字="- 第二回 -"，标题=重逢，右侧字="1646 隆武二年"，章节音效=入场音效\n@独立演出：第二章');
+  assert.deepEqual(parsed.issues, []);
+  const loaded = projectSchema.parse(JSON.parse(JSON.stringify(parsed.project)));
+  const line = loaded.nodes.find(n => n.kind === 'passage')!; assert.equal(line.kind, 'passage');
+  const actions = expandPreviewActions(loaded, line.lines[0].actions, previewActionContext(loaded));
+  for (const text of ['- 忆 -', '- 第二回 -', '重逢', '1646 隆武二年']) assert.equal(actions.flatMap(walk).filter(a => a.kind === 'visual' && a.text === text).length, 2);
+  const before = initialPreviewStage(); before.musicId = 'existing_bgm';
+  const plan = linePlaybackPlan(before, actions);
+  assert.equal(sampleLinePlayback(before, plan, 2500).state.musicId, 'existing_bgm');
+  assert.ok(linePlaybackAudio(before, plan).some(a => a.channel === 'sound' && a.id === 'hit' && !a.loop));
+  assert.equal(actions.some(a => a.kind === 'music'), false);
+  assert.deepEqual(compileProject(loaded).diagnostics.filter(d => d.severity === 'error'), []);
+  const blank = expandPreviewActions(p, [{ kind: 'blueprint', blueprintId: graph.id }], previewActionContext(p));
+  assert.equal(blank.some(a => a.kind === 'sound'), false);
+});
+
+test('a chapter image supplied by the caller does not require a redundant default image', () => {
+  const p = createProject();
+  addProjectGraphs(p, ...chapterBlueprintPair(createChapterPerformance(p, 'image')));
+  p.assets.push({ id: 'cover', name: '任意题图', kind: 'image', path: 'cover.png' });
+  const parsed = applyTextScript(p, '@章节进入演出：章节题图=任意题图\n@独立演出：图片章\n旁白：结束。');
+  assert.deepEqual(parsed.issues, []);
+  assert.deepEqual(compileProject(parsed.project).diagnostics.filter(d => d.severity === 'error'), []);
+  const missing = applyTextScript(p, '@章节进入演出\n@独立演出：漏选题图\n旁白：结束。');
+  assert.ok(validateProject(missing.project).some(d => d.severity === 'error' && d.message.includes('章节题图')));
+  const timeline = projectGraphs(parsed.project).find(g => g.timeline)!;
+  const visual = timeline.nodes.find(n => n.type === 'savedAction')!;
+  timeline.links = timeline.links.filter(link => link.toNodeId !== visual.id || !link.toPinId.startsWith('object_'));
+  assert.ok(validateProject(parsed.project).some(d => d.message === '图片对象尚未选择图片。'));
+});

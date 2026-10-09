@@ -1,0 +1,84 @@
+/* All authoring surfaces share the palette. Game canvases keep authored colors. */
+:root {
+  color-scheme: dark;
+  color: var(--editor-text, #ededed);
+  background: var(--editor-background, #181818);
+  --accent: var(--editor-accent, #ededed);
+  --accent-light: var(--editor-selection, #343434);
+  --border: var(--editor-border, #3d3d3d);
+  --muted: var(--editor-muted, #a6a6a6);
+  --panel: var(--editor-panel, #202020);
+  --amber: #e1b879;
+  --danger: #ee9898;
+}
+:is(.blueprint-palette, .blueprint-properties, .sidebar, .inspector, .problems-panel, .dialog, .character-item, .asset-item, .variable-row, .story-line, .passage-section, .node-summary) {
+  background: var(--editor-panel); color: var(--editor-panel-text); border-color: var(--editor-border);
+}
+:is(.app-header, .view-tabs, .panel-heading, .sidebar-footer, .library-tabs, .workspace-toolbar, .status-bar, .passage-header, .problems-header, .blueprint-status, .stage-controls, .actor-toolbar, .table-header) {
+  background: var(--editor-toolbar); color: var(--editor-toolbar-text); border-color: var(--editor-border); box-shadow: none;
+}
+:is(.blueprint-title, .blueprint-check, .blueprint-palette summary, .blueprint-note, .blueprint-properties .field small, .blueprint-position-presets, .blueprint-selection-empty, .scene-row small, .resource-row small, .chapter-label, .sidebar-heading, .field small, .path-value, .empty, .runtime-location span, .runtime-state b, .asset-caption span, .character-item span, .project-preset span, .project-title > span:last-child, .brand span) { color: var(--editor-muted); }
+:is(.blueprint-panel-heading, .blueprint-properties h3, .blueprint-interface-section strong, .blueprint-library-node, .blueprint-user-library .blueprint-library-node, .tree-node, .line-top > select, .line-actions .icon-button, .field-label, .check-field, .inspector-section-title, .action-editor-header > strong, .stage-controls > label, .actor-toolbar > span, .actor-toolbar > label, .ui-layer-list > h3, .ui-layer-list > button, .asset-caption strong, .diagnostic > small, .runtime-log, .runtime-state output, .dialog-header h2, .project-preset, .project-preset strong, .brand h1) { color: var(--editor-text); }
+:is(.blueprint-library-node svg, .blueprint-selection-empty > svg, .runtime-location, .runtime-status, .no-problems, .node-collapse, .graph-external) { color: var(--editor-accent); }
+:is(.blueprint-palette details, .blueprint-property-tabs, .blueprint-interface-section, .blueprint-node-outline, .action-editor, .choice-editor, .inspector-footer-actions, .condition-child, .stage-line-list, .ui-layer-list, .ui-layer-list > button, .character-list, .variables-table, .variable-row, .diagnostic, .project-preset) { border-color: var(--editor-border); }
+:is(.blueprint-library-node:hover, .blueprint-node-outline > button, .blueprint-interface-card, .blueprint-position-presets button, .small-button, .stage-line-list > button, .segmented) { background: var(--editor-raised); color: var(--editor-raised-text); border-color: var(--editor-border); }
+:is(.blueprint-linked-value, .blueprint-help, .action-chips > span, .scene-row.active, .tree-node.active, .resource-row.active, .story-line.selected, .stage-line-list > button.active, .segmented > button.active, .ui-layer-list > button.active, .character-item.selected, .variable-row.selected) { background: var(--editor-selection); color: var(--editor-selection-text); border-color: var(--editor-border); box-shadow: none; }
+:is(.library-tabs button, .tabs > button, .segmented > button, .icon-button) { color: var(--editor-muted); }
+:is(.library-tabs button.active, .tabs > button.active, .blueprint-property-tabs > button.active) { background: var(--editor-selection); color: var(--editor-selection-text); border-color: var(--editor-accent); }
+:is(.main-workspace, .script-scroll, .flow-container, .blueprint-welcome) { background: var(--editor-background); color: var(--editor-background-text); }
+.blueprint-welcome :is(h2, p, small) { color: inherit; }
+.blueprint-welcome .primary-button { padding: 9px 14px; border-radius: 6px; cursor: pointer; }
+input, select, textarea { background: var(--editor-input); border-color: var(--editor-border); color: var(--editor-input-text); }
+input::placeholder, textarea::placeholder { color: var(--editor-input-muted); }
+button:hover:not(:disabled) { background-color: var(--editor-raised); }
+button.primary { background: var(--editor-accent); border-color: var(--editor-accent); color: var(--editor-on-accent); }
+button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--editor-accent) 90%, var(--editor-background)); }
+.text-button { color: var(--editor-text); }
+.icon-button { border-radius: 5px; }
+.icon-button:hover:not(:disabled) { color: var(--editor-raised-text); }
+.brand-symbol { color: var(--editor-text); background: var(--editor-raised); border-radius: 7px; }
+.toolbar-divider { background: var(--editor-border); }
+.sidebar-search, .search { background: var(--editor-input); border-color: var(--editor-border); color: var(--editor-input-text); }
+.chapter-label { font-size: 11px; }
+.node-dot { background: var(--editor-muted); }
+.node-dot.choice, .node-dot.condition { background: var(--amber); }
+.node-dot.end { background: var(--danger); }
+.node-dot.interaction, .node-dot.minigame { background: var(--editor-accent); }
+:is(.character-avatar, .character-portrait, .expression-editor > img) { background: var(--editor-raised); color: var(--editor-muted); }
+.resource-row > img { border-color: var(--editor-border); }
+.passage-section.active { border-color: var(--editor-accent); }
+.passage-header .ordinal, .line-number { color: var(--editor-muted); }
+.node-kind-label { color: var(--editor-raised-text); background: var(--editor-raised); }
+.dialogue-input { color: var(--editor-text); background: transparent; }
+.dialogue-input:focus { background: var(--editor-input); border-color: var(--editor-accent); }
+.dialogue-input::placeholder { color: var(--editor-muted); }
+.add-line { background: var(--editor-panel); color: var(--editor-muted); }
+.choice-summary > b { background: var(--editor-selection); color: var(--editor-selection-text); }
+.asset-inspector-preview { border-color: var(--editor-border); background: repeating-conic-gradient(var(--editor-raised) 0% 25%, var(--editor-panel) 0% 50%) 50% / 14px 14px; }
+.graph-node { background: var(--editor-node); border-color: var(--editor-border); color: var(--editor-node-text); box-shadow: 0 2px 6px #00000020; }
+.graph-node.selected { outline-color: var(--editor-accent); }
+.graph-node-title { background: var(--editor-nodeTitle); color: var(--editor-nodeTitle-text); }
+.graph-node-title > span, .graph-node-detail, .graph-output { color: var(--editor-muted); }
+.graph-node.collapsed .graph-node-title { border-color: var(--editor-border); }
+.react-flow__handle { background: var(--editor-text); border-color: var(--editor-node); }
+.react-flow__controls { border-color: var(--editor-border); }
+.react-flow__controls-button { border-color: var(--editor-border); background: var(--editor-raised); color: var(--editor-raised-text); }
+.react-flow__controls-button svg { fill: currentColor; }
+.react-flow__minimap { background: var(--editor-panel) !important; border-color: var(--editor-border); }
+.resolution, .stage-line-list > button small { color: var(--editor-muted); }
+.stage-line-list > button > strong, .stage-line-list > button > span:nth-child(3) { color: var(--editor-text); }
+.asset-item.selected { border-color: var(--editor-accent); outline-color: var(--editor-accent); }
+.asset-thumbnail { background: repeating-conic-gradient(var(--editor-raised) 0% 25%, var(--editor-panel) 0% 50%) 50% / 18px 18px; }
+.asset-thumbnail.audio { background: var(--editor-selection); color: var(--editor-selection-text); }
+.diagnostic.error { color: var(--danger); }
+.diagnostic.warning { color: var(--amber); }
+.status-bar > button:first-child { color: var(--editor-muted); }
+.status-bar > button.error-status { color: var(--danger); }
+.status-bar > button.warning-status { color: var(--amber); }
+.dialog { box-shadow: 0 18px 60px #00000040; }
+.test-state-note, .blueprint-node-problems { color: var(--amber); background: color-mix(in srgb, var(--editor-panel) 92%, var(--amber)); border-color: var(--editor-border); }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--editor-muted) 60%, var(--editor-panel)); border-color: var(--editor-panel); }
+.blueprint-context-menu { position: fixed; z-index: 20; min-width: 190px; padding: 8px; display: grid; gap: 4px; background: var(--editor-panel); color: var(--editor-panel-text); border: 1px solid var(--editor-border); border-radius: 8px; box-shadow: 0 12px 30px #00000035; }
+.blueprint-context-menu strong { padding: 4px 8px 6px; color: inherit; font-size: 12px; }
+.blueprint-context-menu button { border: 0; border-radius: 5px; padding: 6px 8px; text-align: left; color: inherit; background: transparent; cursor: pointer; }
+.blueprint-context-menu button:hover { background: var(--editor-raised); }

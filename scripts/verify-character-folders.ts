@@ -1,0 +1,31 @@
+import { createUiParameterBinding } from '../src/core/ui-logic';
+import { PNG } from 'pngjs';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import { expect } from '@playwright/test';
+import { createServer } from 'vite';
+import { createProject } from '../src/core/model';
+import { blueprintNodeDefaults, createBlueprintGraph, connectBlueprintPins, synchronizeBlueprintSignatures } from '../src/core/blueprint';
+import { launchDesktopFixture } from './lib/desktop-fixture';
+const root=path.resolve('.'), output=path.join(root,'artifacts/character-folders',new Date().toISOString().replaceAll(':','-'));
+await fs.mkdir(output,{recursive:true});
+const project=createProject('高级UI编辑验收');
+project.characters=[{id:'hero',name:'主角测试',color:'#1b8a78',expressions:[]},{id:'extra',name:'路人测试',color:'#1b8a78',expressions:[]}];
+const projectFile=path.join(output,'project.vns.json');await fs.writeFile(projectFile,JSON.stringify(project));
+const server=await createServer({root,server:{host:'127.0.0.1',port:0,watch:{ignored:['**/artifacts/**','**/resources/**','**/release/**']}}});await server.listen();
+const app=await launchDesktopFixture({root,projectFile,profile:path.join(output,'profile'),devUrl:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port}),page=await app.firstWindow();
+try {
+ await expect(page.locator('.project-title strong')).toHaveText(project.name,{timeout:45000});
+ await page.locator('[data-workspace-tab="characters"]').click();await page.getByRole('button',{name:'新建文件夹',exact:true}).click();await page.getByLabel('角色文件夹名称',{exact:true}).fill('NPC');await page.locator('.character-folder-form').getByRole('button',{name:'创建',exact:true}).click();await page.getByRole('navigation',{name:'角色文件夹导航'}).getByRole('button',{name:'角色目录',exact:true}).click();
+ const folder=page.locator('[data-character-folder]').filter({hasText:/^NPC/});await expect(folder).toHaveCount(1);const folderId=(await folder.getAttribute('data-character-folder'))!;
+ await page.locator('[data-character-id="extra"]').dragTo(folder);await page.getByRole('navigation',{name:'角色文件夹导航'}).getByRole('button',{name:/^NPC/}).click();await expect(page.locator('[data-character-id="extra"]')).toBeVisible();await expect(page.locator('[data-character-id="hero"]')).toHaveCount(0);
+ await page.getByRole('button',{name:'撤销',exact:true}).click();await expect(page.locator('[data-character-id="extra"]')).toHaveCount(0);await page.getByRole('button',{name:'重做',exact:true}).click();await expect(page.locator('[data-character-id="extra"]')).toBeVisible();
+ await page.getByRole('button',{name:'添加角色',exact:true}).click();await expect(page.locator('[data-character-id]')).toHaveCount(2);
+ await page.getByRole('button',{name:'新建文件夹',exact:true}).click();await page.getByLabel('角色文件夹名称',{exact:true}).fill('城镇');await page.locator('.character-folder-form').getByRole('button',{name:'创建',exact:true}).click();const childId=await page.getByLabel('角色所在文件夹',{exact:true}).locator('option').filter({hasText:'NPC / 城镇'}).getAttribute('value');await page.getByRole('navigation',{name:'角色文件夹导航'}).getByRole('button',{name:/^NPC/}).click();const child=page.locator('[data-character-folder]').filter({hasText:'城镇'});await page.locator('[data-character-id="extra"]').dragTo(child);
+ await page.getByLabel('搜索角色',{exact:true}).fill('路人');await expect(page.locator('[data-character-id]')).toHaveCount(1);await expect(page.locator('[data-character-id="extra"]')).toContainText('NPC / 城镇');
+ await page.getByRole('button',{name:'保存工程',exact:true}).click();await expect(page.locator('.dirty-dot')).toHaveCount(0);const saved=JSON.parse(await fs.readFile(projectFile,'utf8'));expect(saved.contentBrowser.assignments['character:extra']).toBe(childId);expect(saved.contentBrowser.folders.find((f:any)=>f.id===childId).parentId).toBe(folderId);const added=saved.characters.find((c:any)=>!['hero','extra'].includes(c.id));expect(saved.contentBrowser.assignments['character:'+added.id]).toBe(folderId);
+ await page.getByLabel('搜索角色',{exact:true}).fill('');await page.screenshot({path:path.join(output,'folders.png')});
+ await page.locator('[data-workspace-tab="assets"]').click();await page.locator('[data-content-key="folder:'+folderId+'"]').dblclick();await expect(page.locator('[data-content-key="character:'+added.id+'"]')).toBeVisible();await page.locator('[data-content-key="folder:'+childId+'"]').dblclick();await expect(page.locator('[data-content-key="character:extra"]')).toBeVisible();
+ await fs.writeFile(path.join(output,'report.json'),JSON.stringify({status:'passed',checks:['创建角色文件夹','拖动归类及撤销重做','当前文件夹新建角色','嵌套文件夹与递归搜索','保存真实共享归属','资源管理器看到同一层级与角色']}));console.log(output);
+}finally {await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().forEach(w=>w.destroy())).catch(()=>undefined);await app.close();await server.close();}

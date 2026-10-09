@@ -1,0 +1,51 @@
+import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { expect } from '@playwright/test';
+import { createProject, projectSchema } from '../src/core/model';
+import { createVisualObject, visualInputFields } from '../src/core/visual-object';
+import { blueprintFromPerformance, exposePerformanceInputs, performanceInputs } from '../src/core/blueprint-authoring';
+import { launchDesktopFixture } from './lib/desktop-fixture';
+
+const root = path.resolve('.'), output = path.join(root, 'artifacts/property-clock', new Date().toISOString().replaceAll(':', '-'));
+await fs.mkdir(output, { recursive: true });
+const project = createProject('参数缩放属性轨道验收');
+const child = { ...createVisualObject('solid'), startAt: .5, duration: 3, retimeOnDuration: true, curves: { x: [{ at: 0, value: .2, easing: 'linear' as const }] } };
+const group = { ...createVisualObject('group'), duration: 6, retimeOnDuration: true, children: [child] };
+const graph = blueprintFromPerformance(project, [group], '缩放组合'); project.blueprints.push(graph);
+const source = graph.nodes.find(node => node.type === 'savedAction')!;
+exposePerformanceInputs(graph, [performanceInputs(graph).find(input => input.nodeId === source.id && input.pinId === 'object_duration')!]);
+graph.exposedInputs[0].defaultValue = 12;
+const childDuration = visualInputFields(group).find(field => field.path.length > 1 && field.path.at(-1) === 'duration')!;
+source.properties['object_' + childDuration.key] = 6;
+const passage = project.nodes.find(node => node.kind === 'passage')!;
+passage.lines[0].actions = [{ kind: 'blueprint', blueprintId: graph.id }];
+const projectFile = path.join(output, 'project.vns.json'); await fs.writeFile(projectFile, JSON.stringify(project));
+const app = await launchDesktopFixture({ root, projectFile, profile: path.join(output, 'profile') });
+const page = await app.firstWindow(), errors: string[] = [];
+page.on('pageerror', error => errors.push(error.message));
+try {
+  await expect(page.locator('.project-title strong')).toHaveText(project.name, { timeout: 45000 });
+  await page.locator('[data-workspace-tab="blueprint"]').click();
+  await page.getByLabel('演出目标', { exact: true }).selectOption('graph:' + graph.id);
+  await page.getByRole('button', { name: '时间轴', exact: true }).click();
+  const childRow = page.locator(`.lifetime-span[data-instance-id="${child.instanceId}"]`);
+  await childRow.click();
+  const marker = page.getByLabel('属性轨道 横向位置 %', { exact: true }).getByRole('button', { name: '横向位置 %时间轴帧 1', exact: true });
+  await expect(marker).toHaveAttribute('data-absolute-time', '1');
+  await marker.press('ArrowRight');
+  await expect(marker).toHaveAttribute('data-absolute-time', '1.1');
+  await marker.press('Enter');
+  await expect(page.getByRole('slider', { name: '时间轴播放头', exact: true })).toHaveAttribute('aria-valuenow', '1.1');
+  await page.getByRole('button', { name: '保存工程', exact: true }).click(); await expect(page.locator('.dirty-dot')).toHaveCount(0);
+  const saved = projectSchema.parse(JSON.parse(await fs.readFile(projectFile, 'utf8')));
+  const action = JSON.parse(String(saved.blueprints.find(item => item.id === graph.id)!.nodes.find(item => item.id === source.id)!.properties.action));
+  assert.equal(action.children[0].curves.x[0].at, .025);
+  assert.equal(action.children[0].curves.x[0].value, .2);
+  assert.equal(action.children[0].duration, 3); assert.equal(action.duration, 6);
+  assert.equal(saved.blueprints.find(item => item.id === graph.id)!.exposedInputs[0].defaultValue, 12);
+  await page.screenshot({ path: path.join(output, 'linked-property.png') });
+  assert.deepEqual(errors, []);
+  await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', checks: ['父子时长缩放后，子对象零秒帧显示在绝对 1 秒', '移动到 1.1 秒保存为原始局部 0.025 秒，定位与预览时间一致', '原始时长、曲线值和公开时长参数保持不变'], errors }, null, 2));
+} catch (error) { await page.screenshot({ path: path.join(output, 'failure.png') }).catch(() => undefined); throw error; }
+finally { await app.close(); console.log(output); }

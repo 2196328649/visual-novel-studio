@@ -1,0 +1,52 @@
+import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { expect } from '@playwright/test';
+import { createProject } from '../src/core/model';
+import { projectToText } from '../src/core/text-script';
+import { launchDesktopFixture } from './lib/desktop-fixture';
+import { openStoryMode } from './lib/story-workspace';
+import { writeTestTone } from './lib/test-tone';
+const root=path.resolve('.'),output=path.resolve('artifacts/preview-controls',new Date().toISOString().replaceAll(':','-'));
+await fs.mkdir(output,{recursive:true});
+const p=createProject('预览控制验收');p.width=800;p.height=450;p.playerDefaults={textSpeed:10};
+for(const [id,duration] of [['bgm',12],['hit',.4],['voice',3]] as const){await writeTestTone(path.join(output,id+'.wav'),duration);p.assets.push({id,name:id,kind:'audio',path:id+'.wav',category:id==='bgm'?'bgm':id==='voice'?'voice':'sound'});}
+const node=p.nodes.find(n=>n.kind==='passage')!;
+node.lines=[{id:'first',text:'这句台词从演出中途开始显示，后面的演出仍然继续。',voiceId:'voice',actions:[{kind:'music',assetId:'bgm',loop:true,fade:0},{kind:'pause',seconds:.6},{kind:'startDialogue'},{kind:'sound',assetId:'hit'},{kind:'pause',seconds:2}]}];
+p.scriptText={format:'vns-text-1',content:projectToText(p)};
+const file=path.join(output,'project.vns.json');await fs.writeFile(file,JSON.stringify(p));
+const app=await launchDesktopFixture({root,profile:path.join(output,'profile'),projectFile:file}),page=await app.firstWindow();
+const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+try{
+ await expect(page.locator('.project-title strong')).toHaveText(p.name,{timeout:45000});
+ await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setContentSize(1280,720));
+ await openStoryMode(page,'script');await page.locator('#line-first textarea').click();
+ await page.evaluate(()=>{const original=HTMLMediaElement.prototype.play;(window as any).plays=[];HTMLMediaElement.prototype.play=function(){(window as any).plays.push({src:this.currentSrc||this.src,manual:this.hasAttribute('data-preview-bgm'),time:performance.now()});return original.call(this);};});
+ const preview=page.locator('.story-preview-content'),audio=preview.locator('audio[data-preview-bgm]');
+ await expect(audio).toBeVisible();await audio.click({position:{x:14,y:14}});
+ await expect.poll(()=>audio.evaluate(a=>!(a as HTMLAudioElement).paused)).toBe(true);
+ await page.getByRole('button',{name:'播放预览',exact:true}).click();
+ await expect.poll(()=>page.evaluate(()=>(window as any).plays.filter((p:any)=>!p.manual).length)).toBeGreaterThanOrEqual(2);
+ let plays=await page.evaluate(()=>(window as any).plays);
+ assert.ok(!plays.some((p:any)=>!p.manual&&p.src.includes('bgm.wav')),JSON.stringify(plays));
+ assert.ok(plays.some((p:any)=>p.src.includes('hit.wav')));assert.ok(plays.some((p:any)=>p.src.includes('voice.wav')));
+ assert.equal(await audio.evaluate(a=>(a as HTMLAudioElement).paused),false);
+ await page.getByRole('button',{name:'暂停预览',exact:true}).click();
+ const before=await audio.evaluate(a=>(a as HTMLAudioElement).currentTime);
+ await expect.poll(()=>audio.evaluate(a=>(a as HTMLAudioElement).currentTime)).toBeGreaterThan(before+.1);
+ const seek=page.getByLabel('定位演出时间（秒）',{exact:true});
+ await seek.fill('0.3');await seek.press('Tab');await expect(preview.locator('.ui-dialogue-preview')).toHaveText(/^(?!.*这句台词)/);
+ await seek.fill('1.1');await seek.press('Tab');await expect(preview.locator('.ui-dialogue-preview')).toContainText('这句台词');
+ const slider=preview.locator('input[type=range]');await slider.fill('0.4');await slider.press('Space');await expect(page.getByRole('button',{name:'暂停预览',exact:true})).toBeVisible();
+ await slider.press('Space');await expect(page.getByRole('button',{name:'播放预览',exact:true})).toBeVisible();
+ assert.equal(await audio.evaluate(a=>(a as HTMLAudioElement).paused),false);
+ const control=await preview.locator('.preview-control-strip').boundingBox(),music=await preview.locator('.text-preview-music').boundingBox();
+ assert.ok(control&&music&&control.height+music.height<=68,JSON.stringify({control,music}));
+ await page.screenshot({path:path.join(output,'compact-1280.png')});
+ await audio.click({position:{x:14,y:14}});await expect.poll(()=>audio.evaluate(a=>(a as HTMLAudioElement).paused)).toBe(true);
+ await openStoryMode(page,'text');const input=page.getByLabel('中文文本剧本',{exact:true});await input.focus();await input.press('Control+End');await input.press('Enter');await input.press('/');
+ const commands=page.getByRole('dialog',{name:'中文指令面板',exact:true});await expect(commands.getByText('自动显示发言角色',{exact:true})).toHaveCount(0);
+ await commands.getByText('播放台词演出',{exact:true}).click();assert.ok((await input.inputValue()).includes('@播放台词演出'));
+ assert.deepEqual(errors,[]);await fs.writeFile(path.join(output,'report.json'),JSON.stringify({status:'passed',control,music,plays,errors},null,2));console.log(output);
+}catch(error){await page.screenshot({path:path.join(output,'failure.png')});throw error;}
+finally{await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().forEach(w=>w.destroy())).catch(()=>undefined);await app.close();}

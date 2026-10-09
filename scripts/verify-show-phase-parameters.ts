@@ -1,0 +1,72 @@
+import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { expect } from '@playwright/test';
+import { createProject } from '../src/core/model';
+import { defaultShowCharacter } from '../src/core/character-presets';
+import { projectToText } from '../src/core/text-script';
+import { launchDesktopFixture } from './lib/desktop-fixture';
+import { openStoryMode } from './lib/story-workspace';
+
+const root = path.resolve('.'), output = path.join(root, 'artifacts/show-phase-parameters', new Date().toISOString().replaceAll(':', '-'));
+await fs.mkdir(output, { recursive: true });
+const project = createProject('显示角色参数验收');
+project.assets = [{ id: 'portrait', name: '立绘', kind: 'image', path: 'portrait.svg', width: 180, height: 300 }];
+await fs.writeFile(path.join(output, 'portrait.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="180" height="300"><rect width="180" height="300" fill="#c05060"/></svg>');
+project.characters = [{ id: 'hero', name: '主角', color: '#ffffff', expressions: [{ id: 'normal', name: '默认', assetId: 'portrait' }] }];
+const node = project.nodes.find(n => n.kind === 'passage')!;
+node.lines = [{ id: 'phase_line', speakerId: 'hero', text: '检查参数提示和保存。', actions: [defaultShowCharacter()] }];
+project.entryId = node.id;
+project.scriptText = { format: 'vns-text-1', content: projectToText(project) };
+const file = path.join(output, 'project.vns.json');
+await fs.writeFile(file, JSON.stringify(project));
+const app = await launchDesktopFixture({ root, projectFile: file, profile: path.join(output, 'profile') });
+const page = await app.firstWindow(), errors: string[] = [];
+page.on('pageerror', error => errors.push(error.message));
+try {
+  await expect(page.locator('.project-title strong')).toHaveText(project.name, { timeout: 45000 });
+  await app.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window.setContentSize(1440, 960); window.show(); window.focus(); });
+  await openStoryMode(page, 'text');
+  const input = page.getByLabel('中文文本剧本', { exact: true });
+  const hidden = page.getByRole('button', { name: '隐藏演出', exact: true });
+  if (await hidden.getAttribute('aria-pressed') === 'true') await hidden.click();
+  await input.focus();
+  await input.evaluate(element => { const field = element as HTMLTextAreaElement, at = field.value.indexOf('@显示角色') + '@显示角色'.length; field.setSelectionRange(at, at); field.dispatchEvent(new Event('select', { bubbles: true })); });
+  await input.pressSequentially('：');
+  await input.press('Control+Space');
+  const hint = page.getByLabel('指令参数提示', { exact: true });
+  await expect(hint).toBeVisible();
+  await expect(hint.getByRole('button', { name: '填写转场', exact: true })).toHaveCount(0);
+  await expect(hint.getByRole('button', { name: '填写时长', exact: true })).toHaveCount(0);
+  for (const phase of ['入场', '离场', '表情切换']) {
+    await expect(hint.getByRole('button', { name: '填写' + phase + '过渡', exact: true })).toBeVisible();
+    await expect(hint.getByRole('button', { name: '填写' + phase + '秒数', exact: true })).toBeVisible();
+  }
+  await page.screenshot({ path: path.join(output, 'phase-hint.png') });
+  await hint.getByRole('button', { name: '填写离场过渡', exact: true }).click();
+  await page.getByRole('option', { name: /^渐变/ }).click();
+  await expect(input).toHaveValue(/@显示角色：离场过渡=渐变/);
+  await hint.getByRole('button', { name: '填写离场秒数', exact: true }).click();
+  await input.pressSequentially('0.8');
+  await input.press('Escape');
+  await expect(input).toHaveValue(/离场秒数=0.8/);
+  await page.getByRole('button', { name: '应用到项目', exact: true }).click();
+  await page.getByRole('button', { name: '保存工程', exact: true }).click();
+  await expect(page.locator('.dirty-dot')).toHaveCount(0);
+  const saved = JSON.parse(await fs.readFile(file, 'utf8'));
+  const action = saved.nodes.find((n: { id: string }) => n.id === node.id).lines[0].actions[0];
+  assert.deepEqual(action.actorTransitions, { exit: { mode: 'dissolve', duration: .8 } });
+  assert.doesNotMatch(saved.scriptText.content, /，(?:转场|时长)=/);
+  await page.reload();
+  await expect(page.locator('.project-title strong')).toHaveText(project.name);
+  await openStoryMode(page, 'script');
+  await page.locator('#line-phase_line textarea').click();
+  const panel = page.locator('.story-preview-content .passage-performances');
+  await expect(panel.getByLabel('角色过渡 · 离场过渡', { exact: true })).toHaveValue('dissolve');
+  await expect(panel.getByLabel('角色过渡 · 离场过渡时长', { exact: true })).toHaveValue('0.8');
+  await expect(panel.getByLabel('转场', { exact: true })).toHaveCount(0);
+  await page.screenshot({ path: path.join(output, 'reopened-phases.png') });
+  assert.deepEqual(errors, []);
+  await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', checks: ['no generic transition/duration in show hint', 'all three phase settings visible', 'clicking phase inserts correct named parameter', 'phase choice and duration save/reopen', 'inspector agrees with text'], errors }, null, 2));
+} catch (error) { await page.screenshot({ path: path.join(output, 'failure.png') }).catch(() => undefined); throw error; }
+finally { await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach(window => window.destroy())).catch(() => undefined); await app.close(); console.log(output); }

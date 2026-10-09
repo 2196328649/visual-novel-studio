@@ -1,0 +1,53 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import { expect } from '@playwright/test';
+import { createServer } from 'vite';
+import { createProject, projectSchema } from '../src/core/model';
+import { launchDesktopFixture } from './lib/desktop-fixture';
+
+const root=path.resolve('.'),output=path.join(root,'artifacts/ui-animation-clips',new Date().toISOString().replaceAll(':','-'));await fs.mkdir(output,{recursive:true});
+const project=createProject('命名控件动画验收');project.ui.pages={...project.ui.pages,main:{layout:'custom'}};
+project.ui.components.push({id:'play',name:'播放按钮',kind:'button',page:'main',text:'播放命名动画',x:.1,y:.1,width:.25,height:.1},{id:'stop',name:'停止按钮',kind:'button',page:'main',text:'停止命名动画',x:.45,y:.1,width:.25,height:.1},{id:'target',name:'动画文字',kind:'text',page:'main',text:'关键帧控制文字',x:.1,y:.4,width:.3,height:.1});
+const original=JSON.stringify(project),projectFile=path.join(output,'project.vns.json');await fs.writeFile(projectFile,original);
+const server=await createServer({root,server:{host:'127.0.0.1',port:0,watch:{ignored:['**/artifacts/**','**/resources/**','**/release/**']}}});await server.listen();
+const app=await launchDesktopFixture({root,projectFile,profile:path.join(output,'profile'),devUrl:process.env.VNS_UI_CLIP_DIST==='1'?undefined:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port}),page=await app.firstWindow();page.setDefaultTimeout(10000);
+const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+const button=(name:string)=>page.getByRole('button',{name,exact:true});
+const tracks=()=>page.locator('.ui-animation-track');
+const field=(name:string)=>page.getByLabel(name,{exact:true});
+const arrange=async()=>{await button('自动排列蓝图').click();await expect(button('自动排列蓝图')).toBeEnabled();await button('框选全部节点').click();};
+try{
+ await expect(page.locator('.project-title strong')).toHaveText(project.name,{timeout:45000});await page.locator('[data-workspace-tab="ui"]').click();await page.getByLabel('界面编辑模式').getByRole('button',{name:'事件图',exact:true}).click();
+ await page.locator('[data-ui-component-id="play"]').click();await button('点击时 · OnClicked').click();await button('＋ 新建动画').click();
+ await expect(field('界面动画名称')).toHaveValue('界面动画');await field('界面动画名称').fill('提示入场');await field('界面动画总时长').fill('3');
+ await page.locator('[data-animation-component="target"]').click();await field('添加轨道属性').selectOption('x');await button('添加属性轨道').click();await expect(tracks()).toHaveCount(1);
+ await tracks().first().locator('.ui-animation-key').last().click();await field('关键帧数值').fill('.3');
+ const addKey=async(time:string,value:string)=>{await field('动画播放头秒数').fill(time);await button('在播放头添加关键帧').click();await field('关键帧数值').fill(value);};
+ await addKey('1','.9');await addKey('2','.3');await expect(tracks().first().locator('.ui-animation-key')).toHaveCount(4);
+ const selected=page.locator('.ui-animation-key.selected'),keyId=await selected.getAttribute('data-animation-key');const bounds=await selected.boundingBox(),lane=await tracks().first().locator('.ui-animation-lane').boundingBox();assert.ok(bounds&&lane);
+ await page.mouse.move(bounds.x+bounds.width/2,bounds.y+bounds.height/2);await page.mouse.down();await page.mouse.move(bounds.x+bounds.width/2+lane.width*.1,bounds.y+bounds.height/2,{steps:8});await page.mouse.up();
+ await expect.poll(async()=>Number(await field('关键帧时间').inputValue())).toBeCloseTo(2.3,2);
+ await button('回到起点').focus();await page.keyboard.press('Control+z');await expect(field('关键帧时间')).toHaveValue('2');await page.keyboard.press('Control+y');await expect.poll(async()=>Number(await field('关键帧时间').inputValue())).toBeCloseTo(2.3,2);await page.keyboard.press('Control+z');
+ await field('关键帧时间').fill('1');await expect(page.getByRole('status').filter({hasText:'同一时间'})).toBeVisible();await button('关闭动画提示').click();await field('关键帧时间').fill('2');
+ await field('添加轨道属性').selectOption('opacity');await button('添加属性轨道').click();await tracks().last().locator('.ui-animation-key').last().click();await field('关键帧数值').fill('0');await addKey('2','0');
+ await field('动画播放头秒数').fill('.5');const previewTarget=page.locator('[data-animation-preview="target"]');let position=await previewTarget.evaluate(e=>({x:parseFloat((e as HTMLElement).style.left)/e.parentElement!.getBoundingClientRect().width,opacity:Number((e as HTMLElement).style.opacity)}));assert.ok(Math.abs(position.x-.5)<.01);assert.equal(position.opacity,.75);
+ await button('播放动画预览').click();await expect(button('暂停动画预览')).toBeVisible();await expect.poll(async()=>Number(await field('动画播放头秒数').inputValue())).toBeGreaterThan(.6);await button('暂停动画预览').click();
+ await field('动画播放头秒数').fill('1.5');await page.screenshot({path:path.join(output,'keyframes.png')});
+ assert.equal(await fs.readFile(projectFile,'utf8'),original);await button('返回事件图').click();
+ const animationEntry=page.locator('[data-ui-animation-id]');await expect(animationEntry).toHaveCount(1);await animationEntry.getByRole('button',{name:'提示入场',exact:true}).dragTo(page.locator('.flow-container'),{targetPosition:{x:400,y:240}});
+ const playNode=page.locator('.react-flow__node').filter({has:page.locator('.node-kind-playUiAnimation')});await expect(playNode).toHaveCount(1);
+ await page.locator('[data-ui-component-id="target"]').click();await button('设置属性').click();await page.locator('.node-kind-setUiProperty').getByLabel('设置组件属性 · 属性值',{exact:true}).selectOption('false');
+ await page.locator('[data-ui-component-id="stop"]').click();await button('点击时 · OnClicked').click();await animationEntry.getByRole('button',{name:'停止',exact:true}).click();await arrange();
+ await playNode.locator('.graph-node-title').dblclick();await expect(field('界面动画名称')).toHaveValue('提示入场');await expect(tracks()).toHaveCount(2);await expect(page.locator('[data-animation-key="'+keyId+'"]')).toBeVisible();await button('返回事件图').click();await expect(playNode).toHaveClass(/selected/);
+ if(await button('关闭事件图提示').isVisible())await button('关闭事件图提示').click();await arrange();await page.screenshot({path:path.join(output,'event-graph.png')});
+ await button('交互预演').click();await field('按时间预演').check();const preview=page.locator('.ui-logic-preview-frame'),target=preview.locator('[data-preview-component="target"]');
+ await preview.getByRole('button',{name:'播放命名动画',exact:true}).click();await button('推进 1 秒').click();await expect(target).toBeVisible();position=await target.evaluate(e=>({x:parseFloat((e as HTMLElement).style.left)/e.parentElement!.getBoundingClientRect().width,opacity:Number((e as HTMLElement).style.opacity)}));assert.ok(Math.abs(position.x-.9)<.01);assert.equal(position.opacity,.5);
+ await button('推进 1 秒').click();await expect(target).toHaveCount(1);await button('推进 1 秒').click();await expect(target).toHaveCount(0);
+ await button('恢复测试值').click();await preview.getByRole('button',{name:'播放命名动画',exact:true}).click();await button('推进 0.1 秒').click();await preview.getByRole('button',{name:'停止命名动画',exact:true}).click();await expect(target).toHaveCount(0);
+ await button('交互预演').click();await button('保存界面').click();await expect(button('保存界面')).toBeDisabled();const saved=projectSchema.parse(JSON.parse(await fs.readFile(projectFile,'utf8')));assert.equal(saved.ui.animations?.length,1);assert.equal(saved.ui.animations![0].tracks.length,2);assert.equal(saved.ui.components.find(c=>c.id==='target')!.x,.1);
+ await page.reload();await expect(page.locator('.project-title strong')).toHaveText(project.name,{timeout:45000});await page.locator('[data-workspace-tab="ui"]').click();await page.getByLabel('界面编辑模式').getByRole('button',{name:'事件图',exact:true}).click();await page.locator('[data-ui-animation-id]').getByRole('button',{name:'提示入场',exact:true}).click();await expect(tracks()).toHaveCount(2);
+ await field('界面动画名称').fill('未保存名称');await page.locator('[data-workspace-tab="assets"]').click();await page.getByRole('dialog',{name:'保存界面修改'}).getByRole('button',{name:'不保存',exact:true}).click();assert.equal(projectSchema.parse(JSON.parse(await fs.readFile(projectFile,'utf8'))).ui.animations![0].name,'提示入场');
+ assert.deepEqual(errors,[]);await fs.writeFile(path.join(output,'report.json'),JSON.stringify({status:'passed',renderer:process.env.VNS_UI_CLIP_DIST==='1'?'dist':'vite',checks:['页面内创建命名动画','多控件属性轨道、数值关键帧与中间画面','关键帧拖动、撤销重做与重复时间拒绝','实际动画播放与播放头定位','拖入播放节点、停止节点及双击编辑返回原调用','交互预演等待全部轨道后隐藏、停止继续','显式保存重开与放弃草稿，设计默认不变']},null,2));
+}catch(error){await page.screenshot({path:path.join(output,'failure.png')}).catch(()=>undefined);await fs.writeFile(path.join(output,'failure.txt'),String(error)+'\n'+errors.join('\n'));throw error;}
+finally{await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().forEach(w=>w.destroy())).catch(()=>undefined);await app.close();await server.close();console.log(output);}

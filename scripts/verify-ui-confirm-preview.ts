@@ -1,0 +1,46 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { expect } from '@playwright/test';
+import { projectSchema } from '../src/core/model';
+import { synchronizeBlueprintSignatures } from '../src/core/blueprint';
+import { createUiConfirmPreviewFixture } from './lib/ui-confirm-preview-fixture';
+import { launchDesktopFixture } from './lib/desktop-fixture';
+const root = path.resolve('.'), output = path.join(process.env.VNS_ARTIFACT_ROOT??path.join(root,'artifacts'), 'ui-confirm-preview', new Date().toISOString().replaceAll(':', '-'));
+await fs.mkdir(output, { recursive: true });
+const { project, nestedGraph } = createUiConfirmPreviewFixture();
+project.ui.components.find(c=>c.id==='yes')!.events={onClick:nestedGraph.id};
+synchronizeBlueprintSignatures(project);
+const projectFile = path.join(output, 'project.vns.json'); await fs.writeFile(projectFile, JSON.stringify(projectSchema.parse(project)));
+const before = await fs.readFile(projectFile, 'utf8'), app = await launchDesktopFixture({ root, projectFile, profile: path.join(output, 'profile') }), page = await app.firstWindow(), errors: string[] = [];
+page.on('pageerror', error => errors.push(error.message));
+try {
+ await expect(page.locator('.project-title strong')).toHaveText(project.name,{timeout:45000}); await page.locator('[data-workspace-tab="ui"]').click(); await page.getByLabel('界面编辑模式').getByRole('button',{name:'事件图',exact:true}).click(); await page.getByRole('button',{name:'交互预演',exact:true}).click();
+ const divider=page.getByRole('separator',{name:'调整画布与页面设置高度',exact:true}); for(let i=0;i<18;i++)await divider.press('ArrowUp');
+ const frame=page.getByLabel('参数联动预演画面',{exact:true}), name=page.getByLabel('当前预演页面',{exact:true}), value=(key:string)=>page.getByLabel('预演参数 '+key,{exact:true});
+ const active=frame.locator('[data-preview-page]:not([inert]):not([hidden])');
+ const click=(text:string)=>active.getByRole('button',{name:text,exact:true}).click();
+ await expect(page.locator('.dirty-dot')).toHaveCount(0); await page.getByLabel('按时间预演',{exact:true}).check();
+ await click('询问确认'); await expect(name).toHaveText('消息框'); await expect(active.getByLabel('确认提示',{exact:true})).toHaveText(project.variables.find(v=>v.id==='message')!.initial as string);
+ await expect(value('after')).toHaveValue('0'); await click('放弃'); await expect(value('关闭结果')).toHaveValue('已取消'); await expect(value('after')).toHaveValue('1');
+ await expect(frame.getByRole('button',{name:'询问确认',exact:true})).toBeFocused();
+ await click('询问确认'); await click('保留'); await expect(active.getByLabel('确认提示',{exact:true})).toHaveText('内层确认'); await expect(value('after')).toHaveValue('1');
+ await click('保留'); await expect(value('子页结果')).toHaveValue('内层确认完成'); await expect(value('关闭结果')).toHaveValue('已确认'); await expect(value('after')).toHaveValue('2');
+ await click('询问确认'); await page.keyboard.press('Escape'); await expect(value('关闭结果')).toHaveValue('已取消');
+ await click('询问确认'); await frame.click({position:{x:15,y:15},button:'right'}); await expect(name).toHaveText('标题');
+ await value('提示内容').fill('长提示 [name] {b}\n'.repeat(80)); await value('提示内容').press('Tab'); await click('询问确认');
+ const prompt=active.getByLabel('确认提示',{exact:true}); await expect(prompt).toContainText('[name] {b}');
+ expect(await prompt.evaluate(element=>element.scrollHeight>element.clientHeight)).toBe(true);
+ await prompt.evaluate(element=>element.scrollTop=element.scrollHeight); expect(await prompt.evaluate(element=>element.scrollTop)).toBeGreaterThan(0);
+ await frame.screenshot({path:path.join(output,'long-prompt-frame.png')}); await click('放弃');
+ await click('蓝图打开设置'); await expect(name).toHaveText('设置'); const beforeAfter=await value('after').inputValue();
+ await frame.getByRole('slider',{name:'音乐音量',exact:true}).fill('0.3'); await page.getByRole('button',{name:'推进 1 秒',exact:true}).click(); await expect(value('base_ticks')).toHaveValue('0'); await expect(value('菜单计时')).toHaveValue('2');
+ await click('角色音量'); await click('返回设置'); await expect(frame.getByRole('slider',{name:'音乐音量',exact:true})).toHaveValue('0.3');
+ await click('菜单内确认'); await click('放弃'); await expect(name).toHaveText('设置'); await expect(value('after')).toHaveValue(String(Number(beforeAfter)+1));
+ await frame.screenshot({path:path.join(output,'menu-frame.png')}); await click('返回调用处'); await expect(name).toHaveText('标题'); await expect(value('after')).toHaveValue(String(Number(beforeAfter)+2));
+ await expect(frame.getByRole('button',{name:'蓝图打开设置',exact:true})).toBeFocused();
+ await click('打开自定义页'); await click('页面内打开设置'); await click('返回调用处'); await expect(name).toHaveText('等待页面'); await click('确认关闭页面'); await expect(name).toHaveText('标题');
+ await click('询问确认'); await page.getByRole('button',{name:'恢复测试值',exact:true}).click(); await expect(name).toHaveText('标题'); await expect(value('after')).toHaveValue('0');
+ await expect(page.locator('.dirty-dot')).toHaveCount(0); expect(await fs.readFile(projectFile,'utf8')).toBe(before); expect(errors).toEqual([]);
+ await fs.writeFile(path.join(output,'report.json'),JSON.stringify({status:'passed',compiledBuild:true,checks:['动态提示按字面显示，确认/取消与嵌套回调','Esc与右键取消，恢复测试值','长提示缩字并滚动','菜单等待、内部导航、偏好保留与恢复原调用页','菜单计时与底层暂停','返回焦点，UI草稿及磁盘不变'],errors},null,2)); console.log(output);
+}catch(error){await page.screenshot({path:path.join(output,'failure.png')});throw error;}
+finally{await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().forEach(w=>w.destroy())).catch(()=>undefined);await app.close();}

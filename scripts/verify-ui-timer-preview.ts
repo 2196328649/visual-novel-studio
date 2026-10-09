@@ -1,0 +1,41 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { expect } from '@playwright/test';
+import { createServer } from 'vite';
+import { createProject } from '../src/core/model';
+import { blueprintNodeDefaults, createBlueprintGraph, connectBlueprintPins, synchronizeBlueprintSignatures } from '../src/core/blueprint';
+import { launchDesktopFixture } from './lib/desktop-fixture';
+const root=path.resolve('.'),output=path.join(root,'artifacts/ui-timer-preview',new Date().toISOString().replaceAll(':','-'));await fs.mkdir(output,{recursive:true});
+const project=createProject('UI计时预演验收');project.variables.push({id:'ticks',name:'触发次数',type:'number',initial:0,persistent:false});
+project.ui.components.push({id:'clock_text',kind:'text',page:'main',text:'尚未触发',x:.1,y:.1,width:.6,height:.1});
+const graph=createBlueprintGraph('ui','计时交互');project.blueprints.push(graph);
+const timer=blueprintNodeDefaults('eventTimer');timer.properties={pageId:'ui:main',interval:.25,repeat:true};
+const once=blueprintNodeDefaults('eventTimer');once.properties={pageId:'ui:main',interval:.1,repeat:false};
+const read=blueprintNodeDefaults('getVariable');read.properties.variableId='ticks';const math=blueprintNodeDefaults('math');math.properties={operation:'add',b:1};
+const write=blueprintNodeDefaults('setVariable');write.properties.variableId='ticks';
+const caption=blueprintNodeDefaults('setUiProperty');caption.properties={componentId:'clock_text',property:'text',value:''};
+const initial=blueprintNodeDefaults('setUiProperty');initial.properties={componentId:'clock_text',property:'text',value:'单次触发'};
+const format=blueprintNodeDefaults('formatText');format.properties.format='计数{value}';
+graph.nodes.push(timer,once,read,math,write,caption,initial,format);synchronizeBlueprintSignatures(project);
+for(const [from,out,to,input] of [[timer.id,'exec',write.id,'exec_in'],[once.id,'exec',initial.id,'exec_in'],[read.id,'value',math.id,'a'],[math.id,'result',write.id,'value'],[write.id,'exec_out',caption.id,'exec_in'],[read.id,'value',format.id,'value'],[format.id,'text',caption.id,'value']]){const error=connectBlueprintPins(graph,from,out,to,input);if(error)throw Error(error);}
+const projectFile=path.join(output,'project.vns.json');await fs.writeFile(projectFile,JSON.stringify(project));
+const server=await createServer({root,server:{host:'127.0.0.1',port:0,watch:{ignored:['**/artifacts/**','**/resources/**','**/release/**']}}});await server.listen();
+const app=await launchDesktopFixture({root,projectFile,profile:path.join(output,'profile'),devUrl:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port}),page=await app.firstWindow();
+try{
+ await expect(page.locator('.project-title strong')).toHaveText(project.name,{timeout:45000});await page.locator('[data-workspace-tab="ui"]').click();await page.getByRole('button',{name:'高级 UI 蓝图',exact:true}).click();
+ await expect(page.locator('.dirty-dot')).toHaveCount(0);const before=await fs.readFile(projectFile,'utf8');
+ await page.locator('.ui-logic-preview > summary').click();await page.getByLabel('按时间预演',{exact:true}).check();
+ const object=page.locator('[data-preview-component="clock_text"]'),clock=page.getByLabel('预演时间',{exact:true});
+ await expect(object).toContainText('尚未触发');await expect(clock).toHaveText('0.00 秒');
+ await page.getByRole('button',{name:'推进 0.1 秒',exact:true}).click();await expect(object).toContainText('单次触发');
+ await page.getByRole('button',{name:'推进 0.1 秒',exact:true}).click();await expect(object).toContainText('单次触发');
+ await page.getByRole('button',{name:'推进 0.1 秒',exact:true}).click();await expect(object).toContainText('计数1');
+ await page.getByRole('button',{name:'推进 1 秒',exact:true}).click();await expect(object).toContainText('计数5');
+ await page.getByRole('button',{name:'播放计时',exact:true}).click();await expect.poll(async()=>Number(await page.getByLabel('预演参数 触发次数',{exact:true}).inputValue())).toBeGreaterThanOrEqual(7);
+ await page.getByRole('button',{name:'暂停计时',exact:true}).click();const stopped=await clock.textContent(),captionText=await object.textContent();await page.waitForTimeout(450);await expect(clock).toHaveText(stopped!);await expect(object).toHaveText(captionText!);
+ await page.screenshot({path:path.join(output,'timed-preview.png')});
+ await page.getByRole('button',{name:'播放计时',exact:true}).click();await page.locator('.ui-logic-preview > summary').click();await page.waitForTimeout(250);await page.locator('.ui-logic-preview > summary').click();await expect(page.getByRole('button',{name:'播放计时',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'恢复测试值',exact:true}).click();await expect(clock).toHaveText('0.00 秒');await expect(object).toContainText('尚未触发');
+ await expect(page.locator('.dirty-dot')).toHaveCount(0);expect(await fs.readFile(projectFile,'utf8')).toBe(before);
+ await fs.writeFile(path.join(output,'report.json'),JSON.stringify({status:'passed',checks:['计时模式从零开始不预触发','单次0.1秒事件','循环0.25秒事件','单步跨越多次触发','播放推进参数与文字','暂停时间与画面不变','折叠停止播放','恢复时间参数与画面','工程及磁盘不变']},null,2));console.log(output);
+}catch(error){await page.screenshot({path:path.join(output,'failure.png')});throw error;}finally{await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().forEach(w=>w.destroy())).catch(()=>undefined);await app.close();await server.close();}

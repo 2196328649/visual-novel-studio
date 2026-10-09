@@ -1,0 +1,56 @@
+import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { expect } from '@playwright/test';
+import { createProject, projectSchema } from '../src/core/model';
+import { createVisualObject, visualInputFields } from '../src/core/visual-object';
+import { blueprintFromPerformance, exposePerformanceInputs, performanceInputs } from '../src/core/blueprint-authoring';
+import { launchDesktopFixture } from './lib/desktop-fixture';
+
+const root = path.resolve('.'), output = path.join(root, 'artifacts/visual-playhead', new Date().toISOString().replaceAll(':', '-'));
+await fs.mkdir(output, { recursive: true });
+const project = createProject('组合播放头属性验收');
+const child = { ...createVisualObject('solid'), name: '移动色块', width: .25, height: .25, startAt: .5, duration: 3, retimeOnDuration: true };
+child.keyframes.push({ ...child.keyframes[0], duration: 3, x: .9 });
+const group = { ...createVisualObject('group'), duration: 6, retimeOnDuration: true, children: [child] };
+const graph = blueprintFromPerformance(project, [group], '缩放组合'); project.blueprints.push(graph);
+const source = graph.nodes.find(node => node.type === 'savedAction')!;
+exposePerformanceInputs(graph, [performanceInputs(graph).find(input => input.nodeId === source.id && input.pinId === 'object_duration')!]);
+graph.exposedInputs[0].defaultValue = 12;
+const childDuration = visualInputFields(group).find(field => field.path.length > 1 && field.path.at(-1) === 'duration')!;
+source.properties['object_' + childDuration.key] = 6;
+const originalProperties = structuredClone(source.properties);
+const projectFile = path.join(output, 'project.vns.json'); await fs.writeFile(projectFile, JSON.stringify(projectSchema.parse(project)));
+const app = await launchDesktopFixture({ root, projectFile, profile: path.join(output, 'profile') });
+const page = await app.firstWindow(), errors: string[] = [];
+page.on('pageerror', error => errors.push(error.message));
+try {
+  await expect(page.locator('.project-title strong')).toHaveText(project.name, { timeout: 45000 });
+  await page.locator('[data-workspace-tab="blueprint"]').click();
+  await page.getByLabel('演出目标', { exact: true }).selectOption('graph:' + graph.id);
+  await page.getByRole('button', { name: '时间轴', exact: true }).click();
+  await page.locator(`.lifetime-span[data-instance-id="${child.instanceId}"]`).click();
+  const playhead = page.getByRole('slider', { name: '时间轴播放头', exact: true });
+  await playhead.press('Shift+ArrowRight'); await playhead.press('Shift+ArrowRight');
+  await expect(playhead).toHaveAttribute('aria-valuenow', '3');
+  const x = page.getByLabel('当前横向位置 %', { exact: true }), rotation = page.getByLabel('当前旋转 度', { exact: true });
+  await x.fill('25'); await x.press('Tab');
+  await rotation.fill('20'); await rotation.press('Tab');
+  await expect(x).toHaveValue('25'); await expect(rotation).toHaveValue('20');
+  await expect(playhead).toHaveAttribute('aria-valuenow', '3');
+  const marker = page.getByLabel('属性轨道 横向位置 %', { exact: true }).getByRole('button', { name: '横向位置 %时间轴帧 2', exact: true });
+  await expect(marker).toHaveAttribute('data-absolute-time', '3');
+  await page.getByRole('button', { name: '保存工程', exact: true }).click(); await expect(page.locator('.dirty-dot')).toHaveCount(0);
+  const saved = projectSchema.parse(JSON.parse(await fs.readFile(projectFile, 'utf8')));
+  const savedGraph = saved.blueprints.find(item => item.id === graph.id)!, properties = savedGraph.nodes.find(item => item.id === source.id)!.properties;
+  const action = JSON.parse(String(properties.action));
+  assert.deepEqual(action.children[0].curves.x.map((frame: {at: number; value: number}) => [frame.at, frame.value]), [[0, .5], [.5, .25], [3, .9]]);
+  assert.deepEqual(action.children[0].curves.rotation.map((frame: {at: number; value: number}) => [frame.at, frame.value]), [[0, 0], [.5, 20], [3, 0]]);
+  assert.deepEqual({ ...properties, action: originalProperties.action }, originalProperties);
+  assert.equal(action.children[0].duration, 3); assert.equal(action.duration, 6);
+  assert.equal(savedGraph.exposedInputs[0].defaultValue, 12);
+  await page.screenshot({ path: path.join(output, 'visual-playhead.png') });
+  assert.deepEqual(errors, []);
+  await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', checks: ['组合子对象在绝对3秒编辑位置和旋转', '父子4倍缩放后写回原始局部0.5秒', '新属性轨道帧显示在3秒且播放头位置保持', '保存保留原时长、终点、节点覆盖参数及公开输入'], errors }, null, 2));
+} catch (error) { await page.screenshot({ path: path.join(output, 'failure.png') }).catch(() => undefined); throw error; }
+finally { await app.close(); console.log(output); }

@@ -1,0 +1,110 @@
+{
+  "name": "visual-novel-studio",
+  "version": "0.8.0",
+  "packageManager": "pnpm@11.25.0",
+  "private": true,
+  "description": "Offline visual novel authoring studio",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "main": "dist-desktop/main.cjs",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "vite --host 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "build": "tsc --noEmit && vite build && node scripts/build-desktop.mjs",
+    "package": "node scripts/package.mjs",
+    "package:portable": "node scripts/package-portable.mjs",
+    "sample": "tsx scripts/create-sample.ts",
+    "runtime:prepare": "node scripts/prepare-runtime.mjs",
+    "spine:build": "node scripts/build-spine-runtime.mjs",
+    "spine:build:android": "node scripts/build-spine-android.mjs",
+    "template:aihong": "tsx scripts/create-aihong-template.ts --bundle",
+    "test:spine-authoring": "tsx scripts/verify-spine-authoring.ts",
+    "test:runtime": "tsx scripts/verify-runtime.ts",
+    "test:blueprint-editor": "tsx scripts/verify-blueprint-editor.ts",
+    "test:blueprint-runtime": "tsx scripts/verify-blueprint-runtime.ts",
+    "test:workbench": "tsx scripts/verify-workbench.ts",
+    "test:aihong-story": "tsx scripts/verify-aihong-story.ts",
+    "test:live-preview": "node scripts/build-desktop.mjs && tsx scripts/verify-live-preview.ts",
+    "test:text-structure": "node scripts/build-desktop.mjs && tsx scripts/verify-text-structure.ts",
+    "test:diagnostics": "node scripts/build-desktop.mjs && tsx scripts/verify-diagnostic-navigation.ts"
+  },
+  "dependencies": {
+    "@esotericsoftware/spine-webgl": "~4.2.120",
+    "@xyflow/react": "^12.8.6",
+    "elkjs": "^0.11.0",
+    "fast-xml-parser": "^5.11.1",
+    "lucide-react": "^0.468.0",
+    "pinyin-pro": "^3.29.4",
+    "pngjs": "7.0.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "@types/node": "^24.10.0",
+    "@types/pngjs": "6.0.5",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.1.0",
+    "electron": "^40.0.0",
+    "electron-builder": "26.15.3",
+    "esbuild": "^0.27.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.0"
+  },
+  "build": {
+    "appId": "studio.visualnovel.desktop",
+    "productName": "Visual Novel Studio",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-desktop/**/*",
+      "package.json",
+      "!node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources",
+        "to": "resources",
+        "filter": [
+          "**/*",
+          "!runtime/tmp/**",
+          "!runtime/**/__pycache__/**",
+          "!runtime/**/cache/**",
+          "!runtime/**/saves/**",
+          "!runtime/**/log.txt",
+          "!runtime/**/traceback.txt",
+          "!runtime/**/errors.txt"
+        ]
+      },
+      {
+        "from": "docs",
+        "to": "docs"
+      },
+      {
+        "from": "README.md",
+        "to": "README.md"
+      }
+    ],
+    "toolsets": {
+      "nsis": "1.2.1"
+    },
+    "win": {
+      "target": "nsis",
+      "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "preCompressedFileExtensions": [".avi", ".mov", ".m4v", ".mp4", ".m4p", ".qt", ".mkv", ".webm", ".vmdk", ".so"],
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

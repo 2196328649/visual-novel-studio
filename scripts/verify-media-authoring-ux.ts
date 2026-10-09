@@ -1,0 +1,136 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { expect } from '@playwright/test';
+import { createProject, projectSchema } from '../src/core/model';
+import { createMediaVisual } from '../src/core/media-command';
+import { projectToText } from '../src/core/text-script';
+import { enterFixtureProject, launchDesktopFixture } from './lib/desktop-fixture';
+import { openStoryMode } from './lib/story-workspace';
+
+const root = path.resolve('.'), output = path.resolve('artifacts/media-authoring-ux', new Date().toISOString().replaceAll(':', '-'));
+await fs.mkdir(output, { recursive: true });
+await fs.writeFile(path.join(output, 'image.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="#d05265"/></svg>');
+const project = createProject('图片与参数拖动验收');
+project.assets = [{ id: 'image', name: '测试图片', kind: 'image', path: 'image.svg', width: 200, height: 200 }];
+project.characters = [{ id: 'hero', name: '测试角色', color: '#ffffff', expressions: [{ id: 'normal', name: '通常', assetId: 'image' }] }];
+const node = project.nodes.find(n => n.kind === 'passage')!; project.entryId = node.id;
+node.lines = [
+  { id: 'picture_line', text: '图片在本句显示。', actions: [createMediaVisual('image', 'image', { x: .35, y: .35, scaleX: .6, scaleY: .4, visualTransitions: { enter: { mode: 'dissolve', duration: 1 } } })] },
+  { id: 'next_line', text: '下一句隐藏图片。', actions: [] },
+];
+project.scriptText = { format: 'vns-text-1', content: projectToText(project) };
+const file = path.join(output, 'project.vns.json'); await fs.writeFile(file, JSON.stringify(project));
+const app = await launchDesktopFixture({ root, projectFile: file, profile: path.join(output, 'profile') });
+const page = await app.firstWindow(), errors: string[] = [], checks: string[] = [];
+page.on('pageerror', error => errors.push(error.message));
+const save = async () => { await page.getByRole('button', { name: '保存工程', exact: true }).click(); await expect(page.locator('.dirty-dot')).toHaveCount(0); };
+const readAction = async () => {
+  const saved = projectSchema.parse(JSON.parse(await fs.readFile(file, 'utf8')));
+  const passage = saved.nodes.find(n => n.id === node.id)!;
+  assert.ok(passage.kind === 'passage'); const action = passage.lines[0].actions[0]; assert.ok(action.kind === 'visual'); return action;
+};
+try {
+  await expect(page.locator('.project-title strong')).toHaveText(project.name, { timeout: 45000 });
+  await app.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window.setContentSize(1440, 960); window.show(); window.focus(); });
+  await openStoryMode(page, 'script');
+  await page.locator('#line-picture_line textarea').click();
+  const preview = page.locator('.story-preview-content');
+  const seek = preview.getByLabel('定位演出时间（秒）', { exact: true });
+  await expect(seek).toHaveValue('1');
+  await expect(preview).toHaveAttribute('data-preview-phase', 'idle');
+  const visual = preview.locator('[data-visual-instance="image"]').first();
+  await expect(visual).toBeVisible();
+  await expect(visual.locator('g[opacity]').first()).toHaveAttribute('opacity', '1');
+  checks.push('idle preview shows completed entrance and playhead');
+  const inspector = preview.locator('.passage-performances');
+  const x = inspector.getByLabel('图片位置 X', { exact: true });
+  await expect(x).toHaveValue('35');
+  await expect(inspector.getByLabel('图片显示范围', { exact: true })).toHaveValue('line');
+  await expect(inspector.getByLabel('图片尺寸 W', { exact: true })).toHaveCount(0);
+  await expect(inspector.getByLabel('图片缩放', { exact: true })).toHaveCount(0);
+  const scaleX = inspector.getByLabel('图片缩放 X', { exact: true }), scaleY = inspector.getByLabel('图片缩放 Y', { exact: true });
+  const imageBounds = () => visual.locator('image[href]').first().boundingBox();
+  const initialBounds = await imageBounds(); assert.ok(initialBounds);
+  await scaleX.fill('75'); await scaleX.press('Tab'); await expect(scaleY).toHaveValue('40');
+  const wide = await imageBounds(); assert.ok(wide); assert.ok(Math.abs(wide.height - initialBounds.height) < .5); assert.ok(Math.abs(wide.width / initialBounds.width - 1.25) < .01);
+  await scaleY.fill('60'); await scaleY.press('Tab'); await expect(scaleX).toHaveValue('75');
+  const tall = await imageBounds(); assert.ok(tall); assert.ok(Math.abs(tall.width - wide.width) < .5); assert.ok(Math.abs(tall.height / wide.height - 1.5) < .01);
+  await scaleX.fill('60'); await scaleX.press('Tab'); await scaleY.fill('40'); await scaleY.press('Tab');
+  checks.push('only X/Y scale is shown; each axis changes its own rendered dimension');
+
+  await preview.getByRole('button', { name: '播放预览', exact: true }).click();
+  await expect.poll(async () => Number(await seek.inputValue())).toBeGreaterThan(.2);
+  await preview.getByRole('button', { name: '暂停预览', exact: true }).click();
+  const paused = Number(await seek.inputValue());
+  await x.fill('40'); await x.press('Tab');
+  await expect(preview).toHaveAttribute('data-preview-phase', 'paused');
+  await expect.poll(async () => Number(await seek.inputValue())).toBeCloseTo(paused, 5);
+  checks.push('pause then change a numeric property retains the exact time');
+
+  const dragLabel = async (distance: number, modifiers: string[] = [], cancel = false) => {
+    await x.scrollIntoViewIfNeeded(); const box = await x.locator('..').boundingBox(); assert.ok(box);
+    for (const key of modifiers) await page.keyboard.down(key);
+    await page.mouse.move(box.x + 5, box.y + box.height / 2); await page.mouse.down();
+    await page.mouse.move(box.x + 5 + distance, box.y + box.height / 2, { steps: 8 });
+    if (cancel) await page.keyboard.press('Escape');
+    await page.mouse.up(); for (const key of modifiers) await page.keyboard.up(key);
+  };
+  await dragLabel(50); await expect(x).toHaveValue('50');
+  await dragLabel(50, ['Shift']); await expect(x).toHaveValue('51');
+  await dragLabel(10, ['Control']); await expect(x).toHaveValue('71');
+  await dragLabel(-10, ['Control']); await expect(x).toHaveValue('51');
+  await dragLabel(50, [], true); await expect(x).toHaveValue('51');
+  await expect.poll(async () => Number(await seek.inputValue())).toBeCloseTo(paused, 5);
+  checks.push('numeric label drag, Shift fine control, Ctrl acceleration and Escape cancel');
+  await preview.getByRole('button', { name: '停止预览', exact: true }).click();
+  await expect(seek).toHaveValue('1');
+  await preview.getByRole('button', { name: '编辑舞台', exact: true }).click();
+  const handle = preview.locator('[data-visual-handle="image"]').first();
+  await handle.click({ force: true });
+  const scales = preview.locator('[data-visual-scale="image"]');
+  await expect(scales).toHaveCount(4);
+  const scale = await scales.last().boundingBox(); assert.ok(scale);
+  await page.mouse.move(scale.x + scale.width / 2, scale.y + scale.height / 2); await page.mouse.down();
+  await page.mouse.move(scale.x + scale.width / 2 + 45, scale.y + scale.height / 2 + 30, { steps: 10 }); await page.mouse.up();
+  await expect.poll(async () => Number(await scaleX.inputValue())).toBeGreaterThan(65);
+  await expect.poll(async () => Number(await scaleY.inputValue())).toBeGreaterThan(45);
+  const beforeMove = Number(await x.inputValue());
+  const rect = await handle.boundingBox(); assert.ok(rect);
+  await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2); await page.mouse.down();
+  await page.mouse.move(rect.x + rect.width / 2 + 35, rect.y + rect.height / 2 + 30, { steps: 10 }); await page.mouse.up();
+  await expect.poll(async () => Number(await x.inputValue())).toBeGreaterThan(beforeMove + 1);
+  const rotateHandle = preview.locator('[data-visual-rotate="image"]');
+  await rotateHandle.click({ trial: true });
+  const rotate = await rotateHandle.boundingBox(); assert.ok(rotate);
+  await page.mouse.move(rotate.x + rotate.width / 2, rotate.y + rotate.height / 2); await page.mouse.down();
+  await page.mouse.move(rotate.x + rotate.width / 2 + 35, rotate.y + rotate.height / 2 + 20, { steps: 10 }); await page.mouse.up();
+  await expect.poll(async () => Math.abs(Number(await inspector.getByLabel('图片旋转 Z', { exact: true }).inputValue()))).toBeGreaterThan(1);
+  await save();
+  const saved = await readAction(); assert.ok(saved.keyframes[0].scaleX! > .65); assert.ok(saved.keyframes[0].scaleY! > .45); assert.ok(saved.keyframes[0].x > .51); assert.ok(Math.abs(saved.keyframes[0].rotation) > 1); assert.equal(saved.curves, undefined);
+  checks.push('stage movement, corner scaling and rotation update the saved image transform');
+  await page.screenshot({ path: path.join(output, 'image-transform.png') });
+  await page.locator('#line-next_line textarea').click();
+  await expect(preview.locator('[data-visual-instance="image"]')).toHaveCount(0);
+  checks.push('default image disappears on the following dialogue');
+
+  await page.locator('[data-workspace-tab="characters"]').click();
+  await page.locator('.character-item[data-character-id="hero"]').click();
+  await page.getByRole('tab', { name: '构图与站位', exact: true }).click();
+  await expect(page.getByLabel('角色站位预设', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('角色默认过渡', { exact: true })).toHaveCount(0);
+  await page.getByRole('tab', { name: '角色过渡', exact: true }).click();
+  await expect(page.getByLabel('角色默认过渡', { exact: true })).toBeVisible();
+  checks.push('character transitions have their own tab, outside staging');
+  await page.reload();
+  await enterFixtureProject(page, file);
+  await expect(page.locator('.project-title strong')).toHaveText(project.name);
+  await openStoryMode(page, 'script'); await page.locator('#line-picture_line textarea').click();
+  await expect(scaleX).toHaveValue(String(Number((saved.keyframes[0].scaleX! * 100).toFixed(5))));
+  await expect(scaleY).toHaveValue(String(Number((saved.keyframes[0].scaleY! * 100).toFixed(5))));
+  await expect(seek).toHaveValue('1');
+  checks.push('saved transform and completed static preview survive reopen');
+  assert.deepEqual(errors, []);
+  await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', checks, errors }, null, 2));
+} catch (error) { await page.screenshot({ path: path.join(output, 'failure.png') }).catch(() => undefined); throw error; }
+finally { await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach(w => w.destroy())).catch(() => undefined); await app.close(); console.log(output); }

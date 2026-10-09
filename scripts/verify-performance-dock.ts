@@ -1,0 +1,67 @@
+import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { expect } from '@playwright/test';
+import { createProject, projectSchema } from '../src/core/model';
+import { createVisualObject } from '../src/core/visual-object';
+import { blueprintFromPerformance } from '../src/core/blueprint-authoring';
+import { launchDesktopFixture } from './lib/desktop-fixture';
+
+const root = path.resolve('.'), output = path.join(root, 'artifacts/performance-dock', new Date().toISOString().replaceAll(':', '-'));
+await fs.mkdir(output, { recursive: true });
+const project = createProject('演出面板布局验收');
+const graph = blueprintFromPerformance(project, [createVisualObject('text')], '布局演出'); project.blueprints.push(graph);
+const projectFile = path.join(output, 'project.vns.json'); await fs.writeFile(projectFile, JSON.stringify(projectSchema.parse(project)));
+const app = await launchDesktopFixture({ root, projectFile, profile: path.join(output, 'profile') }), page = await app.firstWindow();
+const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+try {
+  const open = async () => {
+    await expect(page.locator('.project-title strong')).toHaveText(project.name, { timeout: 45000 });
+    await page.locator('[data-workspace-tab="blueprint"]').click();
+    await page.getByLabel('演出目标', { exact: true }).selectOption('graph:' + graph.id);
+    await page.getByRole('button', { name: '时间轴', exact: true }).click();
+  };
+  await open();
+  const panel = (id: string) => page.locator(`[data-dock-panel="${id}"]`);
+  const library = (await panel('library').boundingBox())!, preview = (await panel('preview').boundingBox())!, timeline = (await panel('timeline').boundingBox())!, inspector = (await panel('inspector').boundingBox())!;
+  assert.ok(library.x < preview.x && timeline.x > library.x + library.width);
+  assert.ok(Math.abs(library.height - inspector.height) < 2);
+  assert.ok(timeline.height / library.height < .3);
+  await page.screenshot({ path: path.join(output, 'default.png') });
+  const left = page.getByRole('separator', { name: '调整左侧面板宽度', exact: true });
+  const bounds = (await left.boundingBox())!;
+  await page.mouse.move(bounds.x + 3, bounds.y + 60); await page.mouse.down(); await page.mouse.move(bounds.x + 60, bounds.y + 60, { steps: 8 }); await page.mouse.up();
+  await expect.poll(async () => (await panel('library').boundingBox())!.width).toBeGreaterThan(library.width + 40);
+  await page.getByRole('separator', { name: '调整右侧面板宽度', exact: true }).press('ArrowLeft');
+  await page.getByRole('separator', { name: '调整预览与时间轴高度', exact: true }).press('ArrowUp');
+  await page.getByLabel('搜索演出素材', { exact: true }).fill('保留搜索');
+  await page.getByLabel('素材面板位置', { exact: true }).selectOption('right');
+  await expect(panel('library')).toHaveAttribute('data-dock-slot', 'right');
+  await expect(page.getByLabel('搜索演出素材', { exact: true })).toHaveValue('保留搜索');
+  await panel('preview').locator('.performance-dock-title').dragTo(panel('timeline').locator('.performance-dock-title'));
+  await expect(panel('preview')).toHaveAttribute('data-dock-slot', 'bottom');
+  await expect(panel('timeline')).toHaveAttribute('data-dock-slot', 'top');
+  assert.ok((await panel('preview').locator('.text-stage').boundingBox())!.height >= 70);
+  await page.screenshot({ path: path.join(output, 'rearranged.png') });
+  const stored = await page.evaluate(() => localStorage.getItem('vns-performance-dock-v1'));
+  await page.reload(); await open();
+  assert.equal(await page.evaluate(() => localStorage.getItem('vns-performance-dock-v1')), stored);
+  await expect(panel('library')).toHaveAttribute('data-dock-slot', 'right');
+  await expect(panel('timeline')).toHaveAttribute('data-dock-slot', 'top');
+  await page.getByRole('button', { name: '恢复默认演出布局', exact: true }).click();
+  await expect(panel('library')).toHaveAttribute('data-dock-slot', 'left');
+  await expect(panel('timeline')).toHaveAttribute('data-dock-slot', 'bottom');
+  await page.locator('.timeline-clip').first().click();
+  await expect(page.getByLabel('对象文字', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '添加片段', exact: true }).click();
+  await page.getByRole('button', { name: '文字对象', exact: true }).click();
+  await expect(page.locator('.timeline-clip')).toHaveCount(2);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1100, 720));
+  await page.locator('.timeline-clip').last().click();
+  const toolbar = (await page.locator('.timeline-toolbar').boundingBox())!, header = (await panel('timeline').locator('.performance-dock-title').boundingBox())!;
+  assert.ok(toolbar.y >= header.y + header.height - 1);
+  await page.screenshot({ path: path.join(output, 'small-window.png') });
+  assert.deepEqual(errors, []);
+  await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', checks: ['素材默认贯穿最左侧，时间轴仅占中间下方约26%', '拖动和键盘调整三条分隔线', '菜单交换面板位置保留内容状态', '标题栏拖动交换预览与时间轴', '刷新保留布局，一键重置，片段参数仍可编辑'], errors }, null, 2));
+} catch (error) { await page.screenshot({ path: path.join(output, 'failure.png') }).catch(() => undefined); throw error; }
+finally { await app.close(); console.log(output); }

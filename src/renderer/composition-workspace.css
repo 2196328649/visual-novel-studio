@@ -1,0 +1,59 @@
+.composition-workspace { height:100%; min-width:0; min-height:0; display:flex; flex-direction:column; }
+.composition-workspace > .performance-dock { flex:1; height:auto; }
+.composition-workspace .performance-dock-content > .timeline-preview { flex:1; min-height:160px; }
+.composition-breadcrumbs { display:flex; align-items:center; gap:3px; flex:none; padding:6px 9px; border-bottom:1px solid var(--border); background:var(--editor-panel); overflow-x:auto; }
+.composition-breadcrumbs > svg { flex:none; color:var(--muted); }
+.composition-breadcrumbs button { display:flex; gap:5px; align-items:center; flex:none; font-size:12px; padding:6px 8px; white-space:nowrap; }
+.composition-breadcrumbs button:first-child { margin-right:9px; }
+.composition-breadcrumbs [aria-current="location"] { color:var(--editor-accent); background:var(--editor-selection); font-weight:600; }
+.composition-tools .icon-button { width:27px; height:27px; padding:5px; }
+.composition-view-tools { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-left:auto; }
+.composition-view-tools output { color:var(--muted); font-size:11px; font-variant-numeric:tabular-nums; }
+.composition-view-tools input[type="range"] { width:70px; }
+.composition-grid { position:relative; min-width:100%; min-height:100%; overflow:clip; touch-action:none; user-select:none; }
+.composition-ruler-main { height:30px; position:sticky; top:0; z-index:9; background:var(--editor-panel); color:var(--muted); font-size:10px; border-bottom:1px solid var(--border); cursor:crosshair; }
+.composition-ruler-main > span { display:block; position:sticky; left:0; width:168px; height:100%; padding:7px 10px; background:var(--editor-panel); border-right:1px solid var(--border); z-index:2; }
+.composition-ruler-main > i { position:absolute; top:7px; font-style:normal; border-left:1px solid var(--border); padding-left:4px; }
+.composition-track-row { height:62px; position:relative; border-bottom:1px solid var(--border); background-image:linear-gradient(to right,var(--border) 1px,transparent 1px); background-size:var(--composition-tick) 100%; background-position-x:168px; }
+.composition-track-row.selected { background-color:color-mix(in srgb,var(--editor-accent) 7%,transparent); }
+.composition-track-row.drop-target { box-shadow:inset 0 3px var(--editor-accent); }
+.composition-track-head { position:sticky; left:0; width:168px; height:100%; display:flex; align-items:center; padding:4px; gap:2px; z-index:7; background:var(--editor-panel); border-right:1px solid var(--border); }
+.selected > .composition-track-head { background:var(--editor-selection); }
+.composition-track-head button { border:0; background:transparent; }
+.composition-track-grip { padding:2px 0; width:16px; flex:none; cursor:grab; color:var(--muted); }
+.composition-track-label { display:grid; text-align:left; gap:4px; flex:1; min-width:0; padding:5px 3px; }
+.composition-track-label strong { font-weight:500; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.composition-track-label small { color:var(--muted); font-size:10px; }
+.composition-track-head .composition-enter { flex:none; color:var(--editor-accent); font-size:11px; padding:7px 3px; }
+.composition-order { display:grid; width:16px; flex:none; }
+.composition-order button { display:grid; place-items:center; padding:2px; }
+.composition-track-clip { position:absolute; top:7px; height:47px; display:flex; align-items:center; gap:7px; padding:5px 11px; border:1px solid #789dca; border-radius:5px; background:#354d69; color:#f0f5fc; cursor:grab; touch-action:none; overflow:hidden; }
+.composition-track-clip.content-text { background:#5b4936; border-color:#a78a60; }
+.composition-track-clip.content-group { background:#51436c; border-color:#9e88c1; }
+.composition-track-clip.content-solid { background:#3f5a52; border-color:#78a18d; }
+.composition-track-clip.content-particles { background:#59435c; border-color:#a980af; }
+.composition-track-clip.content-video { background:#2e5670; border-color:#6fb5d1; }
+.composition-track-clip.selected { outline:2px solid #b8e7ff; outline-offset:1px; }
+.composition-track-clip.outside { background-image:repeating-linear-gradient(135deg,transparent,transparent 6px,#0003 6px,#0003 12px); }
+.composition-track-clip > svg, .composition-track-clip > img, .composition-track-clip > video, .composition-swatch { flex:none; width:28px; height:31px; object-fit:cover; border-radius:2px; }
+.composition-track-clip > video { pointer-events:none; }
+.composition-track-clip > svg { width:16px; }
+.composition-clip-caption { display:grid; gap:4px; min-width:0; }
+.composition-clip-caption strong { font-weight:500; font-size:11px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; }
+.composition-clip-caption small { font-size:10px; opacity:.8; white-space:nowrap; }
+.composition-trim { position:absolute; top:0; bottom:0; width:8px; cursor:ew-resize; background:#ffffff22; z-index:2; }
+.composition-trim.start { left:0; border-right:1px solid #ffffff22; }
+.composition-trim.end { right:0; border-left:1px solid #ffffff22; }
+.composition-trim:hover { background:#b8e7ff88; }
+.composition-visible-end { position:absolute; top:30px; bottom:0; width:0; border-left:1px dashed #bec6d477; z-index:3; pointer-events:none; }
+.composition-playhead { position:absolute; top:0; bottom:0; width:2px; background:#f2bb60; pointer-events:none; z-index:8; }
+.composition-playhead::before { content:''; position:absolute; top:0; left:-5px; border:6px solid transparent; border-top-color:#f2bb60; }
+.composition-tail { height:36px; }
+.composition-empty { position:sticky; left:0; max-width:100%; padding:28px 20px; font-size:12px; color:var(--muted); }
+.composition-property-row { height:28px; position:relative; background:color-mix(in srgb,var(--editor-panel) 60%,transparent); border-bottom:1px solid var(--border); }
+.composition-property-row > span { position:sticky; left:0; display:block; width:168px; height:28px; font-size:10px; padding:7px 8px 7px 23px; background:var(--editor-panel); border-right:1px solid var(--border); z-index:7; }
+.composition-property-row > .property-frame-timeline { position:absolute; inset:0; }
+.composition-property-row .property-frame-track { height:28px; }
+.composition-inspector .composition-open-button { display:flex; width:100%; align-items:center; justify-content:center; gap:8px; padding:10px; margin:10px 0; color:var(--editor-accent); }
+.composition-visibility-note { display:flex; gap:8px; align-items:center; justify-content:space-between; margin:10px 0; color:var(--muted); font-size:11px; }
+.composition-visibility-note button { padding:5px 8px; font-size:11px; }

@@ -1,0 +1,108 @@
+import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { PNG } from 'pngjs';
+import { expect } from '@playwright/test';
+import { createProject, projectSchema } from '../src/core/model';
+import { createMediaVisual } from '../src/core/media-command';
+import { projectToText, applyTextScript } from '../src/core/text-script';
+import { launchDesktopFixture, enterFixtureProject } from './lib/desktop-fixture';
+import { openStoryMode } from './lib/story-workspace';
+
+const root = path.resolve('.'), output = path.join(root, 'artifacts/v08-editor', new Date().toISOString().replaceAll(':', '-'));
+await fs.mkdir(output, { recursive: true });
+const projectDir = path.join(output, 'project'); await fs.mkdir(projectDir);
+const project = createProject('图片过渡和单文件导出'); project.width = 800; project.height = 450;
+for (const [id, rgb] of [['red', [220, 40, 50]], ['green', [30, 210, 70]]] as const) {
+  const png = new PNG({ width: 160, height: 160 }); for (let i = 0; i < png.data.length; i += 4) png.data.set([...rgb, 255], i);
+  await fs.writeFile(path.join(projectDir, id + '.png'), PNG.sync.write(png)); project.assets.push({ id, name: id, kind: 'image', path: id + '.png' });
+}
+const image = createMediaVisual('image', 'red', { width: .3, height: .5, y: .3 });
+const node = project.nodes.find(n => n.kind === 'passage')!;
+node.lines = [{ id: 'first', text: '测试图片入场设置。', actions: [image] }, { id: 'second', text: '测试图片替换。', actions: [{ ...image, assetId: 'green', visualTransitions: { replace: { mode: 'dissolve', duration: .6 }, exit: { mode: 'dissolve', duration: .5 } } }] }, { id: 'third', text: '测试图片隐藏。', actions: [{ kind: 'hideVisual', instanceId: 'image', wait: false }] }];
+project.scriptText = { format: 'vns-text-1', content: projectToText(project) };
+const projectFile = path.join(projectDir, 'project.vns.json'); await fs.writeFile(projectFile, JSON.stringify(project));
+const app = await launchDesktopFixture({ root, projectFile, profile: path.join(output, 'profile') }), page = await app.firstWindow();
+const errors: string[] = []; page.on('pageerror', error => errors.push(error.message)); let phase = 'properties';
+try {
+  await expect(page.locator('.project-title strong')).toHaveText(project.name, { timeout: 45000 });
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 960));
+  await openStoryMode(page, 'script'); await page.locator('#line-first textarea').click();
+  const panel = page.locator('.story-preview-content .passage-performances');
+  await panel.getByText('进出场过渡', { exact: true }).click();
+  await panel.getByLabel('入场过渡', { exact: true }).selectOption('dissolve');
+  await panel.getByLabel('入场过渡秒数', { exact: true }).fill('0.4'); await panel.getByLabel('入场过渡秒数', { exact: true }).press('Tab');
+  await panel.getByLabel('离场过渡', { exact: true }).selectOption('move');
+  await panel.getByLabel('离场过渡秒数', { exact: true }).fill('0.7'); await panel.getByLabel('离场过渡秒数', { exact: true }).press('Tab');
+  await panel.getByLabel('等待图片过渡', { exact: true }).check();
+  await page.screenshot({ path: path.join(output, 'properties.png') });
+  phase = 'pixels';
+  await page.locator('#line-second textarea').click();
+  const seek = page.getByLabel('定位演出时间（秒）', { exact: true }); await seek.fill('0.3'); await seek.press('Tab');
+  const stage = page.locator('.text-stage').first(); await expect(stage.locator('[data-visual-transition="image"]')).toHaveCount(1);
+  const hideUi = await page.addStyleTag({ content: '.ui-dialogue-preview { visibility: hidden !important; }' });
+  const screenshot = await stage.screenshot(); await fs.writeFile(path.join(output, 'replacement-mid.png'), screenshot);
+  await fs.writeFile(path.join(output, 'blend-dom.json'), JSON.stringify(await stage.locator('[data-visual-transition="image"]').evaluate(e => [...e.querySelectorAll('div,svg,g,image'), e, e.parentElement!, e.parentElement!.parentElement!].map(el => ({ tag: el.tagName, style: el.getAttribute('style'), opacity: el.getAttribute('opacity'), transform: el.getAttribute('transform'), computed: { background: getComputedStyle(el).backgroundColor, opacity: getComputedStyle(el).opacity, filter: getComputedStyle(el).filter } }))), null, 2));
+  const sources = await stage.locator('[data-visual-transition="image"] svg g image').evaluateAll(elements => elements.map(el => el.getAttribute('href')));
+  await fs.writeFile(path.join(output, 'source-colors.json'), JSON.stringify(sources));
+  const visibleFrames = stage.locator('[data-visual-transition="image"] > div');
+  const baseColors: number[][] = [];
+  for (let index = 0; index < 2; index++) {
+    await visibleFrames.evaluateAll((elements, index) => elements.forEach((el, i) => (el as HTMLElement).style.opacity = i === index ? '1' : '0'), index);
+    const base = PNG.sync.read(await stage.screenshot()); const p = (Math.floor(base.height * .3) * base.width + Math.floor(base.width * .5)) * 4;
+    baseColors.push([...base.data.subarray(p, p + 3)]);
+  }
+  await visibleFrames.evaluateAll(elements => elements.forEach(el => (el as HTMLElement).style.opacity = '.5'));
+  await fs.writeFile(path.join(output, 'base-colors.json'), JSON.stringify(baseColors));
+  await page.getByRole('button', { name: '保存工程', exact: true }).click(); await expect(page.locator('.dirty-dot')).toHaveCount(0);
+  const pixels = PNG.sync.read(screenshot), at = (Math.floor(pixels.height * .3) * pixels.width + Math.floor(pixels.width * .5)) * 4;
+  // Windows color management transforms PNG colors; compare the rendered sources.
+  const actual = [...pixels.data.subarray(at, at + 3)], expected = baseColors[0].map((value, i) => (value + baseColors[1][i]) / 2);
+  assert.ok(actual.every((value, i) => Math.abs(value - expected[i]) <= 2), 'crossfade pixels ' + actual);
+  await hideUi.evaluate(element => element.parentNode?.removeChild(element));
+  await page.locator('#line-third textarea').click(); await seek.fill('0.25'); await seek.press('Tab');
+  await expect(stage.locator('[data-visual-transition="image"]').first()).toBeVisible();
+  await fs.writeFile(path.join(output, 'hide-mid.png'), await stage.screenshot());
+  phase = 'small window and text';
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1280, 720));
+  await openStoryMode(page, 'text'); const input = page.getByLabel('中文文本剧本', { exact: true });
+  await input.focus(); await input.press('Control+End'); await input.press('Enter'); await input.press('/');
+  await page.getByRole('dialog', { name: '中文指令面板', exact: true }).getByText('显示图片', { exact: true }).click();
+  const picker = page.getByRole('dialog', { name: '命令参数', exact: true });
+  await picker.getByText('进出场过渡', { exact: true }).click();
+  await picker.getByLabel('入场过渡', { exact: true }).selectOption('move');
+  await picker.getByLabel('离场过渡', { exact: true }).selectOption('dissolve');
+  await picker.getByLabel('对象ID', { exact: true }).fill('another');
+  const box = await picker.boundingBox(); assert.ok(box && box.x >= 0 && box.y >= 0 && box.x + box.width <= 1281 && box.y + box.height <= 721);
+  await picker.getByRole('button', { name: '插入指令', exact: true }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(output, 'picker-1280.png') });
+  await picker.getByRole('button', { name: '插入指令', exact: true }).click();
+  assert.match(await input.inputValue(), /入场过渡=移动/);
+  phase = 'unified show command';
+  await input.focus(); await input.press('Control+End'); await input.press('Enter'); await input.press('/');
+  const commands = page.getByRole('dialog', { name: '中文指令面板', exact: true });
+  await expect(commands.getByText('自动显示发言角色', { exact: true })).toHaveCount(0);
+  await commands.getByText('显示角色', { exact: true }).click();
+  await expect(picker.getByLabel('角色', { exact: true })).toHaveValue('');
+  await expect(picker.getByRole('button', { name: '插入指令', exact: true })).toBeEnabled();
+  await page.screenshot({ path: path.join(output, 'unified-show.png') });
+  await picker.getByRole('button', { name: '插入指令', exact: true }).click();
+  assert.match(await input.inputValue(), /@显示角色：/);
+  await input.focus(); await input.press('Control+End'); await input.press('Enter'); await input.pressSequentially('@返回标题界面');
+  phase = 'export settings';
+  await page.locator('.export-button').click(); const settings = page.getByRole('dialog', { name: '作品设置', exact: true });
+  await settings.getByLabel('Windows 打包格式', { exact: true }).selectOption('exe');
+  await expect(settings.getByText(/每次启动会将引擎和素材释放到临时目录/)).toBeVisible();
+  await expect(settings.getByRole('button', { name: '导出', exact: true })).toBeEnabled({ timeout: 30000 });
+  await page.screenshot({ path: path.join(output, 'single-exe-settings.png') });
+  await settings.getByRole('button', { name: '完成', exact: true }).click();
+  await page.getByRole('button', { name: '保存工程', exact: true }).click(); await expect(page.locator('.dirty-dot')).toHaveCount(0);
+  const saved = projectSchema.parse(JSON.parse(await fs.readFile(projectFile, 'utf8'))); assert.equal(saved.exportSettings?.windows.format, 'exe');
+  const parsed = applyTextScript(saved, saved.scriptText!.content); assert.deepEqual(parsed.issues, []);
+  const first = parsed.project.nodes.find(n => n.kind === 'passage')!.lines[0].actions[0];
+  assert.ok(first.kind === 'visual'); assert.deepEqual(first.visualTransitions, { enter: { mode: 'dissolve', duration: .4 }, exit: { mode: 'move', duration: .7 } }); assert.equal(first.transitionWait, true);
+  await page.reload(); await enterFixtureProject(page, projectFile); await expect(page.locator('.project-title strong')).toHaveText(project.name); await page.locator('.export-button').click();
+  await expect(page.getByLabel('Windows 打包格式', { exact: true })).toHaveValue('exe'); assert.deepEqual(errors, []);
+  await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', projectFile, errors, pixels: actual, checks: ['phase properties and waits', 'actual crossfade pixels', 'hide inheritance', '1280x720 picker', 'plain text', 'EXE option preflight', 'unified show command without characters', 'save/reopen'] }, null, 2));
+} catch (error) { await page.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {}); await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'failed', phase, error: String(error), errors }, null, 2)); throw error; }
+finally { await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach(w => w.destroy())).catch(() => {}); await app.close().catch(() => {}); console.log(output); }

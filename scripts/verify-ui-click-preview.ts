@@ -1,0 +1,51 @@
+import { createUiParameterBinding } from '../src/core/ui-logic';
+import { PNG } from 'pngjs';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import { expect } from '@playwright/test';
+import { createServer } from 'vite';
+import { createProject } from '../src/core/model';
+import { blueprintNodeDefaults, createBlueprintGraph, connectBlueprintPins, synchronizeBlueprintSignatures } from '../src/core/blueprint';
+import { launchDesktopFixture } from './lib/desktop-fixture';
+const root=path.resolve('.'), output=path.join(root,'artifacts/ui-click-preview',new Date().toISOString().replaceAll(':','-'));
+await fs.mkdir(output,{recursive:true});
+const project=createProject('高级UI编辑验收');
+project.variables.push({id:'show_title',name:'显示标题',type:'boolean',initial:true,persistent:false});project.ui.components.push({id:'title_probe',kind:'text',page:'main',text:'测试标题',x:.1,y:.1,width:.5,height:.1});
+project.variables.push({id:'preview_text',name:'预演标题',type:'string',initial:'默认标题',persistent:false},{id:'preview_x',name:'预演横向位置',type:'number',initial:.1,persistent:false});
+createUiParameterBinding(project,'title_probe','visible','show_title','ui:main');createUiParameterBinding(project,'title_probe','text','preview_text','ui:main');createUiParameterBinding(project,'title_probe','x','preview_x','ui:main');
+const button={id:'toggle_button',kind:'button' as const,page:'main' as const,text:'切换显示',x:.65,y:.65,width:.3,height:.2};project.ui.components.push(button);
+const clickGraph=createBlueprintGraph('ui','按钮交互');project.blueprints.push(clickGraph);
+const click=blueprintNodeDefaults('eventClick');click.properties.componentId=button.id;
+const read=blueprintNodeDefaults('getVariable');read.properties.variableId='show_title';
+const compare=blueprintNodeDefaults('branch');
+const write=blueprintNodeDefaults('setVariable');write.properties={variableId:'show_title',value:false};
+const enable=blueprintNodeDefaults('setVariable');enable.properties={variableId:'show_title',value:true};
+clickGraph.nodes.push(click,read,compare,write,enable);synchronizeBlueprintSignatures(project);
+for(const [from,out,to,input] of [[click.id,'exec',compare.id,'exec_in'],[read.id,'value',compare.id,'condition'],[compare.id,'true',write.id,'exec_in'],[compare.id,'false',enable.id,'exec_in']]){const error=connectBlueprintPins(clickGraph,from,out,to,input);if(error)throw Error(error);}
+const projectFile=path.join(output,'project.vns.json');await fs.writeFile(projectFile,JSON.stringify(project));
+const server=await createServer({root,server:{host:'127.0.0.1',port:0,watch:{ignored:['**/artifacts/**','**/resources/**','**/release/**']}}});await server.listen();
+const app=await launchDesktopFixture({root,projectFile,profile:path.join(output,'profile'),devUrl:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port}),page=await app.firstWindow();
+try {
+ await expect(page.locator('.project-title strong')).toHaveText(project.name,{timeout:45000});
+ await page.locator('[data-workspace-tab="ui"]').click();await page.getByRole('button',{name:'高级 UI 蓝图',exact:true}).click();
+ const savedBefore=await fs.readFile(projectFile,'utf8');
+ await page.locator('.ui-logic-preview > summary').click();
+ const object=page.locator('[data-preview-component="title_probe"]');
+ await expect(object).toContainText('默认标题');
+ const toggle=page.getByRole('button',{name:'切换显示',exact:true});await toggle.click();await expect(object).toHaveCount(0);
+ await expect(page.getByLabel('预演参数 显示标题',{exact:true})).toHaveValue('false');
+ await toggle.focus();await page.keyboard.press('Enter');await expect(object).toContainText('默认标题');
+ await page.getByLabel('预演参数 显示标题',{exact:true}).selectOption('false');await expect(object).toHaveCount(0);
+ await page.getByLabel('预演参数 显示标题',{exact:true}).selectOption('true');
+ await page.getByLabel('预演参数 预演标题',{exact:true}).fill('即时变化的标题');await expect(object).toContainText('即时变化的标题');
+ const first=(await object.boundingBox())!.x;
+ await page.getByLabel('预演参数 预演横向位置',{exact:true}).fill('0.4');await page.getByLabel('预演参数 预演标题',{exact:true}).click();
+ await expect.poll(async()=>(await object.boundingBox())!.x).toBeGreaterThan(first+20);
+ await page.screenshot({path:path.join(output,'dynamic-preview.png')});
+ await page.getByRole('button',{name:'恢复测试值',exact:true}).click();await expect(object).toContainText('默认标题');
+ await expect(page.locator('.dirty-dot')).toHaveCount(0);expect(await fs.readFile(projectFile,'utf8')).toBe(savedBefore);
+ await page.locator('[data-workspace-tab="script"]').click();await expect(page.getByRole('dialog',{name:'保存界面修改'})).toHaveCount(0);
+ await fs.writeFile(path.join(output,'report.json'),JSON.stringify({status:'passed',checks:['高级UI参数预演入口','点击按钮改变参数并隐藏组件','键盘触发按钮恢复组件','开关即时控制组件显示','文字及位置即时变化','恢复测试值','预演不改初始值不产生未保存修改','离开无误报保存提醒']}));console.log(output);
+} catch(error){await page.screenshot({path:path.join(output,'failure.png')});throw error;}
+finally {await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().forEach(w=>w.destroy())).catch(()=>undefined);await app.close();await server.close();}

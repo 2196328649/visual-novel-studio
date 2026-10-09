@@ -1,0 +1,90 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createProject, projectSchema } from '../src/core/model';
+import { createVisualObject, setVisualPropertiesAt, visualPose, visualCurve, visualDissolve, visualInputFields, visualPropertyAnimated, toggleVisualKeyframe, visualKeyframeTimes } from '../src/core/visual-object';
+import { blueprintFromPerformance, rawSavedBlueprintAction, exposePerformanceInputs, performanceInputs } from '../src/core/blueprint-authoring';
+import { setTimelineVisualPropertiesAt, timelinePropertyObject } from '../src/core/performance-timeline';
+import { applyTextScript, projectToText } from '../src/core/text-script';
+
+test('property diamonds add, navigate and remove independent keyframes without changing static channels', () => {
+  const object = createVisualObject('solid'); object.duration = 4;
+  assert.equal(visualPropertyAnimated(object, 'x'), false);
+  toggleVisualKeyframe(object, 1, 'x');
+  assert.deepEqual(visualKeyframeTimes(object), [1]);
+  setVisualPropertiesAt(object, 3, { x: .9 });
+  assert.equal(visualPose(object, 2).x, .7);
+  assert.equal(visualPose(object, 2).opacity, 1);
+  toggleVisualKeyframe(object, 1, 'x');
+  assert.deepEqual(visualKeyframeTimes(object), [3]);
+  toggleVisualKeyframe(object, 3, 'x');
+  assert.equal(visualPropertyAnimated(object, 'x'), false);
+  assert.equal(visualPose(object, 0).x, .9);
+  projectSchema.parse({ ...createProject(), effects: [{ id: 'effect', name: 'effect', commands: [], actions: [object] }] });
+});
+
+test('visual playhead frames preserve base endpoints, other channels and discontinuities', () => {
+  const object = createVisualObject('solid');
+  object.keyframes.push({ ...object.keyframes[0], x: .8, rotation: 30, duration: 2, easing: 'easein' });
+  const original = structuredClone(object);
+  setVisualPropertiesAt(object, 1, { x: .2, opacity: .4 });
+  assert.deepEqual(object.keyframes, original.keyframes);
+  assert.equal(visualPose(object, 1).x, .2); assert.equal(visualPose(object, 1).opacity, .4);
+  for (const time of [0, 2, 3]) assert.equal(visualPose(object, time).x, visualPose(original, time).x);
+  for (const time of [0, .5, 1, 1.5, 2, 3]) assert.equal(visualPose(object, time).rotation, visualPose(original, time).rotation);
+  setVisualPropertiesAt(object, 1, { x: .3 });
+  assert.equal(object.curves!.x!.filter(frame => frame.at === 1).length, 1);
+  assert.equal(visualPose(object, 1).x, .3);
+  const stepped = createVisualObject('solid');
+  stepped.keyframes.push({ ...stepped.keyframes[0], duration: 1 }, { ...stepped.keyframes[0], x: .9, duration: 0 });
+  setVisualPropertiesAt(stepped, 2, { x: .7 });
+  assert.equal(visualPose(stepped, .99).x, .5); assert.equal(visualPose(stepped, 1).x, .9);
+});
+
+test('effect frames retain dissolve timing and reject overflow atomically', () => {
+  const object = createVisualObject('image');
+  object.dissolve = { start: 1, end: 2, from: 1, to: -1 };
+  setVisualPropertiesAt(object, .5, { dissolveStrength: .8, rippleSpeed: 2 });
+  assert.equal(visualDissolve(object, .5), .8); assert.equal(visualDissolve(object, 1), 1);
+  assert.equal(visualDissolve(object, 2), -1); assert.equal(visualCurve(object, 'rippleSpeed', .5, 1), 2);
+  object.curves!.x = Array.from({ length: 64 }, (_, at) => ({ at, value: at, easing: 'linear' }));
+  const before = structuredClone(object);
+  assert.throws(() => setVisualPropertiesAt(object, .5, { y: .3, x: .2 }), /64/);
+  assert.deepEqual(object, before);
+});
+
+test('nested playhead edit resolves combined parameter clocks and preserves overrides through text roundtrip', () => {
+  const project = createProject();
+  project.assets.push({ id: 'image', name: '图片', kind: 'image', path: 'image.png' });
+  const child = { ...createVisualObject('image', 'image'), duration: 3, startAt: .5, retimeOnDuration: true };
+  child.keyframes.push({ ...child.keyframes[0], duration: 3, x: .9 });
+  const sibling = createVisualObject('text');
+  const root = { ...createVisualObject('group'), duration: 6, retimeOnDuration: true, children: [child, sibling] };
+  const graph = blueprintFromPerformance(project, [root], '对象播放头'); project.blueprints.push(graph);
+  const source = graph.nodes.find(node => node.type === 'savedAction')!;
+  exposePerformanceInputs(graph, [performanceInputs(graph).find(field => field.nodeId === source.id && field.pinId === 'object_duration')!]);
+  graph.exposedInputs[0].defaultValue = 12;
+  const childDuration = visualInputFields(root).find(field => field.path.join('/') === 'children/0/duration')!;
+  source.properties['object_' + childDuration.key] = 6;
+  const originalProperties = structuredClone(source.properties);
+  const originalLinks = structuredClone(graph.links);
+  setTimelineVisualPropertiesAt(project, graph, source.id, child.instanceId, 3, { x: .25, rippleSpeed: 2 });
+  const restored = applyTextScript(projectSchema.parse(project), projectToText(project)).project;
+  const savedGraph = restored.blueprints.find(item => item.id === graph.id)!, savedNode = savedGraph.nodes.find(item => item.id === source.id)!;
+  assert.deepEqual(savedGraph.links, originalLinks);
+  assert.deepEqual({ ...savedNode.properties, action: originalProperties.action }, originalProperties);
+  const raw = rawSavedBlueprintAction(savedNode)!;
+  assert.equal(raw.kind, 'visual'); if (raw.kind !== 'visual') return;
+  assert.deepEqual(raw.children![1], JSON.parse(JSON.stringify(sibling)));
+  assert.equal(raw.duration, 6); assert.equal(raw.children![0].duration, 3);
+  assert.deepEqual(raw.children![0].curves!.x!.map(frame => [frame.at, frame.value]), [[0, .5], [.5, .25], [3, .9]]);
+  assert.equal(raw.children![0].curves!.rippleSpeed!.find(frame => frame.at === .5)!.value, 8);
+  const resolved = timelinePropertyObject(restored, savedGraph, source.id, [0], 0)!;
+  assert.equal(resolved.at, 1); assert.equal(resolved.scale, 4);
+  assert.equal(resolved.action.kind, 'visual'); if (resolved.action.kind !== 'visual') return;
+  assert.equal(visualPose(resolved.action, 2).x, .25);
+  assert.equal(visualCurve(resolved.action, 'rippleSpeed', 2, 0), 2);
+  const before = structuredClone(restored);
+  assert.throws(() => setTimelineVisualPropertiesAt(restored, savedGraph, source.id, child.instanceId, .5, { x: 0 }), /存续区间/);
+  assert.throws(() => setTimelineVisualPropertiesAt(restored, savedGraph, source.id, child.instanceId, 12.1, { x: 0 }), /存续区间/);
+  assert.deepEqual(restored, before);
+});

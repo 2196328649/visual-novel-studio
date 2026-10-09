@@ -1,0 +1,98 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { createProject, projectSchema, type ActorTransitions, type StageAction } from '../src/core/model';
+import { actorTransitionDefaults, resolveActorTransitions } from '../src/core/actor-transitions';
+import { finishPreviewLine, initialPreviewStage, linePlaybackPlan, sampleLinePlayback } from '../src/core/line-preview';
+import { applyTextScript, projectToText, textCommandAction } from '../src/core/text-script';
+import { blueprintFromPerformance } from '../src/core/blueprint-authoring';
+import { expandPreviewActions, previewActionContext } from '../src/core/preview-actions';
+import { compileProject } from '../src/runtime/compiler';
+
+const rules: Required<ActorTransitions> = { enter: { mode: 'dissolve', duration: .4 }, exit: { mode: 'dissolve', duration: .7 }, expression: { mode: 'dissolve', duration: .2 } };
+const show = (id = 'actor', expressionId = 'normal'): Extract<StageAction, { kind: 'show' }> => ({ kind: 'show', characterId: id, expressionId, x: .5, y: 1, scale: 1, layer: 10, lifetime: 'line', transition: 'dissolve', actorTransitions: rules });
+test('phase defaults dissolve on departure and allow character and call overrides', () => {
+  const p = createProject(); p.characters = [{ id: 'actor', name: 'Actor', color: '#ffffff', expressions: [] }];
+  assert.equal(resolveActorTransitions(p, 'actor', { transition: 'fade', lifetime: 'persistent' }), undefined);
+  assert.deepEqual(resolveActorTransitions(p, 'actor', { transition: 'fade', lifetime: 'line' }), { enter: { mode: 'fade', duration: 1 }, expression: { mode: 'fade', duration: 1 }, exit: { mode: 'dissolve', duration: .5 } });
+  assert.deepEqual(resolveActorTransitions(p, 'actor', { actorTransitions: { exit: { mode: 'none', duration: 0 } } })!.exit, { mode: 'none', duration: 0 });
+  p.characters[0].actorTransitions = { enter: rules.enter };
+  assert.deepEqual(resolveActorTransitions(p, 'actor', { transition: 'fade' }, { exit: rules.exit }), { ...actorTransitionDefaults('fade'), enter: rules.enter, exit: rules.exit });
+  assert.throws(() => projectSchema.parse({ ...p, characters: [{ ...p.characters[0], actorTransitions: { exit: { mode: 'bad', duration: -1 } } }] }));
+});
+test('bare show uses default departure when switching speakers and moving to narration', () => {
+  const p = createProject(); p.assets = [{ id: 'portrait', name: 'Portrait', kind: 'image', path: 'portrait.png' }];
+  p.characters = ['a', 'b'].map(id => ({ id, name: id, color: '#ffffff', expressions: [{ id: 'normal', name: 'Normal', assetId: 'portrait' }] }));
+  const action = textCommandAction(p, '@显示角色')!, context = previewActionContext(p);
+  context.speakerId = 'a';
+  const empty = initialPreviewStage(), entry = linePlaybackPlan(empty, expandPreviewActions(p, [action], context));
+  const before = sampleLinePlayback(empty, entry, 500).state; finishPreviewLine(before);
+  context.speakerId = 'b';
+  const switchPlan = linePlaybackPlan(before, expandPreviewActions(p, [action], context));
+  assert.equal(switchPlan.dialogueAt, 500);
+  const middle = sampleLinePlayback(before, switchPlan, 250).state;
+  assert.equal(middle.actorGhosts![0].opacity, .5); assert.equal(middle.actors.get('b')!.opacity, .5);
+  const after = sampleLinePlayback(before, switchPlan, 500).state; finishPreviewLine(after);
+  context.speakerId = undefined;
+  const departure = linePlaybackPlan(after, expandPreviewActions(p, [action], context));
+  assert.equal(departure.dialogueAt, 500);
+  assert.equal(sampleLinePlayback(after, departure, 250).state.actorGhosts![0].opacity, .5);
+  assert.equal(sampleLinePlayback(after, departure, 500).state.actors.size, 0);
+});
+test('entry, expression changes, no-op, switching and departure use independent timing', () => {
+  const empty = initialPreviewStage();
+  const entry = linePlaybackPlan(empty, [show()]); assert.equal(entry.dialogueAt, 400);
+  const middle = sampleLinePlayback(empty, entry, 200); assert.equal(middle.transition, undefined); assert.equal(middle.state.actors.get('actor')!.opacity, .5);
+  const before = sampleLinePlayback(empty, entry, 400).state; finishPreviewLine(before);
+  assert.equal(linePlaybackPlan(before, [show()]).dialogueAt, 0);
+  const expression = linePlaybackPlan(before, [show('actor', 'happy')]); assert.equal(expression.dialogueAt, 200);
+  const expressionFrame = sampleLinePlayback(before, expression, 100).state;
+  assert.equal(expressionFrame.actors.get('actor')!.opacity, .5); assert.equal(expressionFrame.actorGhosts![0].opacity, .5);
+  const switchPlan = linePlaybackPlan(before, [show('other')]); assert.equal(switchPlan.dialogueAt, 700);
+  const switched = sampleLinePlayback(before, switchPlan, 200).state;
+  assert.equal(switched.actors.get('other')!.opacity, .5); assert.ok(Math.abs(switched.actorGhosts![0].opacity - 5 / 7) < .0001);
+  const none = linePlaybackPlan(before, []); assert.equal(none.dialogueAt, 700); assert.equal(sampleLinePlayback(before, none, 700).state.actors.size, 0);
+});
+test('nonblocking transitions carry across lines and persistent actors survive narration', () => {
+  const empty = initialPreviewStage(), action = { ...show(), wait: false, lifetime: 'persistent' as const };
+  const entry = linePlaybackPlan(empty, [action]); assert.equal(entry.dialogueAt, 0);
+  const before = sampleLinePlayback(empty, entry, 100).state; finishPreviewLine(before);
+  const next = linePlaybackPlan(before, []); assert.equal(next.dialogueAt, 0);
+  assert.ok(Math.abs(next.until - 300) < .0001);
+  const continued = sampleLinePlayback(before, next, 100).state; assert.equal(continued.actors.get('actor')!.opacity, .5);
+});
+test('character inheritance merges phases and local offsets survive phase blending', () => {
+  const p = createProject();
+  p.characters = [{ id: 'base', name: 'Base', color: '#ffffff', expressions: [], actorTransitions: rules }, { id: 'child', name: 'Child', color: '#ffffff', expressions: [], baseCharacterId: 'base', actorTransitions: { exit: { mode: 'move', duration: 1 } } }];
+  assert.deepEqual(resolveActorTransitions(p, 'child', {}), { ...rules, exit: { mode: 'move', duration: 1 } });
+  const empty = initialPreviewStage(), action = { ...show(), afterOffsets: { x: [{ at: 0, value: 0, easing: 'linear' as const }, { at: 1, value: .2, easing: 'linear' as const }] } };
+  const plan = linePlaybackPlan(empty, [action]);
+  assert.equal(plan.dialogueAt, 400); assert.equal(plan.until, 1400);
+  const before = sampleLinePlayback(empty, plan, 900).state;
+  assert.ok(Math.abs(before.actors.get('actor')!.x - .6) < .0001);
+  const next = sampleLinePlayback(before, linePlaybackPlan(before, []), 250).state;
+  assert.ok(Math.abs(next.actors.get('actor')!.x - .65) < .0001);
+});
+test('background reset removes pending departures without an extra exit wait', () => {
+  const empty = initialPreviewStage(), entry = linePlaybackPlan(empty, [show()]);
+  const before = sampleLinePlayback(empty, entry, entry.dialogueAt).state; finishPreviewLine(before);
+  const plan = linePlaybackPlan(before, [{ kind: 'background', assetId: 'bg', transition: 'none' }]);
+  assert.equal(plan.dialogueAt, 0);
+  const after = sampleLinePlayback(before, plan, 0).state;
+  assert.equal(after.actors.size, 0); assert.equal(after.actorGhosts?.length, 0); assert.equal(after.pendingActorExits?.size, 0);
+});
+test('phase settings survive project and text save/reopen without dropping overrides', () => {
+  const project = createProject(); project.characters = [{ id: 'actor', name: 'Actor', color: '#ffffff', expressions: [{ id: 'normal', name: 'Normal', assetId: 'portrait' }] }];
+  project.assets = [{ id: 'portrait', name: 'Portrait', kind: 'image', path: 'portrait.png' }];
+  const node = project.nodes.find(n => n.kind === 'passage')!; node.lines = [{ id: 'line', text: 'Saved', actions: [show()] }];
+  const saved = projectSchema.parse(project), restored = applyTextScript(saved, projectToText(saved));
+  assert.deepEqual(restored.issues, []);
+  const found = restored.project.nodes.find(n => n.kind === 'passage' && n.lines.some(l => l.id === 'line'))!;
+  assert.ok(found.kind === 'passage'); assert.deepEqual(found.lines.find(l => l.id === 'line')!.actions[0], saved.nodes.find(n => n.kind === 'passage')!.lines[0].actions[0]);
+  const graph = blueprintFromPerformance(saved, [show()], '角色演出'); saved.blueprints.push(graph);
+  const outer = blueprintFromPerformance(saved, [{ kind: 'blueprint', blueprintId: graph.id, actorTransitions: { exit: { mode: 'move', duration: .8 } } }], '嵌套演出'); saved.blueprints.push(outer);
+  const packed = projectSchema.parse(saved);
+  const expanded = expandPreviewActions(packed, [{ kind: 'blueprint', blueprintId: outer.id, actorTransitions: { enter: { mode: 'fade', duration: 1 } } }], previewActionContext(packed));
+  assert.equal(expanded[0].kind, 'show');
+  if (expanded[0].kind === 'show') assert.deepEqual(expanded[0].actorTransitions, { enter: { mode: 'fade', duration: 1 }, exit: { mode: 'move', duration: .8 }, expression: rules.expression });
+  assert.equal(compileProject(packed).diagnostics.filter(d => d.severity === 'error').length, 0);
+});

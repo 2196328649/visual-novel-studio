@@ -1,0 +1,24 @@
+.ui-preview-window-body { margin: 0; overflow: hidden; }
+.ui-preview-window-body #root { height: 100vh; }
+.ui-preview-window { height: 100%; display: flex; flex-direction: column; color: var(--editor-text); background: var(--editor-panel); }
+.ui-preview-window > header { display: flex; flex: none; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.ui-preview-window > header span { max-width: 35%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-preview-window > header small { color: var(--muted); flex: 1; }
+.ui-preview-window > header button { margin-left: auto; flex: none; }
+.ui-preview-window .ui-logic-preview { display: flex; flex: 1; flex-direction: column; min-height: 0; max-height: none; padding: 0; overflow: hidden; border: 0; }
+.ui-preview-controls { flex: none; max-height: 45%; overflow-y: auto; border-bottom: 1px solid var(--border); }
+.ui-preview-window .ui-preview-toolbar { height: auto; min-height: 42px; padding: 8px 12px; display: flex; gap: 12px; flex-wrap: wrap; }
+.ui-preview-toolbar > output:first-child { font-weight: 600; }
+.ui-preview-toolbar label { display: flex; align-items: center; gap: 5px; }
+.ui-preview-help, .ui-preview-test-data { margin: 0; padding: 6px 12px; }
+.ui-preview-window summary { cursor: pointer; color: var(--muted); }
+.ui-preview-window summary:hover { color: var(--editor-text); }
+.ui-preview-window .ui-logic-preview-values { width: 100%; max-height: none; display: grid; gap: 8px 20px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-top: 10px; }
+.ui-preview-window .ui-logic-preview-values label { margin: 0; gap: 8px; }
+.ui-preview-window .ui-gallery-preview-data { padding: 8px 0; }
+.ui-preview-window .ui-preview-keys { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px; }
+.ui-preview-controls > p { padding: 0 12px; }
+.ui-preview-window .ui-logic-preview-body { flex: 1; min-width: 0; min-height: 0; display: flex; padding: 12px; background: var(--editor-bg); }
+.ui-preview-window .ui-logic-preview-frame { display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 0; overflow: hidden; }
+.ui-preview-loading { padding: 24px; }
+@media (max-width: 740px) { .ui-preview-window > header small { display: none; } .ui-preview-window > header span { max-width: 50%; } }

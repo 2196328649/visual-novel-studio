@@ -1,0 +1,15 @@
+.ui-zoom-controls { display: flex; align-items: center; gap: 3px; margin-left: auto; flex: none; }
+.ui-zoom-controls select { width: 150px; height: 29px; font-size: 11px; padding: 3px 6px; }
+.ui-zoom-controls .icon-button { width: 29px; height: 29px; padding: 4px; }
+.ui-scroll.ui-zoom-scroll { padding: 23px; outline: none; scrollbar-gutter: stable; }
+.ui-zoom-stage { min-width: 100%; min-height: 100%; width: max-content; display: grid; place-items: center; }
+.ui-zoom-stage > * { flex: none; }
+.ui-logic-preview .ui-logic-preview-frame.ui-zoom-scroll { display: block; overflow: auto; scrollbar-gutter: stable; }
+.ui-transform-drag { position: absolute; inset: 0; pointer-events: auto; cursor: move; touch-action: none; }
+.ui-component-menu { position: fixed; z-index: 10000; width: 258px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow: auto; padding: 5px; border: 1px solid var(--editor-border, #48505a); border-radius: 5px; background: var(--editor-panel, #242a30); color: var(--editor-text, #dae0e6); box-shadow: 0 8px 22px #0005; }
+.ui-component-menu button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 29px; border: 0; border-radius: 3px; padding: 5px 8px; text-align: left; background: transparent; color: inherit; font-size: 12px; }
+.ui-component-menu button:hover, .ui-component-menu button:focus-visible { background: var(--editor-selection, #3c514d); outline: none; }
+.ui-component-menu button:disabled { opacity: .4; }
+.ui-component-menu button span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-component-menu kbd { flex: none; color: var(--editor-muted, #a3afbb); font: 10px/1.4 inherit; }
+.ui-component-menu hr { margin: 4px 0; border: 0; border-top: 1px solid var(--editor-border, #48505a); }

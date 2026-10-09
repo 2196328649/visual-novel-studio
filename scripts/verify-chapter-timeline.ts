@@ -1,0 +1,40 @@
+import { blueprintFromPerformance } from '../src/core/blueprint-authoring';
+import { performanceTimeline, arrangePerformanceTimeline } from '../src/core/performance-timeline';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import { expect } from '@playwright/test';
+import { createServer } from 'vite';
+import { createProject } from '../src/core/model';
+import { blueprintNodeDefaults, createBlueprintGraph } from '../src/core/blueprint';
+import { launchDesktopFixture } from './lib/desktop-fixture';
+const root=path.resolve('.'), output=path.join(root,'artifacts/chapter-timeline',new Date().toISOString().replaceAll(':','-'));
+await fs.mkdir(output,{recursive:true});
+const project=createProject('标题内部时间轴验收');
+const graph=blueprintFromPerformance(project,[{kind:'chapter',title:'独立标题',subtitle:'副标题',duration:7,effect:'fade'}],'外层时间轴');
+graph.timelineComponent=true;project.blueprints.push(graph);
+const model=performanceTimeline(project,graph);arrangePerformanceTimeline(project,graph,model.clips,model.tracks);
+const chapter=graph.nodes.find(node=>node.type==='showChapter')!;
+const projectFile=path.join(output,'project.vns.json');await fs.writeFile(projectFile,JSON.stringify(project));
+const server=await createServer({root,server:{host:'127.0.0.1',port:0,watch:{ignored:['**/artifacts/**','**/resources/**','**/release/**']}}});await server.listen();
+const app=await launchDesktopFixture({root,projectFile,profile:path.join(output,'profile'),devUrl:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port}),page=await app.firstWindow();
+try {
+ await expect(page.locator('.project-title strong')).toHaveText(project.name,{timeout:45000});
+ await page.locator('[data-workspace-tab="blueprint"]').click();
+ await page.locator('.timeline-clip[data-node-id="'+chapter.id+'"]').dblclick();
+ await expect(page.getByRole('button',{name:'返回上层时间轴',exact:true})).toBeVisible();
+ await expect(page.locator('.timeline-clip').first()).toBeVisible();
+ await page.getByRole('button',{name:'保存工程',exact:true}).click();await expect(page.locator('.dirty-dot')).toHaveCount(0);
+ const saved=JSON.parse(await fs.readFile(projectFile,'utf8'));const outer=saved.blueprints.find((g:any)=>g.id===graph.id);const call=outer.nodes.find((n:any)=>n.id===chapter.id);
+ assert.equal(call.type,'callFunction');assert.ok(saved.blueprints.find((g:any)=>g.id===call.properties.graphId)?.timelineComponent);
+ assert.equal(performanceTimeline(saved, outer).clips[0].at,model.clips[0].at);
+ await page.getByRole('button',{name:'返回上层时间轴',exact:true}).click();
+ await expect(page.locator('.timeline-clip[data-node-id="'+chapter.id+'"]').first()).toBeVisible();
+ await page.locator('.timeline-clip[data-node-id="'+chapter.id+'"]').dblclick();
+ await expect(page.getByRole('button',{name:'返回上层时间轴',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'保存工程',exact:true}).click();await expect(page.locator('.dirty-dot')).toHaveCount(0);
+ const again=JSON.parse(await fs.readFile(projectFile,'utf8'));assert.equal(again.blueprints.length,2);
+ await page.screenshot({path:path.join(output,'chapter.png')});
+ await fs.writeFile(path.join(output,'chapter-report.json'),JSON.stringify({status:'passed',checks:['双击标题片段展开内部时间轴','保留外层节点和片段起点','返回上层并重新进入同一个时间轴','保存后无重复副本']}));console.log(output);
+} catch(error){await page.screenshot({path:path.join(output,'failure.png')});throw error;}
+finally {await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().forEach(w=>w.destroy())).catch(()=>undefined);await app.close();await server.close();}

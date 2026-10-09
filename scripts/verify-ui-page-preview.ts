@@ -1,0 +1,55 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { expect } from '@playwright/test';
+import { projectSchema } from '../src/core/model';
+import { synchronizeBlueprintSignatures } from '../src/core/blueprint';
+import { launchDesktopFixture } from './lib/desktop-fixture';
+import { createUiPagePreviewFixture } from './lib/ui-page-preview-fixture';
+
+const root = path.resolve('.'), output = path.join(root, 'artifacts/ui-page-preview', new Date().toISOString().replaceAll(':', '-'));
+await fs.mkdir(output, { recursive: true });
+const { project, addGraph, add, chain } = createUiPagePreviewFixture();
+const overlay = addGraph('非模态叠加'); chain(overlay, overlay.nodes[0], add(overlay, 'showUiPage', { pageId: 'overlay', wait: false }));
+const close = addGraph('关闭叠加'); chain(close, close.nodes[0], add(close, 'closeUiPage', { pageId: 'overlay', result: '完成' }));
+project.ui.components.push({ id: 'overlay_open', kind: 'button', page: 'main', text: '打开叠加页', action: 'blueprint', blueprintId: overlay.id, x: .55, y: .2, width: .35, height: .13, style: { fontSize: 36 } });
+project.ui.customPages.push({ id: 'overlay', name: '非模态叠加', modal: false, background: '#15252f', components: [{ id: 'overlay_close', kind: 'button', page: 'custom', text: '关闭叠加页', action: 'blueprint', blueprintId: close.id, x: .55, y: .4, width: .35, height: .13, style: { fontSize: 36 } }] });
+synchronizeBlueprintSignatures(project);
+const projectFile = path.join(output, 'project.vns.json'); await fs.writeFile(projectFile, JSON.stringify(projectSchema.parse(project)));
+const before = await fs.readFile(projectFile, 'utf8'), app = await launchDesktopFixture({ root, projectFile, profile: path.join(output, 'profile') }), page = await app.firstWindow(), errors: string[] = [];
+page.on('pageerror', error => errors.push(error.message));
+try {
+ await expect(page.locator('.project-title strong')).toHaveText(project.name, { timeout: 45000 });
+ await page.locator('[data-workspace-tab="ui"]').click(); await page.getByRole('button', { name: '高级 UI 蓝图', exact: true }).click(); await page.locator('.ui-logic-preview > summary').click();
+ const divider = page.getByRole('separator', { name: '调整画布与页面设置高度', exact: true }); for (let i = 0; i < 18; i++) await divider.press('ArrowUp');
+ const frame = page.getByLabel('参数联动预演画面', { exact: true }), pageName = page.getByLabel('当前预演页面', { exact: true });
+ const value = (name: string) => page.getByLabel('预演参数 ' + name, { exact: true });
+ const click = (name: string) => frame.getByRole('button', { name, exact: true }).click();
+ await expect(page.locator('.dirty-dot')).toHaveCount(0);
+ await frame.focus(); await page.keyboard.press('Space'); await expect(page.locator('.node-picker')).toHaveCount(0);
+ await page.getByLabel('按时间预演', { exact: true }).check();
+ await frame.getByRole('button', { name: '打开等待页面', exact: true }).focus(); await page.keyboard.press('Enter');
+ await expect(pageName).toHaveText('等待页面'); await expect(value('关闭结果')).toHaveValue('尚未返回'); await expect(value('after')).toHaveValue('0');
+ await expect(frame.locator('[data-preview-page="waiting_page"]')).toBeFocused();
+ await expect(frame.locator('[data-preview-page="ui:main"]')).toHaveAttribute('inert', '');
+ await page.keyboard.press('e'); await expect(value('base_clicks')).toHaveValue('0');
+ await page.getByRole('button', { name: '推进 1 秒', exact: true }).click(); await expect(value('base_ticks')).toHaveValue('1'); await expect(value('page_ticks')).toHaveValue('2');
+ await click('打开子页'); await expect(pageName).toHaveText('子页'); await expect(frame.locator('[data-preview-page="waiting_page"]')).toHaveAttribute('inert', '');
+ await frame.screenshot({ path: path.join(output, 'nested-frame.png') }); await page.screenshot({ path: path.join(output, 'nested.png') });
+ await click('完成子页'); await expect(pageName).toHaveText('等待页面'); await expect(value('子页结果')).toHaveValue('子页完成'); await expect(value('after')).toHaveValue('0');
+ await expect(frame.getByRole('button', { name: '打开子页', exact: true })).toBeFocused();
+ await click('确认关闭页面'); await expect(pageName).toHaveText('标题'); await expect(value('关闭结果')).toHaveValue('已确认'); await expect(value('after')).toHaveValue('1');
+ await expect(frame.getByRole('button', { name: '打开等待页面', exact: true })).toBeFocused();
+ await page.getByRole('button', { name: '推进 1 秒', exact: true }).click(); await expect(value('page_ticks')).toHaveValue('2'); await expect(value('base_ticks')).toHaveValue('2');
+ await click('打开等待页面'); await page.keyboard.press('Escape'); await expect(pageName).toHaveText('标题'); await expect(value('关闭结果')).toHaveValue('取消');
+ await click('打开等待页面'); await frame.click({ position: { x: 20, y: 20 }, button: 'right' }); await expect(pageName).toHaveText('标题'); await expect(value('关闭结果')).toHaveValue('取消');
+ await click('打开叠加页'); await expect(pageName).toHaveText('非模态叠加'); await expect(frame.locator('[inert]')).toHaveCount(0);
+ await click('底层按钮'); await expect(value('base_clicks')).toHaveValue('1'); await frame.focus(); await page.keyboard.press('e'); await expect(value('base_clicks')).toHaveValue('2');
+ await click('打开叠加页'); await expect(frame.locator('[data-preview-page="overlay"]')).toHaveCount(1);
+ await frame.screenshot({ path: path.join(output, 'overlay-frame.png') });
+ await click('关闭叠加页'); await expect(pageName).toHaveText('标题'); await expect(frame.locator('[data-preview-page]')).toHaveCount(1);
+ await click('打开等待页面'); await page.getByRole('button', { name: '恢复测试值', exact: true }).click();
+ await expect(pageName).toHaveText('标题'); await expect(value('关闭结果')).toHaveValue('尚未返回'); await expect(value('after')).toHaveValue('0'); await expect(frame.locator('[data-preview-page]')).toHaveCount(1);
+ await expect(page.locator('.dirty-dot')).toHaveCount(0); expect(await fs.readFile(projectFile, 'utf8')).toBe(before); expect(errors).toEqual([]);
+ await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', compiledBuild: true, checks: ['等待关闭前不执行后续，关闭结果传回', '嵌套等待与独立返回，底层模态拦截', '页面焦点进入与关闭恢复', '底层与页面计时，关闭停止与重入', 'Esc和右键取消', '非模态叠加、底层点击与按键、重复打开', '恢复测试值取消全部等待，草稿与磁盘不变'], errors }, null, 2)); console.log(output);
+} catch (error) { await page.screenshot({ path: path.join(output, 'failure.png') }); throw error; }
+finally { await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach(w => w.destroy())).catch(() => undefined); await app.close(); }

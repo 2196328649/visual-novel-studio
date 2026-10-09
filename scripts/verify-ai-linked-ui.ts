@@ -1,0 +1,44 @@
+import { createUiParameterBinding } from '../src/core/ui-logic';
+import { previewUiLogic } from '../src/core/ui-logic-preview';
+import { compileProject } from '../src/runtime/compiler';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { expect, type Page } from '@playwright/test';
+import { createServer as createViteServer } from 'vite';
+import { createProject } from '../src/core/model';
+import { defaultAiConfig } from '../src/core/ai';
+import { saveProject } from '../src/desktop/project-store';
+import { launchDesktopFixture } from './lib/desktop-fixture';
+const root=path.resolve('.'),output=path.join(root,'artifacts/ai-linked-ui',new Date().toISOString().replaceAll(':','-')),profile=path.join(output,'profile'),projectFile=path.join(output,'project/project.vns.json');
+await fs.mkdir(profile,{recursive:true});
+const project=createProject('组合动作原工程');await saveProject(projectFile,project);let requests=0;
+const draft=structuredClone(project);draft.parameterSets=[{id:'ai_group',name:'界面参数',kind:'settings'}];
+const variable={id:'ai_caption',name:'显示文字',type:'string' as const,initial:'默认标题',persistent:true,parameterSetId:'ai_group'};draft.variables.push(variable);
+const label={id:'ai_linked_label',kind:'text' as const,page:'main' as const,text:'占位',x:.1,y:.1,width:.5,height:.1};draft.ui.components.push(label);
+const graph=createUiParameterBinding(draft,label.id,'text',variable.id,'ui:main');
+const operations=[{kind:'editProject',path:['blueprints'],action:'append',value:graph},{kind:'editProject',path:['ui','components'],action:'append',value:label},{kind:'editProject',path:['parameterSets'],action:'set',value:draft.parameterSets},{kind:'editProject',path:['variables'],action:'append',value:variable}];
+const mock=createServer(async(req,res)=>{let raw='';for await(const chunk of req)raw+=chunk;const body=JSON.parse(raw);requests++;
+ const result={message:'准备建立参数联动',operations,editorCommands:['save','openUi','openParameters']};
+ res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{message:{content:JSON.stringify(result)},finish_reason:'stop'}]}));});
+mock.listen(0,'127.0.0.1');await once(mock,'listening');
+await fs.writeFile(path.join(profile,'ai-settings.json'),JSON.stringify({version:1,config:{...defaultAiConfig,baseUrl:'http://127.0.0.1:'+(mock.address() as {port:number}).port+'/v1',model:'local-mock',rememberKey:false}}));
+const server=await createViteServer({root,server:{host:'127.0.0.1',port:0,watch:{ignored:['**/artifacts/**','**/resources/**','**/release/**']}}});await server.listen();
+const app=await launchDesktopFixture({root,profile,projectFile,sdkRoot:path.resolve(root,'..'),devUrl:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port});const page=await app.firstWindow();let assistant:Page|undefined;
+try {
+ await expect(page.locator('.project-title strong')).toHaveText(project.name,{timeout:45000});const before=await fs.readFile(projectFile,'utf8');
+ const opened=app.waitForEvent('window');await page.getByRole('button',{name:'AI 助手',exact:true}).click();assistant=await opened;
+ await assistant.getByLabel('发给 AI 的内容',{exact:true}).fill('创建一个界面参数集和标题参数，用蓝图节点连线让主菜单文字跟随这个参数变化，然后提供保存、界面和参数集按钮');await assistant.getByRole('button',{name:'发送',exact:true}).click();
+ const proposal=assistant.locator('.ai-proposal').last();await expect(proposal.getByRole('button',{name:'应用选中的 4 项修改',exact:true})).toBeVisible({timeout:45000});
+ await expect(assistant.getByRole('button',{name:'保存工程',exact:true})).toBeDisabled();expect(await fs.readFile(projectFile,'utf8')).toBe(before);
+ await proposal.getByRole('button',{name:'应用选中的 4 项修改',exact:true}).click();await expect(proposal).toContainText('已应用修改');
+ await assistant.getByRole('button',{name:'保存工程',exact:true}).click();await expect(assistant.locator('.ai-editor-commands')).toContainText('保存工程 · 已完成');
+ const saved=JSON.parse(await fs.readFile(projectFile,'utf8'));expect(saved.parameterSets.find((x:any)=>x.id==='ai_group').name).toBe('界面参数');expect(saved.blueprints.find((x:any)=>x.id===graph.id).links.length).toBe(4);
+ const component=saved.ui.components.find((x:any)=>x.id===label.id);const sample=previewUiLogic(saved,[component],'ui:main',{ai_caption:'AI 创建的联动已生效'});expect(sample.incomplete).toBe(false);expect(sample.components[0].component.text).toBe('AI 创建的联动已生效');expect(compileProject(saved).files['game/story.rpy']).toBeTruthy();
+ await assistant.getByRole('button',{name:'打开参数集',exact:true}).click();await expect(page.locator('[data-workspace-tab="variables"]')).toHaveClass(/active/);
+ await page.getByRole('button',{name:'撤销',exact:true}).click();await page.getByRole('button',{name:'保存工程',exact:true}).click();await expect(page.locator('.dirty-dot')).toHaveCount(0);
+ const undone=JSON.parse(await fs.readFile(projectFile,'utf8'));expect(undone.blueprints.some((x:any)=>x.id===graph.id)).toBe(false);expect(undone.variables.some((x:any)=>x.id===variable.id)).toBe(false);expect(undone.ui.components.some((x:any)=>x.id===label.id)).toBe(false);
+ await fs.writeFile(path.join(output,'report.json'),JSON.stringify({status:'passed',externalApiCalled:false,checks:['独立AI窗口接收四项互相引用的修改','应用前磁盘不变且保存按钮禁用','应用后真实保存全部对象和四条连线','保存数据驱动UI文字更新并通过编译','打开参数集','一次撤销移除参数、组件和蓝图'],requests},null,2));console.log(output);
+} catch(error){await page.screenshot({path:path.join(output,'failure.png')});await assistant?.screenshot({path:path.join(output,'failure-assistant.png')});throw error;}
+finally {await page.evaluate(()=>window.studio?.controlPreview?.('stop')).catch(()=>undefined);await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().forEach(w=>w.destroy())).catch(()=>undefined);await app.close();await server.close();mock.closeAllConnections();mock.close();}

@@ -1,0 +1,28 @@
+.visual-clip-inspector { min-width:0; }
+.visual-inspector-tabs { margin:12px 0; display:flex; }
+.visual-inspector-tabs > button { flex:1; white-space:nowrap; padding:7px 4px; font-size:11px; }
+.visual-composition-actions,.visual-animation-presets { display:flex; gap:5px; flex-wrap:wrap; margin:8px 0; }
+.visual-composition-actions button,.visual-animation-presets button { display:flex; align-items:center; gap:4px; font-size:11px; }
+.visual-retime { display:flex; align-items:center; gap:6px; margin:12px 0; color:var(--muted); font-size:11px; }
+.visual-locate,.visual-glyph-create { width:100%; margin:5px 0 10px; font-size:12px; }
+.visual-effects > section > details,.visual-effects .ui-property-group { border:1px solid var(--border); border-radius:6px; padding:8px; margin:8px 0; }
+.visual-effects summary { cursor:pointer; font-size:12px; padding:3px 0; }
+.visual-effects > section > details[open] > summary { margin-bottom:10px; }
+.visual-parameter-row { border:1px solid var(--border); border-radius:6px; padding:9px; margin:8px 0; display:grid; gap:7px; min-width:0; }
+.visual-parameter-row > strong { font-size:11px; font-weight:500; }
+.visual-parameter-row fieldset { border:0; margin:0; padding:0; min-width:0; }
+.visual-parameter-row fieldset > input { width:100%; }
+.visual-parameter-row fieldset > input[type="checkbox"] { width:auto; }
+.visual-parameter-actions { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+.visual-parameter-actions span { font-size:10px; color:var(--editor-accent); }
+.visual-parameter-actions button { display:flex; align-items:center; gap:5px; font-size:11px; }
+.track-preview-controls { display:flex; gap:1px; }
+.track-preview-controls button { padding:2px; width:19px; height:20px; display:grid; place-items:center; background:transparent; border:0; color:var(--muted); }
+.track-preview-controls button[aria-pressed="true"] { color:var(--editor-accent); background:var(--editor-selection); }
+.timeline-track.preview-hidden .timeline-clip,.composition-track-row.preview-hidden .composition-track-clip { opacity:.35; }
+.timeline-clip[data-multiselected="true"] { outline:2px solid #b8e7ff; outline-offset:1px; }
+.timeline-track-name > .track-preview-controls { grid-column:2; grid-row:2; }
+.performance-library-commands { margin:8px 0; }
+.performance-library-commands summary { font-size:12px; padding:7px; cursor:pointer; }
+.composition-track-head,.composition-ruler-main > span,.composition-property-row > span { width:200px; }
+.composition-track-row { background-position-x:200px; }

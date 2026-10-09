@@ -1,0 +1,125 @@
+import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { expect } from '@playwright/test';
+import { createProject, projectSchema } from '../src/core/model';
+import { createBranchingProject } from '../src/core/project-templates';
+import { saveProject } from '../src/desktop/project-store';
+import { applyTextScript } from '../src/core/text-script';
+import { launchDesktopFixture } from './lib/desktop-fixture';
+import { openStoryMode } from './lib/story-workspace';
+
+const root = path.resolve('.'), output = path.join(root, 'artifacts/editor-template', new Date().toISOString().replaceAll(':', '-'));
+await fs.mkdir(output, { recursive: true });
+let projectFile = path.join(output, 'initial.json');
+await fs.writeFile(projectFile, JSON.stringify(createProject('验收起始工程')));
+const branchFile = path.join(output, 'branch/project.vns.json'), aihongFile = path.join(output, 'aihong/project.vns.json');
+const regressionTemplateId = 'user:00000000-0000-4000-8000-000000000001';
+await saveProject(path.join(output, 'profile/templates', regressionTemplateId.slice(5), 'project.vns.json'), createBranchingProject('分支回归样例'));
+const launch = () => launchDesktopFixture({ root, profile: path.join(output, 'profile'), projectFile });
+let app = await launch(), page = await app.firstWindow(), phase = 'create';
+const errors: string[] = [], checks: string[] = [];
+const observe = () => page.on('pageerror', error => errors.push(error.message)); observe();
+const chooseSave = (file: string | null) => app.evaluate(({ dialog }, file) => {
+  dialog.showSaveDialog = async (...args: unknown[]) => {
+    const options = args.at(-1) as { defaultPath?: string };
+    (globalThis as any).__lastSaveDefault = options.defaultPath;
+    return { canceled: !file, filePath: file ?? '' };
+  };
+}, file);
+try {
+  await expect(page.locator('.project-title strong')).toHaveText('验收起始工程');
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 900));
+  await page.getByRole('button', { name: '新建工程', exact: true }).click();
+  await page.getByLabel('作品名称', { exact: true }).fill('入门模板验收');
+  await page.getByLabel('工程模板', { exact: true }).selectOption(regressionTemplateId);
+  await expect(page.locator('.new-project-hint')).toContainText('独立项目');
+  await page.screenshot({ path: path.join(output, '01-new-template.png') });
+  await chooseSave(branchFile);
+  await page.getByRole('button', { name: '创建作品', exact: true }).click();
+  await expect(page.locator('.project-title strong')).toHaveText('入门模板验收');
+  await chooseSave(branchFile);
+  await page.getByRole('button', { name: '保存工程', exact: true }).click();
+  await expect(page.locator('.dirty-dot')).toHaveCount(0);
+  let saved = projectSchema.parse(JSON.parse(await fs.readFile(branchFile, 'utf8')));
+  assert.equal(saved.nodes.filter(node => node.kind === 'end').length, 2);
+  assert.equal(saved.assets.length, 0);
+  checks.push('通过自制模板入口创建双结局回归样例工程。');
+
+  phase = 'module and text search';
+  const search = page.getByLabel('搜索剧情目录', { exact: true });
+  await search.fill('隔壁');
+  await expect(page.locator('.story-search-result')).toHaveCount(1);
+  await page.locator('.story-search-result').click();
+  await expect(page.locator('.story-line.selected .dialogue-input')).toHaveValue(/隔壁/);
+  await page.screenshot({ path: path.join(output, '02-module-search.png') });
+  await openStoryMode(page, 'text');
+  await search.fill('热茶');
+  await page.locator('.story-search-result').click();
+  const input = page.getByRole('textbox', { name: '中文文本剧本', exact: true });
+  await expect.poll(() => input.evaluate(element => {
+    const text = element as HTMLTextAreaElement;
+    return text.value.slice(text.selectionStart, text.value.indexOf('\n', text.selectionStart) < 0 ? undefined : text.value.indexOf('\n', text.selectionStart));
+  })).toContain('热茶');
+  await input.fill((await input.inputValue()).replace('热茶', '热可可'));
+  await search.fill('热可可');
+  await expect(page.locator('.story-search-result')).toHaveCount(1);
+  await page.locator('.story-search-result').click();
+  await page.getByRole('button', { name: '保存工程', exact: true }).click();
+  await expect(page.locator('.dirty-dot')).toHaveCount(0);
+  saved = projectSchema.parse(JSON.parse(await fs.readFile(branchFile, 'utf8')));
+  assert.ok(saved.scriptText?.content.includes('热可可'));
+  assert.deepEqual(applyTextScript(saved, saved.scriptText!.content).issues, []);
+  await search.fill('找不到的关键词');
+  await expect(page.locator('.story-search-count')).toContainText('没有找到匹配内容');
+  await search.press('Escape'); await expect(search).toHaveValue('');
+  checks.push('目录按对白定位模块中的准确台词；文本模式定位源码行，并实时搜索未保存草稿；空结果与 Esc 清除可用。');
+
+  phase = 'light appearance';
+  await page.getByRole('button', { name: '作品设置', exact: true }).click();
+  await page.getByRole('button', { name: '编辑器外观', exact: true }).click();
+  await page.getByRole('button', { name: /^亮白/ }).click();
+  await page.getByRole('button', { name: '关闭作品设置', exact: true }).click();
+  await search.fill('热可可');
+  await page.screenshot({ path: path.join(output, '03-light-search.png') });
+  checks.push('亮白主题下检查搜索结果与空状态。');
+
+  phase = 'reopen';
+  projectFile = branchFile;
+  await app.close(); app = await launch(); page = await app.firstWindow(); observe();
+  await expect(page.locator('.project-title strong')).toHaveText('入门模板验收');
+  await page.getByLabel('搜索剧情目录', { exact: true }).fill('热可可');
+  await expect(page.locator('.story-search-result')).toHaveCount(1);
+  await expect(page.locator('.dirty-dot')).toHaveCount(0);
+  checks.push('完整关闭重开后保留改稿，工程无意外未保存状态。');
+
+  phase = 'aihong cancel and default folder';
+  await page.getByRole('button', { name: '新建工程', exact: true }).click();
+  await page.getByLabel('作品名称', { exact: true }).fill('哀鸿模板验收');
+  await page.getByLabel('工程模板', { exact: true }).selectOption('aihong');
+  await chooseSave(null);
+  await page.getByRole('button', { name: '创建作品', exact: true }).click();
+  await expect(page.getByRole('button', { name: '创建作品', exact: true })).toBeEnabled();
+  await expect(page.getByLabel('作品名称', { exact: true })).toHaveValue('哀鸿模板验收');
+  await expect(page.locator('.project-title strong')).toHaveText('入门模板验收');
+  const defaultPath = await app.evaluate(() => (globalThis as any).__lastSaveDefault);
+  assert.ok(defaultPath.endsWith(path.join('Visual Novel Studio', '哀鸿模板验收', 'project.vns.json')));
+  await chooseSave(aihongFile);
+  await page.getByRole('button', { name: '创建作品', exact: true }).click();
+  await expect(page.locator('.project-title strong')).toHaveText('哀鸿模板验收', { timeout: 60_000 });
+  const aihong = projectSchema.parse(JSON.parse(await fs.readFile(aihongFile, 'utf8')));
+  assert.equal(aihong.chapters.length, 2); assert.equal(aihong.nodes.filter(node => node.kind === 'end').length, 3);
+  assert.ok(aihong.assets.length > 200);
+  await expect(page.getByLabel('搜索剧情目录', { exact: true })).toHaveValue('');
+  await page.getByLabel('搜索剧情目录', { exact: true }).fill('苏怜烟');
+  await expect(page.locator('.story-search-result').first()).toBeVisible();
+  await page.screenshot({ path: path.join(output, '04-aihong-speaker-search.png') });
+  checks.push('哀鸿模板取消选目录后保留新建表单；默认独立作品目录；实际复制完整模板后可按角色搜索。');
+  assert.deepEqual(errors, []);
+  await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', checks, branchFile, aihongFile, defaultPath, errors }, null, 2));
+  console.log(output);
+} catch (error) {
+  await page.screenshot({ path: path.join(output, 'failure.png') }).catch(() => undefined);
+  await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'failed', phase, checks, errors, error: String(error) }, null, 2));
+  console.log(output); throw error;
+} finally { await app.close().catch(() => undefined); }

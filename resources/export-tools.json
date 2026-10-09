@@ -1,0 +1,25 @@
+{
+  "runtimeVersion": "8.5.3",
+  "jdk": {
+    "name": "JDK 21",
+    "url": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip",
+    "sha256": "f9d6e191ab098c0d416e7d588a24420a8621cd2f4720dab2459b8b7b2d2d8b4e",
+    "bytes": 205073461
+  },
+  "rapt": {
+    "name": "Android 打包工具",
+    "url": "https://www.renpy.org/dl/8.5.3/renpy-8.5.3-rapt.zip",
+    "sha256": "8a12be34a2f5238d125ff6dd76a56772fd8e44838af864f81bca82c1059b00e6",
+    "bytes": 68554524,
+    "versionHash": "b8e779e30fb675ed883e047aba766e71ea63b6fcc2d934f0bb1cb8d2ea073b55"
+  },
+  "android": {
+    "name": "Android SDK 命令行工具",
+    "url": "https://dl.google.com/android/repository/commandlinetools-win-11076708_latest.zip",
+    "sha256": "4d6931209eebb1bfb7c7e8b240a6a3cb3ab24479ea294f3539429574b1eec862",
+    "bytes": 153583359,
+    "officialSha1": "3d2917302740f476999a091bc5558837c7a863c5",
+    "packages": ["platform-tools", "platforms;android-36", "build-tools;36.0.0"],
+    "licenseUrl": "https://developer.android.com/studio/terms"
+  }
+}

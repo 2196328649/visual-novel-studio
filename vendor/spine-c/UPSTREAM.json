@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/EsotericSoftware/spine-runtimes",
+  "branch": "4.2",
+  "commit": "e7dc1435fa4a0083ab431f1b28e083c14a1f5c68",
+  "subdirectory": "spine-c/spine-c",
+  "changes": "No changes to upstream include/ and src/. Host ABI lives in native/spine/."
+}

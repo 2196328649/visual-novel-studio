@@ -1,0 +1,16 @@
+import { openStoryMode } from './lib/story-workspace';
+import { chromium } from '@playwright/test';
+import { createServer } from 'vite';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { projectSchema, type Project } from '../src/core/model';
+import type { StudioBridge } from '../src/core/bridge';
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const initial = projectSchema.parse(JSON.parse(await fs.readFile(path.join(root, 'resources/templates/aihong/project.vns.json'), 'utf8')));
+const server = await createServer({ root, server: { host: '127.0.0.1', port: 0, watch: { ignored: ['**/artifacts/**', '**/resources/**', '**/release/**'] } } }); await server.listen(); const address=server.httpServer!.address(); if(!address||typeof address==='string') throw new Error('no server');
+const browser=await chromium.launch({channel:'msedge',headless:true}); const page=await browser.newPage({viewport:{width:1600,height:1000}});
+await page.addInitScript((initial:Project)=>{ const bridge:StudioBridge={getInitial:async()=>({project:initial,path:'x',recovered:false}),create:async()=>null,open:async()=>null,save:async project=>({project,path:'x',recovered:false}),autosave:async()=>({savedAt:Date.now()}),importAssets:async()=>null,importText:async()=>null,preview:async()=>({ok:true,diagnostics:[],log:''}),exportGame:async()=>null,checkExport:async()=>({platform:'windows',ready:true,checks:[],diagnostics:[]}),assetUrl:relative=>'/resources/templates/aihong/'+relative,environment:async()=>({sdkPath:null,appVersion:'x'}),onRuntimeEvent:()=>()=>{},onCloseRequested:()=>()=>{}}; window.studio=bridge;}, initial);
+await page.goto(`http://127.0.0.1:${address.port}`); await page.getByRole('button',{name:'蓝图',exact:true}).click(); await page.getByLabel('蓝图类型').selectOption('graph'); await page.getByLabel('选择通用蓝图').selectOption('ai_bp_caution'); await page.getByRole('button',{name:'框选全部节点',exact:true}).click(); await page.waitForTimeout(500);
+const info=await page.locator('.react-flow__edge[data-id="ai_bp_caution_l2"]').evaluate(el=>({outer:el.outerHTML, rect:(el as HTMLElement).getBoundingClientRect().toJSON(), paths:[...el.querySelectorAll('path')].map(p=>({class:p.getAttribute('class'),style:getComputedStyle(p).cssText,pe:getComputedStyle(p).pointerEvents,sw:getComputedStyle(p).strokeWidth,op:getComputedStyle(p).strokeOpacity,d:p.getAttribute('d')})),transform:getComputedStyle(el).transform})); console.log(JSON.stringify(info,null,2));
+const p=await page.locator('.react-flow__edge[data-id="ai_bp_caution_l2"] .react-flow__edge-path').evaluate((element)=>{const path=element as SVGPathElement,d=path.getTotalLength()*0.5,m=path.getScreenCTM()!,a=path.getPointAtLength(d).matrixTransform(m),b=path.getPointAtLength(d+1).matrixTransform(m),dx=b.x-a.x,dy=b.y-a.y,l=Math.hypot(dx,dy)||1; return {a,b,offset:{x:a.x-dy/l*10,y:a.y+dx/l*10},at:a};}); console.log(JSON.stringify(p)); console.log(await page.evaluate(({x,y})=>{const el=document.elementFromPoint(x,y); return {tag:el?.tagName,cls:(el as HTMLElement)?.getAttribute('class'),id:(el as HTMLElement)?.closest('.react-flow__edge')?.getAttribute('data-id')};},p.offset)); await page.screenshot({path:path.join(root,'artifacts/debug-edge.png')}); await browser.close(); await server.close();

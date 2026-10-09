@@ -1,0 +1,82 @@
+.story-edit-modes { flex: none; display: flex; align-items: center; gap: 3px; padding: 3px; border: 1px solid #42515d; background: #202831; border-radius: 6px; }
+.story-edit-modes > button { display: flex; align-items: center; gap: 6px; border: 0; border-radius: 4px; padding: 7px 10px; background: transparent; color: #a5b7c8; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.story-edit-modes > button[aria-pressed=true] { color: #d5f5e9; background: #34564f; box-shadow: 0 0 0 1px #628879 inset; }
+.text-code-surface { display: flex; position: absolute; inset: 0; min-width: 0; overflow: hidden; background: #21272f; }
+.text-code-gutter { flex: none; width: 66px; overflow: hidden; background: #1d232b; border-right: 1px solid #35404a; user-select: none; }
+.text-gutter-row { display: flex; height: var(--text-line-height, 22px); padding-right: 18px; position: relative; }
+.text-gutter-row .text-fold-toggle { position: absolute; right: 0; width: 18px; padding: 0; display: grid; place-items: center; color: #aab8c5; }
+.text-code-gutter > div { will-change: transform; }
+.text-code-gutter button { position: relative; display: block; width: 100%; height: var(--text-line-height, 22px); border: 0; margin: 0; padding: 0 9px 0 4px; text-align: right; font: var(--text-gutter-font-size, 11px)/var(--text-line-height, 22px) "Cascadia Mono", Consolas, monospace; background: transparent; color: #6f8396; cursor: pointer; }
+.text-code-gutter button.active { color: #d5efe8; background: #30473f; }
+.text-code-gutter button.has-issue:before { content: ''; position: absolute; left: 5px; top: 9px; width: 4px; height: 4px; border-radius: 50%; background: #e8ae64; }
+.text-code-body { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.text-code-highlight, .text-code-body .text-source-input { padding: 14px 18px 30px; margin: 0; border: 0; box-sizing: border-box; font: var(--text-font-size, 13px)/var(--text-line-height, 22px) "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace; font-variant-ligatures: none; letter-spacing: 0; tab-size: 2; white-space: pre; overflow-wrap: normal; word-break: normal; }
+.text-code-highlight { position: absolute; top: 0; left: 0; width: max-content; min-width: 100%; pointer-events: none; color: #d2dce5; }
+.text-code-line { display: block; height: var(--text-line-height, 22px); min-height: var(--text-line-height, 22px); }
+.soft-wrap .text-code-highlight, .soft-wrap .text-code-body .text-source-input { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-all; }
+.soft-wrap .text-code-highlight { min-width: 0; }
+.soft-wrap .text-code-line { height: auto; }
+.text-code-body.soft-wrap .text-source-input { overflow-x: hidden; }
+.soft-wrap .text-code-body .text-source-input, .soft-wrap .text-code-body .text-source-input:focus { overflow-x: hidden; }
+.text-code-line.active { background: #83bfa50c; }
+.text-code-line.has-issue { text-decoration: underline wavy #d6a76388; text-underline-offset: 4px; }
+.text-code-body .text-source-input, .text-code-body .text-source-input:focus { position: relative; min-height: 0; height: 100%; width: 100%; color: transparent; -webkit-text-fill-color: transparent; caret-color: #e1efe9; background: transparent; outline: none; overflow: auto; }
+.text-code-body .text-source-input::selection { background: #78b9bd45; }
+.text-code-body .text-source-input::placeholder { color: #7e939f; -webkit-text-fill-color: #7e939f; }
+.code-token-heading { color: #c5b3ef; }
+.code-token-command { color: #86cfc1; }
+.code-token-speaker { color: #89b9e4; }
+.code-token-number { color: #e0bf8a; }
+.text-code-surface.text-code-surface { background: var(--text-background); color: var(--text-foreground); }
+.text-code-surface .text-code-highlight.text-code-highlight { background: var(--text-background); color: var(--text-foreground); }
+.text-code-surface.text-code-surface .text-code-body .text-source-input { caret-color: var(--text-foreground); }
+/* The opaque native selection covers the syntax paint layer, so it must paint its own glyphs. */
+.text-code-surface.text-code-surface .text-code-body .text-source-input::selection { background: var(--text-selection); color: var(--text-selection-foreground); -webkit-text-fill-color: var(--text-selection-foreground); }
+.colorful-text .text-code-line[data-text-kind=heading] { color:var(--text-heading); }
+.colorful-text .text-code-line[data-text-kind=command] { color:var(--text-command); }
+.colorful-text .text-code-line[data-text-kind=speaker] { color:var(--text-speaker); }
+.colorful-text .text-code-line[data-text-kind=comment] { color:var(--text-comment); }
+.colorful-text .text-code-line [class^=code-token-] { color:inherit; font-weight:inherit; }
+.text-colors-dialog { width: min(860px, calc(100vw - 48px)); max-height: calc(100vh - 60px); margin: auto; padding: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--editor-panel); color: var(--editor-panel-text); }
+.text-colors-dialog[open] { display: flex; flex-direction: column; }
+.text-colors-dialog::backdrop { background: #0008; }
+.text-colors-dialog header, .text-colors-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px 22px; }
+.text-colors-dialog header { border-bottom: 1px solid var(--border); }
+.text-colors-dialog footer { border-top: 1px solid var(--border); }
+.text-colors-dialog h2 { font-size: 18px; }
+.text-colors-dialog h3 { margin: 0 0 12px; font-size: 13px; }
+.text-colors-dialog p { font-size: 12px; line-height: 1.7; }
+.text-colors-body { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 24px; padding: 22px; overflow: auto; }
+.text-color-fields { display: grid; gap: 10px; margin-bottom: 24px; }
+.text-color-fields label { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.text-color-fields label span { flex: 1; }
+.text-colors-dialog input[type=color] { width: 38px; height: 28px; padding: 2px; }
+.text-color-fields code { width: 65px; font-size: 11px; color: var(--muted); }
+.text-speaker-colors > div { display: flex; align-items: center; gap: 10px; min-height: 38px; font-size: 12px; }
+.text-speaker-colors > div > span { flex: 1; overflow-wrap: anywhere; }
+.text-speaker-colors label { display: flex; align-items: center; gap: 6px; }
+.text-color-preview { border: 1px solid var(--border); border-radius: 6px; padding: 18px; overflow-wrap: anywhere; }
+.text-color-preview p { margin: 0 0 9px; }
+@media (max-width: 700px) { .text-colors-body { grid-template-columns: 1fr; } }
+.text-panel-heading > button[aria-pressed=true] { border-color:var(--editor-accent); background:var(--editor-selection); }
+.text-find-panel { flex: none; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; background: #29323d; border-bottom: 1px solid #40505d; }
+.text-find-row { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.text-find-row input { min-width: 50px; flex: 1; height: 28px; }
+.text-find-row small { flex: none; color: #9fbdc7; font-size: 10px; min-width: 46px; text-align: center; }
+.text-find-row button { flex: none; font-size: 11px; padding: 5px 7px; white-space: nowrap; }
+.text-find-row .icon-button { padding: 4px; }
+.text-source-panel .text-panel-heading > .spacer { flex: 1; }
+.text-source-panel .text-panel-heading > .icon-button { width: 27px; height: 27px; }
+.text-source-help { white-space: nowrap; overflow: hidden; }
+.text-chapter-bar { display: flex; align-items: center; flex: none; gap: 6px; padding: 9px 12px; border-bottom: 1px solid var(--editor-border); background: var(--editor-toolbar); color: var(--editor-text); }
+.text-chapter-bar > label { font-size: 12px; color: var(--editor-muted); }
+.text-chapter-bar > select { flex: 1; min-width: 90px; max-width: 340px; height: 31px; }
+.text-chapter-bar > span { margin-left: auto; font-size: 11px; color: var(--editor-muted); }
+.text-chapter-bar .icon-button { flex: none; }
+@media (max-width: 1450px) { .text-chapter-bar > span { display: none; } }
+@media (max-width: 1150px) {
+  .text-editor-toolbar { flex-wrap: wrap; }
+  .text-editor-layout { grid-template-columns: minmax(290px, 1fr) minmax(260px, .85fr); }
+  .story-edit-modes > button { padding-inline: 7px; }
+  .text-source-help > span:last-child { display: none; }
+}

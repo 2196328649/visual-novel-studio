@@ -1,0 +1,6 @@
+allowBuilds:
+  electron: true
+  electron-winstaller: false
+  esbuild: true
+overrides:
+  'app-builder-lib@26.15.3>@electron/get': 5.1.0
