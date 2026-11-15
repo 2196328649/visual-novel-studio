@@ -4,7 +4,7 @@ import { playerPreferences } from './preferences';
 /** Values come from the bound setting; a control event is emitted only for user input. */
 export function uiControlValueType(project: Project, component?: UiComponent) {
  if(!component||!['preference','preferenceChoice'].includes(component.kind))return;
- if(component.parameterId)return project.variables.find(v=>v.id===component.parameterId)?.type;
+ if(component.parameterId){const type=project.variables.find(v=>v.id===component.parameterId)?.type;return type==='asset'?undefined:type;}
  return component.preference?playerPreferences[component.preference]?.type:undefined;
 }
 export function uiControlEventType(project: Project, componentId: unknown) {

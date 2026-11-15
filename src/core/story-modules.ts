@@ -1,4 +1,7 @@
+import { cloneData } from "./project-mutation";
 import { connectNode, makeId, newNode, targets, type Project, type StoryNode } from './model';
+import { addNodeToStoryGroup, pruneStoryGroups } from './story-groups';
+import { remapStoryTransitionPorts } from './flow-transitions';
 
 export type ModulePlacement = 'above' | 'below';
 export type ModuleKind = 'dialogue' | 'standalone';
@@ -12,11 +15,13 @@ export function createStoryModule(kind: ModuleKind, sceneId: string): StoryNode 
 }
 
 export function copyStoryModule(source: StoryNode): StoryNode {
-  const node = structuredClone(source);
+  const node = cloneData(source);
   node.id = makeId('node');
+  const ports = new Map<string, string>();
   if (node.kind === 'passage') node.lines.forEach(line => { line.id = makeId('line'); });
-  if (node.kind === 'choice') node.choices.forEach(choice => { choice.id = makeId('option'); });
-  if (node.kind === 'interaction') node.hotspots.forEach(hotspot => { hotspot.id = makeId('hotspot'); });
+  if (node.kind === 'choice') node.choices.forEach(choice => { const id = makeId('option'); ports.set(choice.id, id); choice.id = id; });
+  if (node.kind === 'interaction') node.hotspots.forEach(hotspot => { const id = makeId('hotspot'); ports.set(hotspot.id, id); hotspot.id = id; });
+  remapStoryTransitionPorts(node, ports);
   return node;
 }
 
@@ -38,6 +43,7 @@ export function insertStoryModule(project: Project, node: StoryNode, sceneId: st
     project.nodes = project.nodes.map(item => item.id === anchor.id ? connectNode(item, 'next', node.id) : item);
   } else node = connectNode(node, 'next', undefined);
   project.nodes.splice(at, 0, node);
+  addNodeToStoryGroup(project, node.id, project.storyGroups?.find(group => anchor && group.nodeIds.includes(anchor.id))?.id);
   return node.id;
 }
 
@@ -49,4 +55,5 @@ export function removeStoryModule(project: Project, id: string) {
   if (project.entryId === id && !successor) return;
   project.nodes = project.nodes.filter(item => item.id !== id).map(item => targets(item).reduce((result, port) => port.target === id ? connectNode(result, port.port, successor) : result, item));
   if (project.entryId === id && successor) project.entryId = successor;
+  pruneStoryGroups(project);
 }

@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import type { ProjectHubInfo, ProjectSession } from '../core/bridge';
-import { createProject } from '../core/model';
 import { errorMessage } from '../core/error-message';
 import App from './App';
 import { ProjectBrowser } from './ProjectBrowser';
@@ -9,12 +9,35 @@ export function EditorStartup() {
   const [info, setInfo] = useState<ProjectHubInfo>();
   const [session, setSession] = useState<ProjectSession>();
   const [error, setError] = useState('');
+  const [closing,setClosing]=useState(false),[closeError,setCloseError]=useState('');
+  const browserBusy=useRef(false),closingRef=useRef(false);
   const bridge = window.studio;
   useEffect(() => { if (!bridge?.getProjectHub) return; let active = true; void bridge.getProjectHub().then(value => { if (active) { setInfo(value); if (value.direct) setSession(value.direct); } }).catch(error => { if (active) setError(errorMessage(error)); }); return () => { active = false; }; }, [bridge]);
-  useEffect(() => { if (session || !bridge?.getProjectHub) return; return bridge.onCloseRequested?.(() => ({ project: createProject(), dirty: false })); }, [bridge, session]);
+  useEffect(() => {
+    if (session || !bridge?.getProjectHub) return;
+    let active=true,closingSession:ProjectSession|undefined;
+    const unsubscribe=bridge.onCloseRequested?.(() => {
+      if(!closingSession)throw new Error('尚未取得当前工程，窗口保持打开。');
+      return {project:closingSession.project,dirty:false};
+    },async()=>{
+      if(browserBusy.current){setCloseError('正在处理项目操作，请等待完成后再关闭。');return false;}
+      if(closingRef.current)return false;
+      closingRef.current=true;
+      flushSync(()=>{setClosing(true);setCloseError('');});
+      try {
+        const current=await bridge.getInitial();
+        if(!active)return false;
+        closingSession=current;return true;
+      }catch(error){if(active)setCloseError(errorMessage(error));return false;}
+    },error=>{
+      closingRef.current=false;
+      if(active){setClosing(false);if(error)setCloseError(error);}
+    });
+    return()=>{active=false;closingRef.current=false;unsubscribe?.();};
+  }, [bridge, session]);
   if (!bridge?.getProjectHub) return <App />;
   if (session) return <App initialSession={session} />;
   if (error) return <div className="project-startup-error"><h1>未能打开项目窗口</h1><p role="alert">{error}</p><button className="small-button" onClick={() => location.reload()}>重试</button></div>;
   if (!info) return <div className="project-startup-error" role="status">正在读取项目列表…</div>;
-  return <ProjectBrowser bridge={bridge} initial={info} onOpen={setSession} />;
+  return <ProjectBrowser bridge={bridge} initial={info} onOpen={setSession} onBusyChange={busy=>{browserBusy.current=busy;}} closing={closing} closeError={closeError} />;
 }

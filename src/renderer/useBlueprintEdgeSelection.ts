@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useStoreApi, type Node, type OnEdgesChange } from '@xyflow/react';
 import type { StudioEdge } from './SelectableEdge';
-import { bezierIntersectsRect, parseBezierPath, type Bezier } from './blueprint-selection';
+import { bezierIntersectsRect, parseBezierSegments, type Bezier } from './blueprint-selection';
 
 const sameIds = (a: ReadonlySet<string>, b: ReadonlySet<string>) => a.size === b.size && [...a].every(id => b.has(id));
 
@@ -29,7 +29,7 @@ export function useBlueprintEdgeSelection<NodeType extends Node>(scopeId: string
   useEffect(() => {
     let frame = 0;
     let pending: { rect: { x: number; y: number; width: number; height: number }; zoom: number } | undefined;
-    const paths = new Map<string, { path: string; curve: Bezier }>();
+    const paths = new Map<string, { path: string; curves: Bezier[] }>();
     const flush = () => {
       cancelAnimationFrame(frame); frame = 0;
       if (!pending) return;
@@ -42,10 +42,10 @@ export function useBlueprintEdgeSelection<NodeType extends Node>(scopeId: string
         const path = element.getAttribute('d') ?? '';
         let cached = paths.get(id);
         if (cached?.path !== path) {
-          const curve = parseBezierPath(path); if (!curve) continue;
-          cached = { path, curve }; paths.set(id, cached);
+          const curves = parseBezierSegments(path); if (!curves.length) continue;
+          cached = { path, curves }; paths.set(id, cached);
         }
-        if (bezierIntersectsRect(cached.curve, rect, 1.5 / zoom)) ids.add(id);
+        if (cached.curves.some(curve => bezierIntersectsRect(curve, rect, 1.5 / zoom))) ids.add(id);
       }
       setSelectedEdgeIds(ids);
     };
@@ -60,6 +60,40 @@ export function useBlueprintEdgeSelection<NodeType extends Node>(scopeId: string
     });
     return () => { unsubscribe(); cancelAnimationFrame(frame); };
   }, [store, setSelectedEdgeIds]);
+
+  useEffect(() => {
+    // Wires keep a wide hit area for clicking, but React Flow starts a marquee
+    // only on the bare pane. A press on a wire stays a wire click until it
+    // moves; then it becomes the same marquee as one started beside the wire.
+    let press: { pointerId: number; x: number; y: number } | undefined;
+    const down = (event: PointerEvent) => {
+      press = undefined;
+      const { domNode, elementsSelectable, connection } = store.getState();
+      const target = event.target instanceof Element ? event.target : null;
+      if (event.button !== 0 || event.pointerType === 'touch' || !elementsSelectable || connection.inProgress || !target || !domNode?.contains(target)) return;
+      // Endpoint handles still reconnect the wire.
+      if (target.closest('.react-flow__edge') && !target.closest('.react-flow__edgeupdater')) press = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+    };
+    const move = (event: PointerEvent) => {
+      if (!press || event.pointerId !== press.pointerId) return;
+      if (!(event.buttons & 1)) { press = undefined; return; }
+      if (Math.hypot(event.clientX - press.x, event.clientY - press.y) < 6) return;
+      const start = press; press = undefined;
+      const { domNode, transform, userSelectionRect } = store.getState(), pane = domNode?.querySelector<HTMLElement>('.react-flow__pane');
+      // A Shift selection may already own this press.
+      if (!domNode || !pane?.classList.contains('selection') || userSelectionRect) return;
+      pane.setPointerCapture(event.pointerId);
+      const bounds = domNode.getBoundingClientRect(), x = start.x - bounds.left, y = start.y - bounds.top;
+      store.setState({ userSelectionRect: { startX: (x - transform[0]) / transform[2], startY: (y - transform[1]) / transform[2], x, y, width: 0, height: 0 } });
+    };
+    const end = (event: PointerEvent) => { if (event.pointerId === press?.pointerId) press = undefined; };
+    window.addEventListener('pointerdown', down, true); window.addEventListener('pointermove', move, true);
+    window.addEventListener('pointerup', end, true); window.addEventListener('pointercancel', end, true);
+    return () => {
+      window.removeEventListener('pointerdown', down, true); window.removeEventListener('pointermove', move, true);
+      window.removeEventListener('pointerup', end, true); window.removeEventListener('pointercancel', end, true);
+    };
+  }, [store]);
 
   return { selectedEdgeIds, selectedEdgeId: selectedEdgeIds.size === 1 ? [...selectedEdgeIds][0] : undefined, setSelectedEdgeIds, setSelectedEdgeId, onEdgesChange };
 }

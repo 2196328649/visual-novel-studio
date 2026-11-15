@@ -1,25 +1,27 @@
+import { projectEditSnapshot } from '../core/project-mutation';
 import type { BlueprintSelection } from '../core/ai-selection';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { BlueprintGraph, Project } from '../core/model';
 import { synchronizeBlueprintSignatures } from '../core/blueprint';
 import { performanceTimeline, timelinePreviewLayout } from '../core/performance-timeline';
 import { BlueprintGraphEditor, type BlueprintFocus } from './BlueprintGraphEditor';
+import type { OpenBlueprintGraph } from './blueprint-navigation';
 import { PerformanceTimeline } from './PerformanceTimeline';
 import { TextPreview } from './StoryPreview';
 import type { Commit } from './editor';
 import type { AssetUrl } from './StageEditor';
 import './performance-workspace.css';
 
-/** A component editor hosted by the UI draft; navigation never changes workspaces. */
-export function UiEventTimeline({ project, graph, commit: commitDraft, assetUrl, navigation, focus, onOpenTimeline, onNotice, onActiveSelection }: {
+/** Timeline edits stay in the UI draft; explicit module visits use the host navigation guard. */
+export function UiEventTimeline({ onOpenGraph, project, graph, commit: commitDraft, assetUrl, navigation, focus, onOpenTimeline, onNotice, onActiveSelection }: {
   project: Project; graph: BlueprintGraph; commit: Commit; assetUrl: AssetUrl; navigation: ReactNode;
-  focus?: BlueprintFocus; onOpenTimeline: (id: string, ownerId: string, callNodeId?: string) => void;
+  onOpenGraph?: OpenBlueprintGraph; focus?: BlueprintFocus; onOpenTimeline: (id: string, ownerId: string, callNodeId?: string) => void;
   onNotice: (message: string) => void;
   onActiveSelection?: (selection?: BlueprintSelection) => void;
 }) {
   const [graphView, setGraphView] = useState(false);
   const [viewFocus, setViewFocus] = useState<BlueprintFocus>();
-  useEffect(()=>{if(focus?.selection?.active()){setGraphView(true);setViewFocus(focus);}},[focus]);
+  useEffect(()=>{if(focus?.restore || focus?.selection?.active()){setGraphView(true);setViewFocus(focus);}},[focus]);
   const selection = useRef<BlueprintSelection>(undefined);
   const select = useCallback((value?: BlueprintSelection) => {
     if (value) selection.current = value;
@@ -33,7 +35,8 @@ export function UiEventTimeline({ project, graph, commit: commitDraft, assetUrl,
   const [seekRequest, setSeekRequest] = useState<{ time: number; request: number }>();
   const model = useMemo(() => performanceTimeline(project, graph), [project, graph]);
   const commit: Commit = useCallback((label, edit) => commitDraft(label, draft => {
-    edit(draft); synchronizeBlueprintSignatures(draft);
+    const before = projectEditSnapshot(draft);
+    edit(draft); synchronizeBlueprintSignatures(draft, before);
   }), [commitDraft]);
   const trackTime = useCallback((value: number) => setTime(value), []);
   const seek = (value: number) => {
@@ -54,7 +57,7 @@ export function UiEventTimeline({ project, graph, commit: commitDraft, assetUrl,
       <button className="text-button" onClick={() => switchView(!graphView)}>{graphView ? '返回时间轴编辑' : '查看组件连线'}</button>
     </div>
     <p className="ui-event-timeline-help">演出时间轴：安排画面、文字、角色和声音。控制界面控件，请返回事件图连接“设置属性”等节点。</p>
-    {graphView ? <BlueprintGraphEditor fixedGraph project={project} commit={commit} focus={currentFocus} onOpenTimeline={onOpenTimeline} onActiveSelection={select} />
+    {graphView ? <BlueprintGraphEditor onOpenGraph={onOpenGraph} fixedGraph project={project} commit={commit} focus={currentFocus} onOpenTimeline={onOpenTimeline} onActiveSelection={select} />
       : <div className="performance-workspace-timeline"><PerformanceTimeline project={project} graph={graph} commit={commit} assetUrl={assetUrl}
         focus={currentFocus} time={time} onSeek={seek} onBlueprint={() => switchView(true)} onNotice={onNotice} onActiveSelection={select}
         onOpenTimeline={(id, callNodeId) => onOpenTimeline(id, graph.id, callNodeId)} preview={preview} /></div>}

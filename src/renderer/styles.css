@@ -918,10 +918,10 @@ button.primary:hover:not(:disabled) {
   min-height: 26px;
 }
 .line-actions {
-  display: flex;
-  align-items: center;
-  margin-left: auto;
+  display: grid;
+  grid-template-columns: repeat(2, 23px);
   gap: 1px;
+  margin-left: auto;
   opacity: 0;
 }
 .story-line:hover .line-actions,
@@ -1097,6 +1097,8 @@ button.primary:hover:not(:disabled) {
 .actor-transition-fields { min-width: 0; margin: 10px 0; padding: 10px; border: 1px solid var(--border, #38414e); border-radius: 5px; }
 .actor-transition-fields legend { padding: 0 5px; font-size: 12px; }
 .actor-transition-fields .field-row { grid-template-columns: minmax(0, 1.5fr) minmax(65px, 1fr); }
+.actor-transition-fields .actor-transition-direct { grid-template-columns: minmax(0, 1.5fr) minmax(65px, 1fr) 30px; }
+.actor-transition-fields .actor-transition-reset { align-self: end; width: 30px; height: 32px; margin-bottom: 8px; }
 .actor-transition-fields .field { display: grid; min-width: 0; gap: 5px; margin: 0 0 8px; font-size: 11px; }
 .actor-transition-fields select, .actor-transition-fields input { min-width: 0; width: 100%; }
 .actor-transition-fields .muted { margin: 2px 0 0; font-size: 11px; line-height: 1.5; }
@@ -1408,23 +1410,6 @@ button.primary:hover:not(:disabled) {
 .generic-blueprint-workspace .react-flow__controls-button { color: #cad8d2; background: #364353; border-color: #4b5867; }
 .generic-blueprint-workspace .react-flow__controls-button:hover { background: #46576b; }
 .generic-blueprint-workspace .react-flow__controls-button svg { fill: currentColor; }
-.generic-blueprint-workspace .graph-node { width: 238px; min-height: 75px; padding-bottom: 9px; background: #303b4e; color: #e0e7f1; border: 1px solid #596f81; border-radius: 8px; box-shadow: 0 5px 14px #10162544; }
-.generic-blueprint-workspace .graph-node.selected { outline: 2px solid #92c2a7; outline-offset: 2px; }
-.generic-blueprint-workspace .graph-node.invalid { border-color: #c98b81; }
-.generic-blueprint-workspace .graph-node-title { background: #3a4f60; color: #eff5f8; height: 35px; border-radius: 7px 7px 0 0; padding: 0 10px; }
-.generic-blueprint-workspace .graph-node-title strong { font-size: 12px; }
-.generic-blueprint-workspace .graph-node-title > span { color: #efc4a7; font-size: 10px; }
-.generic-blueprint-workspace .graph-node-detail { color: #afc0d1; height: auto; min-height: 30px; font-size: 10px; line-height: 16px; padding: 6px 10px 7px; }
-.generic-blueprint-workspace .graph-node.comment { background: #6c613e; border-color: #ab9b61; }
-.generic-blueprint-workspace .graph-node.comment .graph-node-title { background: #7c7048; }
-.generic-blueprint-workspace .graph-node.comment .graph-node-detail { white-space: pre-wrap; color: #eee3ba; max-height: 240px; overflow-y: auto; }
-.blueprint-pin-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); min-height: 26px; }
-.blueprint-pin-slot { position: relative; display: flex; align-items: center; min-width: 0; font-size: 10px; color: #e3e8f0; }
-.blueprint-pin-slot.input { padding-left: 12px; padding-right: 4px; }
-.blueprint-pin-slot.output { padding-right: 12px; padding-left: 4px; justify-content: flex-end; text-align: right; }
-.blueprint-pin-slot > span { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
-.generic-blueprint-workspace .blueprint-pin-slot .react-flow__handle { width: 10px; height: 10px; border: 2px solid #303b4e; top: 50%; }
-.generic-blueprint-workspace .blueprint-pin-slot .exec-pin { border-radius: 2px; width: 11px; height: 11px; }
 .blueprint-canvas-legend { position: absolute; bottom: 0; left: 0; right: 0; display: flex; gap: 5px; align-items: center; padding: 6px 10px; color: #b2bdce; background: #202837dd; font-size: 10px; pointer-events: none; }
 .blueprint-canvas-legend i { width: 7px; height: 7px; border-radius: 50%; margin-left: 6px; background: #85d4be; }
 .blueprint-canvas-legend i.exec { background: #eef3fc; border-radius: 1px; margin-left: 0; }
@@ -1452,13 +1437,7 @@ button.primary:hover:not(:disabled) {
 .blueprint-linked-value > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .blueprint-position-presets { display: flex; align-items: center; gap: 4px; font-size: 10px; color: #829285; margin: 12px 0; }
 .blueprint-position-presets button { flex: 1; color: #61826c; border: 1px solid #dae4dc; background: #f3f8f4; border-radius: 4px; padding: 5px; font-size: 11px; cursor: pointer; }
-.blueprint-interface-section { border-top: 1px solid #e1e8e3; margin-top: 18px; padding-top: 13px; }
-.blueprint-interface-section strong { font-size: 12px; color: #486353; }
 .blueprint-interface-card { padding: 10px; background: #f4f7f5; border: 1px solid #e0e7e1; border-radius: 6px; margin: 10px 0; }
-.blueprint-interface-name { display: flex; gap: 5px; margin-bottom: 7px; align-items: center; }
-.blueprint-interface-name > input { flex: 1; min-width: 0; font-weight: 500; }
-.blueprint-interface-name .icon-button { flex: none; width: 22px; }
-.blueprint-interface-card > select { width: 100%; }
 .blueprint-selection-empty { color: #8a9b8f; font-size: 12px; line-height: 1.8; }
 .blueprint-selection-empty > svg { margin: 6px 0 14px; color: #a5b6a9; }
 .blueprint-node-outline { display: flex; flex-direction: column; gap: 5px; margin-top: 20px; border-top: 1px solid #e2e9e3; padding-top: 14px; }
@@ -1846,6 +1825,8 @@ button.primary:hover:not(:disabled) {
 .ui-special-preview { width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 10px; text-align: center; font-size: 14px; overflow-wrap: anywhere; }
 .ui-special-preview-title { color: #9be0bd; font-size: 19px; margin-bottom: 8px; }
 .ui-text-content { display: block; width: 100%; max-height: 100%; overflow: auto; white-space: pre-wrap; line-height: 1.4; }
+/* Moving letters can leave the box for a moment; the game neither clips nor scrolls them. */
+:is(.ui-text-content, .ui-dialogue-native):has(.styled-text) { overflow: visible; }
 .ui-component.choiceList, .ui-component.saveSlots, .ui-component.preference { display: block; padding: 0; }
 .ui-component.choiceList .ui-choice-preview { justify-content: flex-start; }
 .ui-component.choiceList .ui-choice-preview > div { justify-content: center; }
@@ -1880,6 +1861,7 @@ button.primary:hover:not(:disabled) {
 }
 .ui-component {
   position: absolute;
+  isolation: isolate;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1893,6 +1875,16 @@ button.primary:hover:not(:disabled) {
   outline-offset: -1px;
   z-index: 300;
   white-space: pre-wrap;
+}
+/* Border stays above the skin/content but inside this component's stacking context. */
+.ui-component::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: var(--component-border-width, 0px) solid var(--component-border-color, transparent);
+  pointer-events: none;
+  z-index: 2;
 }
 .ui-component.selected {
   outline-color: #b2edc1;
@@ -1952,7 +1944,7 @@ button.primary:hover:not(:disabled) {
 .ui-transform-handles { position: absolute; outline: 1px solid #b2edc1; outline-offset: -1px; }
 .ui-transform-size { position: absolute; left: 0; bottom: calc(100% + 8px); padding: 2px 5px; border-radius: 3px; background: #152c23ed; color: #c9f6d5; font: 10px/1.5 ui-monospace, monospace; white-space: nowrap; }
 .ui-transform-size.below { bottom: auto; top: 8px; left: 8px; }
-#root .ui-transform-handles > .ui-resize-handle { position: absolute; display: block; width: 16px; height: 16px; min-width: 16px; min-height: 16px; padding: 0; margin: 0; border: 0; border-radius: 0; background: transparent; transform: translate(-50%, -50%); pointer-events: auto; touch-action: none; }
+#root .ui-transform-overlay > .ui-resize-handle { position: absolute; display: block; width: 16px; height: 16px; min-width: 16px; min-height: 16px; padding: 0; margin: 0; border: 0; border-radius: 0; background: transparent; transform: translate(-50%, -50%); pointer-events: auto; touch-action: none; }
 .ui-resize-handle::after { content: ''; position: absolute; inset: 4px; border: 1px solid #b2edc1; border-radius: 1px; background: #183427; }
 .ui-resize-handle:hover::after, .ui-resize-handle:focus-visible::after { background: #b2edc1; }
 .ui-resize-handle.resize-n, .ui-resize-handle.resize-s { cursor: ns-resize; }
@@ -2013,9 +2005,6 @@ button.primary:hover:not(:disabled) {
   justify-content: flex-start;
   align-items: flex-start;
 }
-.ui-component.button {
-  background: #ffffff10;
-}
 .ui-component.progress { display: block; }
 .ui-progress-preview { width: 100%; height: 100%; background: var(--component-surface, #283133); }
 .ui-progress-preview > span { display: block; height: 100%; min-width: 0; }
@@ -2063,6 +2052,8 @@ button.primary:hover:not(:disabled) {
 .asset-video-preview { max-width: 100%; margin-bottom: 12px; }
 .asset-script-preview { min-height: 92px; margin-bottom: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--border); background: #171b20; color: var(--muted); }
 .ui-video { width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
+.ui-video-surface { display: block; position: relative; width: 100%; height: 100%; pointer-events: none; }
+.ui-video-surface > .ui-video { position: absolute; inset: 0; display: block; }
 .ui-property-group { border-top: 1px solid var(--border); padding: 8px 0; margin: 4px 0; }
 .ui-property-group > summary { cursor: pointer; font-size: 12px; margin-bottom: 8px; color: var(--muted); }
 .composition-timeline { margin: 8px 0; padding: 6px; border: 1px solid var(--border); border-radius: 5px; overflow: hidden; }

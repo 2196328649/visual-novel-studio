@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createProject } from '../src/core/model';
 import { createUiParameterBinding } from '../src/core/ui-logic';
-import { previewUiLogic, uiPreviewKeys, uiPreviewKeyboardKey, uiPreviewTimerLimit } from '../src/core/ui-logic-preview';
+import { previewUiLogic, sameUiPreviewResult, uiPreviewKeys, uiPreviewKeyboardKey, uiPreviewTimerLimit } from '../src/core/ui-logic-preview';
 import { blueprintNodeDefaults, createBlueprintGraph, connectBlueprintPins } from '../src/core/blueprint';
 
 test('UI preview samples shared blueprint arithmetic, text and visibility without changing the authored project',()=>{
@@ -62,7 +62,7 @@ test('UI key preview dispatches matching page and scheme roots in order without 
  const before=structuredClone(project),sample=previewUiLogic(project,[component],'ui:main',{},[{kind:'key',key:'K_e'}]);
  assert.equal(sample.variables.caption,'正确');assert.equal(sample.components[0].component.text,'正确');assert.equal(sample.incomplete,false);assert.deepEqual(project,before);
  assert.deepEqual(uiPreviewKeys(project,'ui:main'),['K_e','K_a']);
- assert.equal(uiPreviewKeyboardKey('E'),'K_e');assert.equal(uiPreviewKeyboardKey('ArrowDown'),'K_DOWN');assert.equal(uiPreviewKeyboardKey('F5'),undefined);
+ assert.equal(uiPreviewKeyboardKey('E'),'K_e');assert.equal(uiPreviewKeyboardKey('ArrowDown'),'K_DOWN');assert.equal(uiPreviewKeyboardKey('F5'),'K_F5');
  assert.equal(previewUiLogic(project,[component],'ui:main',{},[{kind:'key',key:'unknown'}]).incomplete,true);
 });
 
@@ -160,4 +160,24 @@ test('button shortcuts invoke click actions with topmost capture, disabled block
  upper.disabled=true;assert.equal(sample().preferences.musicVolume,1);
  assert.equal(sample({upper_visible:false}).preferences.musicVolume,.4);
  p.ui.components=[];assert.equal(sample().preferences.musicVolume,.9);
+});
+
+test('timed replay only counts as changed when an edit changes what it shows now',()=>{
+ const project=createProject();project.variables.push({id:'ticks',name:'计数',type:'number',initial:0,persistent:false});
+ project.assets.push({id:'qa_bgm',name:'测试音乐',kind:'audio',path:'assets/bgm.ogg'});
+ const graph=createBlueprintGraph('ui','计时');project.blueprints.push(graph);
+ const timer=blueprintNodeDefaults('eventTimer');timer.properties={pageId:'ui:main',interval:1,repeat:true};
+ const read=blueprintNodeDefaults('getVariable');read.properties.variableId='ticks';
+ const add=blueprintNodeDefaults('math');add.properties={operation:'add',b:1};
+ const write=blueprintNodeDefaults('setVariable');write.properties.variableId='ticks';
+ graph.nodes.push(timer,read,add,write);
+ for(const [from,out,to,input] of [[timer.id,'exec',write.id,'exec_in'],[read.id,'value',add.id,'a'],[add.id,'result',write.id,'value']])assert.equal(connectBlueprintPins(graph,from,out,to,input),undefined);
+ const sample=(p:typeof project)=>previewUiLogic(p,p.ui.components,'ui:main',{},[{kind:'advance',seconds:2.5}],{timed:true,trace:true});
+ const edited=(edit:(p:typeof project)=>void)=>{const copy=structuredClone(project);edit(copy);return copy;};
+ const base=sample(project);assert.equal(base.variables.ticks,2);
+ const imported=edited(p=>{p.assets.push({id:'asset_new',name:'新截图',kind:'image',path:'新截图.png'});p.contentBrowser={folders:[{id:'folder_new',name:'未分类'}],assignments:{'asset:asset_new':'folder_new'},favorites:[]};});
+ assert.ok(sameUiPreviewResult(base,sample(imported)),'an imported file and its folder leave the replay as it was');
+ assert.ok(sameUiPreviewResult(base,sample(edited(p=>{p.assets.find(a=>a.id==='qa_bgm')!.path='assets/BGM/bgm.ogg';}))),'saving that moves a file leaves the replay as it was');
+ assert.ok(!sameUiPreviewResult(base,sample(edited(p=>{p.ui.components.push({id:'qa_title',kind:'text',page:'main',text:'新标题',x:.1,y:.1,width:.5,height:.1});}))),'a new visible component changes it');
+ assert.ok(!sameUiPreviewResult(base,sample(edited(p=>{p.blueprints[0].nodes.find(n=>n.id===timer.id)!.properties.interval=2;}))),'a slower timer changes the count reached by now');
 });

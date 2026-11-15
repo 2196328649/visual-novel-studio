@@ -4,8 +4,8 @@ import { previewAudioAt, previewAudioGain, type PreviewAudioEvent } from '../cor
 import { NumberInput } from './NumberInput';
 import { NumericEditContext, useLiveParameterEdit } from './NumericEditContext';
 import { VisualEditingSurface, VisualObjectPreview } from './VisualObjectPreview';
-import { actorKey } from '../core/actor-instance';
-import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from 'react';
+import { actorInstanceLabel, actorKey } from '../core/actor-instance';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties, type ComponentProps } from 'react';
 import { CompositionEditingContext } from './CompositionEditingContext';
 import { Clapperboard, Image, Music2, Play, Pause, Square, Volume2 } from 'lucide-react';
 import { effectiveCharacter, type Project, type StageAction, type StoryLine } from '../core/model';
@@ -23,6 +23,9 @@ import type { PreviewRouteChoices } from '../core/preview-route';
 import { performancePlayback } from '../core/standalone-performance';
 import { followingPerformancePreview, performanceTransitionDuration, samplePerformanceTransition } from '../core/performance-preview';
 import { PlaybackStage } from './UiStagePreview';
+import { findLine } from './editor';
+import { effectiveTextStyle, textExitPlan, textRevealPlan } from '../core/text-presentation';
+import { lineMarks } from '../core/text-spans';
 
 export type TextPreviewSelection = PreviewSelection;
 export interface TextPreviewProps {
@@ -44,6 +47,20 @@ interface ActiveLine { selected?: LocatedLine; nodeId?: string; sourceLine?: num
 const cameraTransform = (camera: PreviewCamera) => `translate(${camera.x * 100}%, ${camera.y * 100}%) scale(${camera.zoom}) rotate(${camera.rotation}deg)`;
 const actorTransform = (actor: { scale: number; rotation: number }) => `translate(-50%, -100%) scale(${actor.scale}) rotate(${actor.rotation}deg)`;
 const easing = (value: string) => ({ linear: 'linear', ease: 'ease-in-out', easein: 'ease-in', easeout: 'ease-out' })[value] ?? 'ease-in-out';
+
+function PreviewAudioPlayer(props: ComponentProps<'audio'>) {
+  const player = useRef<HTMLAudioElement>(null);
+  useEffect(() => {
+    const audio = player.current;
+    // Restore the source after a development StrictMode cleanup, and when React
+    // reuses this player for a changed asset URL.
+    if (audio && props.src && audio.getAttribute('src') !== props.src) audio.src = props.src;
+    // Removing a native player does not stop a retained media element. Suspending
+    // the preview or replacing this source must also stop manual auditions.
+    return () => { if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load(); } };
+  }, [props.src]);
+  return <audio {...props} ref={player} />;
+}
 
 export function TextPreview(props: TextPreviewProps) {
   const [paused, setPaused] = useState(() => {
@@ -70,7 +87,7 @@ function EditableTextPreview(props: TextPreviewProps & { suspendControl?: ReactN
 function LiveTextPreview({ project, source, sourceMap, cursorOffset, selection, assetUrl, headerActions, alternateContent, suspended = false, commit, editDisabled, nodeSelection, performanceContent, onNotice, seekRequest, onTimeChange, minimumDuration = 0, playbackRequest, embeddedTimeline = false, suspendControl }: TextPreviewProps & { suspendControl?: ReactNode }) {
   const compositionEditing = useContext(CompositionEditingContext);
   const compositionRef = useRef(compositionEditing); compositionRef.current = compositionEditing;
-  const lines = useMemo(() => project.nodes.flatMap(node => node.kind === 'passage' ? node.lines.map(line => ({ nodeId: node.id, lineId: line.id, line })) : []), [project]);
+  const lines = useMemo(() => project.nodes.flatMap(node => node.kind === 'passage' ? node.lines.map(line => ({ nodeId: node.id, lineId: line.id, line })) : []), [project.nodes]);
   const linesByKey = useMemo(() => new Map(lines.map(line => [`${line.nodeId}/${line.lineId}`, line])), [lines]);
   const offsets = useMemo(() => { const result = [0]; for (let index = 0; index < source.length; index++) if (source[index] === '\n') result.push(index + 1); return result; }, [source]);
   const [followCursor, setFollowCursor] = useState(true);
@@ -99,7 +116,9 @@ function LiveTextPreview({ project, source, sourceMap, cursorOffset, selection, 
   const [readPreview] = useState(createLinePreviewReader);
   const full = useMemo(() => readPreview(project, previewSelection), [readPreview, project, previewSelection]);
   const snapshot = useMemo(() => active.actionCount === undefined ? full : readPreview(project, previewSelection, active.actionCount), [readPreview, project, previewSelection, active.actionCount, full]);
-  const [elapsed, setElapsed] = useState<number>();
+  // Timeline authoring starts at its playhead; a story line's idle preview shows
+  // the state after its actions. Sampling a timeline's end hides finished clips.
+  const [elapsed, setElapsed] = useState<number | undefined>(embeddedTimeline ? 0 : undefined);
   const [phase, setPhase] = useState<'idle' | 'actions' | 'dialogue' | 'paused' | 'finished'>('idle');
   const [audioError, setAudioError] = useState('');
   const [audioUntil, setAudioUntil] = useState(0);
@@ -129,14 +148,20 @@ function LiveTextPreview({ project, source, sourceMap, cursorOffset, selection, 
   const following = useMemo(() => performanceSettings && previewSelection ? followingPerformancePreview(project, previewSelection, performanceSettings, full) : undefined, [project, previewSelection, performanceSettings, full]);
   const transitionDuration = performanceTransitionDuration(performanceSettings);
   const speed = Number(project.playerDefaults?.textSpeed ?? 35);
-  const textDuration = chapter || full.line?.silent ? 0 : (speed <= 0 ? 0 : Array.from(full.line?.text ?? '').length / speed * 1000) + 700;
+  // The line's own reveal speed (duration, characters per second or instant) decides how long its words take.
+  const lineLook = useMemo(() => full.line ? effectiveTextStyle(project, full.line) : {}, [project, full.line]);
+  const lineTextMarks = useMemo(() => full.line ? lineMarks(full.line) : undefined, [full.line]);
+  const revealPlan = useMemo(() => textRevealPlan(lineLook, full.line?.text ?? '', speed, lineTextMarks), [lineLook, full.line?.text, speed, lineTextMarks]);
+  // The player reads for a moment and advances; then the words leave, as in the game.
+  const readingHold = .7, lineExit = textExitPlan(lineLook, full.line?.text ?? '');
+  const textDuration = chapter || full.line?.silent ? 0 : (revealPlan.seconds + readingHold + (lineExit?.total ?? 0)) * 1000;
   const baseTotal = Math.max(10, minimumDuration * 1000, plan.until + transitionDuration, plan.dialogueAt + textDuration + transitionDuration);
   const performanceEnd = Math.max(10, plan.until, plan.dialogueAt) + transitionDuration;
   const videoUntil = performanceSettings ? 0 : persistentVideoPreviewEnd(videoSpans, videoDurations.key === videoSources ? videoDurations.values : {});
   const videoUntilRef = useRef(videoUntil); videoUntilRef.current = videoUntil;
   const total = Math.max(baseTotal, performanceSettings ? 0 : audioUntil, seekExtent, Number.isFinite(videoUntil) ? videoUntil : Math.max(10000, Math.ceil((elapsed ?? 0) / 1000) * 1000));
   const playing = phase === 'actions' || phase === 'dialogue';
-  const stop = useCallback(() => { cancel.current?.(); cancel.current = undefined; setElapsed(undefined); setPhase('idle'); }, []);
+  const stop = useCallback(() => { cancel.current?.(); cancel.current = undefined; setElapsed(embeddedTimeline ? 0 : undefined); setPhase('idle'); }, [embeddedTimeline]);
   useEffect(() => { cancel.current?.(); cancel.current = undefined; if (elapsed !== undefined) setPhase('paused'); setAudioError(''); setAudioUntil(0); return () => cancel.current?.(); }, [snapshot]);
   useEffect(() => { stop(); setSeekExtent(0); }, [active.selected?.nodeId, active.selected?.lineId, active.nodeId, !!alternateContent, suspended, stop]);
   const seekTo = (time: number) => { if (!Number.isFinite(time)) return; const next = Math.max(0, time); cancel.current?.(); cancel.current = undefined; setEditing(false); setSeekExtent(value => Math.max(value, next)); setElapsed(next); setPhase('paused'); };
@@ -158,7 +183,11 @@ function LiveTextPreview({ project, source, sourceMap, cursorOffset, selection, 
   useEffect(() => { if (!canEdit) setEditing(false); }, [canEdit]);
   const stageEdit = useStageEditing({ project, selection: previewSelection, state, commit, enabled: editing && canEdit, milliseconds: elapsed });
   const previousDialogue = line?.silent || elapsed !== undefined && elapsed < plan.dialogueAt ? state.dialogue : undefined;
-  const text = previousDialogue ? previousDialogue.text : elapsed === undefined ? line?.text ?? '' : elapsed < plan.dialogueAt ? '' : Array.from(full.line?.text ?? '').slice(0, speed <= 0 ? undefined : Math.floor((elapsed - plan.dialogueAt) * speed / 1000)).join('');
+  const text = previousDialogue ? textExitPlan(effectiveTextStyle(project, previousDialogue), previousDialogue.text) ? '' : previousDialogue.text : elapsed === undefined ? line?.text ?? '' : elapsed < plan.dialogueAt ? '' : full.line?.text ?? '';
+  // Seconds since this line's words began; undefined draws them complete.
+  const reveal = previousDialogue || elapsed === undefined || elapsed < plan.dialogueAt ? undefined : (elapsed - plan.dialogueAt) / 1000;
+  const textLook = useMemo(() => previousDialogue ? effectiveTextStyle(project, previousDialogue) : lineLook, [project, previousDialogue, lineLook]);
+  const shownMarks = useMemo(() => previousDialogue ? lineMarks(previousDialogue) : line ? lineMarks(line) : undefined, [previousDialogue, line]);
   const speaker = project.characters.find(character => character.id === (previousDialogue ?? line)?.speakerId);
   const background = project.assets.find(asset => asset.id === state.backgroundId);
   const music = project.assets.find(asset => asset.id === snapshot.after.musicId);
@@ -271,7 +300,7 @@ function LiveTextPreview({ project, source, sourceMap, cursorOffset, selection, 
           {renderActorLayers([...(state.actorGhosts ?? []), ...state.actors.values()].filter(actor => compositionEditing?.actorVisible?.(actor.characterId, actor.instanceId) !== false), actor => { const character = effectiveCharacter(project, actor.characterId), expression = character?.expressions.find(e => e.id === actor.expressionId), asset = project.assets.find(a => a.id === expression?.assetId);
             const point = stageEdit.point?.id === actorKey(actor) ? stageEdit.point : actor;
             const selected = !!stageEdit.actor && actorKey(stageEdit.actor) === actorKey(actor);
-            return <div key={actorKey(actor)} className={`text-stage-actor ${editing && selected ? 'selected' : ''}`} data-character-id={actor.characterId} data-instance-id={actor.instanceId ?? ''} role={editing ? 'button' : undefined} tabIndex={editing ? 0 : undefined} aria-label={editing ? `选择角色 ${character?.name ?? ''}${actor.instanceId ? ` ${actor.instanceId}` : ''}` : undefined} aria-pressed={editing ? selected : undefined} {...stageEdit.actorEvents(actor)} style={{ left: `${point.x * 100}%`, top: `${point.y * 100}%`, height: `${((asset?.height ?? project.height * .88) / project.height) * 100}%`, width: asset?.width ? `${asset.width / project.width * 100}%` : undefined, transform: actorTransform(actor), opacity: actor.opacity, zIndex: actor.layer }}>{expression && <img src={assetUrl(expression.assetId)} alt={`${character?.name ?? '角色'}：${expression.name}`} draggable={false} />}</div>;
+            return <div key={actorKey(actor)} className={`text-stage-actor ${editing && selected ? 'selected' : ''}`} data-character-id={actor.characterId} data-instance-id={actor.instanceId ?? ''} role={editing ? 'button' : undefined} tabIndex={editing ? 0 : undefined} aria-label={editing ? `选择角色 ${character?.name ?? ''} · ${actorInstanceLabel(actor.instanceId)}` : undefined} aria-pressed={editing ? selected : undefined} {...stageEdit.actorEvents(actor)} style={{ left: `${point.x * 100}%`, top: `${point.y * 100}%`, height: `${((asset?.height ?? project.height * .88) / project.height) * 100}%`, width: asset?.width ? `${asset.width / project.width * 100}%` : undefined, transform: actorTransform(actor), opacity: actor.opacity, zIndex: actor.layer }}>{expression && <img src={assetUrl(expression.assetId)} alt={`${character?.name ?? '角色'}：${expression.name}`} draggable={false} />}</div>;
           })}
         </div></div>
         {ghost && <div className="preview-transition-ghost" aria-hidden="true" style={{ opacity: ghost.type === 'fade' ? ghost.progress < .5 ? 1 : 0 : 1 - ghost.progress, mixBlendMode: ghost.type === 'dissolve' ? 'plus-lighter' : undefined, transform: cameraTransform(ghost.before.camera) }}>
@@ -280,7 +309,7 @@ function LiveTextPreview({ project, source, sourceMap, cursorOffset, selection, 
           {[...ghost.before.actors.values()].filter(actor => compositionEditing?.actorVisible?.(actor.characterId, actor.instanceId) !== false).map(actor => { const expression = effectiveCharacter(project, actor.characterId)?.expressions.find(item => item.id === actor.expressionId); const asset = project.assets.find(item => item.id === expression?.assetId); return expression && <div key={actorKey(actor)} className="text-stage-actor" style={{ left: actor.x * 100 + '%', top: actor.y * 100 + '%', height: (asset?.height ?? project.height * .88) / project.height * 100 + '%', width: asset?.width ? asset.width / project.width * 100 + '%' : undefined, transform: actorTransform(actor), opacity: actor.opacity, zIndex: actor.layer }}><img src={assetUrl(expression.assetId)} alt="" /></div>; })}
         </div>}
         {ghost?.type === 'fade' && <div className="preview-transition-black" aria-hidden="true" style={{ opacity: 1 - Math.abs(ghost.progress * 2 - 1) }} />}</div></VisualEditingSurface>
-        {state.interfaceVisible !== false && (!line?.silent || !!previousDialogue) && !compositionEditing?.isolate && <DialoguePreview project={project} assetUrl={assetUrl} speaker={speaker?.name} text={text} values={snapshot.context.variables} revealing={playing && text !== line?.text} />}
+        {state.interfaceVisible !== false && (!line?.silent || !!previousDialogue) && !compositionEditing?.isolate && <DialoguePreview project={project} assetUrl={assetUrl} speaker={speaker?.name} text={text} values={snapshot.context.variables} revealing={playing && reveal !== undefined && reveal < revealPlan.seconds} look={textLook} marks={shownMarks} exit={lineExit && reveal !== undefined && reveal >= revealPlan.seconds + readingHold ? reveal - revealPlan.seconds - readingHold : undefined} reveal={reveal !== undefined && reveal < revealPlan.seconds ? reveal : undefined} onPlaceText={canEdit && !playing && !previousDialogue && active.selected && line ? placement => { const { nodeId, lineId } = active.selected!; commit!('画面文字位置', draft => { const target = findLine(draft, nodeId, lineId); if (target) target.textPresentation = { ...target.textPresentation, ...placement }; }); } : undefined} />}
       </div>}
       {performanceSample?.outgoing && <div className="preview-performance-transition" data-performance-transition={performanceSettings?.transition?.mode ?? 'none'} style={{ position: 'absolute', inset: 0, zIndex: 100, pointerEvents: 'none', background: '#000000' }}>
         <div style={{ position: 'absolute', inset: 0, isolation: 'isolate' }}>
@@ -295,7 +324,7 @@ function LiveTextPreview({ project, source, sourceMap, cursorOffset, selection, 
       {!embeddedTimeline && (line || chapter) && <div className="preview-transport"><input type="range" aria-label="演出预览进度" min={0} max={total / 1000} step={.01} value={(elapsed ?? completedTime) / 1000} onChange={event => seekTo(Number(event.target.value) * 1000)} /><NumberInput className="preview-seek-time" aria-label="定位演出时间（秒）" title="定位演出时间（秒），可超出当前结尾添加后续关键帧" type="number" min={0} step={.1} value={(elapsed ?? completedTime) / 1000} onChange={event => seekTo(Number(event.target.value) * 1000)} /><output>{Number.isFinite(videoUntil) ? `/ ${(total / 1000).toFixed(2)} 秒` : '持续播放'}</output></div>}
       </div>
       {!embeddedTimeline && <div className="text-preview-music">
-        {music ? <div className="text-audio-row"><span title={`BGM · ${music.name}（手动试听）`}><Music2 size={14} />{music.name}</span><audio data-preview-bgm key={`music-${music.id}`} aria-label={`试听音乐：${music.name}`} controls preload="metadata" loop={snapshot.after.musicLoop} src={assetUrl(music.id)} /></div> : <div className="text-audio-empty"><Music2 size={14} />未设置 BGM</div>}
+        {music ? <div className="text-audio-row"><span title={`BGM · ${music.name}（手动试听）`}><Music2 size={14} />{music.name}</span><PreviewAudioPlayer data-preview-bgm key={`music-${music.id}`} aria-label={`试听音乐：${music.name}`} controls preload="metadata" loop={snapshot.after.musicLoop} src={assetUrl(music.id)} /></div> : <div className="text-audio-empty"><Music2 size={14} />未设置 BGM</div>}
       </div>}
       <div className="preview-detail-scroll">
       {snapshot.routeNote && <p className="text-preview-note">{snapshot.routeNote}</p>}
@@ -313,8 +342,8 @@ function LiveTextPreview({ project, source, sourceMap, cursorOffset, selection, 
       {!onNotice && editDisabled && <p className="text-preview-note">{editDisabled}</p>}
       {!onNotice && audioError && <p className="text-preview-note" role="status">{audioError}</p>}
       {!embeddedTimeline && <div className="text-live-audio">
-        {voice && <div className="text-audio-row"><span><Volume2 size={14} />配音 · {voice.name}</span><audio key={`voice-${voice.id}`} aria-label={`试听配音：${voice.name}`} controls preload="metadata" src={assetUrl(voice.id)} /></div>}
-        {sound && <div className="text-audio-row"><span><Volume2 size={14} />{sound.name}</span><audio key={`sound-${sound.id}`} aria-label={`试听音效：${sound.name}`} controls preload="metadata" src={assetUrl(sound.id)} /></div>}
+        {voice && <div className="text-audio-row"><span><Volume2 size={14} />配音 · {voice.name}</span><PreviewAudioPlayer key={`voice-${voice.id}`} aria-label={`试听配音：${voice.name}`} controls preload="metadata" src={assetUrl(voice.id)} /></div>}
+        {sound && <div className="text-audio-row"><span><Volume2 size={14} />{sound.name}</span><PreviewAudioPlayer key={`sound-${sound.id}`} aria-label={`试听音效：${sound.name}`} controls preload="metadata" src={assetUrl(sound.id)} /></div>}
       </div>}
       </div>
     </div>}

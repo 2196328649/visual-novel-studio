@@ -1,0 +1,6 @@
+.blueprint-value-input[data-invalid="true"] { flex-wrap: wrap; }
+.blueprint-value-error { display: block; flex-basis: 100%; color: #f0c28a; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+
+.blueprint-control-options-fields { display: grid; gap: 6px; min-width: 0; }
+.blueprint-control-options-fields small { white-space: normal; overflow-wrap: anywhere; color: var(--muted); }
+.blueprint-control-options-fields [role="alertdialog"] { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; }

@@ -1,9 +1,12 @@
+import { cloneData } from "../core/project-mutation";
 import { projectGraphs, withProjectGraphs } from '../core/project-resources';
+import { isStandaloneNode } from '../core/standalone-performance';
 import { useStorySplit } from './StorySplit';
 import { textareaOffsetPoint } from './text-wrap-layout';
 import { ToolbarMenu } from './components';
 import { TextColorSettings } from './TextColorSettings';
 import { currentScriptText } from '../core/script-text';
+import { plainTextMarkupRange, spanMarkupText, type TextMarkupSyntax } from '../core/text-spans';
 import { CharacterPresetSelect } from './CharacterPresets';
 import { NumberInput } from './NumberInput';
 import {
@@ -53,7 +56,8 @@ import {
   type TextIssue,
   type TextParseResult,
 } from "../core/text-script";
-import { effectiveCharacter, type Diagnostic, type Project, type StageAction } from "../core/model";
+import { effectiveCharacter, variableAssetKind, type Diagnostic, type Project, type StageAction } from "../core/model";
+import { parameterAssetText } from "../core/parameter-sets";
 import { validateProject } from "../core/validate";
 import { diagnosticSourceLine, uniqueDiagnostics } from '../core/diagnostic-location';
 import { nodeNames } from "./editor";
@@ -83,6 +87,8 @@ import { NodePicker } from './NodePicker';
 import { MediaCommandPicker } from './MediaCommandPicker';
 import { commandPerformanceBlueprints } from '../core/builtin-performances';
 import { moveMenuIndex } from './menu-navigation';
+
+const emptyModuleDocument = textDocument('');
 
 /**
  * The text editor deliberately keeps the source string controlled by App.
@@ -140,7 +146,6 @@ type CommandKey =
   | "hideInterface"
   | "showInterface"
   | "startDialogue"
-  | "characterFeature"
   | "effect"
   | "blueprint"
   | "wait"
@@ -166,7 +171,7 @@ interface CommandDefinition {
 const COMMANDS: CommandDefinition[] = [
   { key: 'displayImage', label: '显示图片', description: '叠加图片，调整位置、大小和显示时长', icon: Image, needsPicker: true },
   { key: 'displayVideo', label: '显示视频', description: '播放视频，调整大小、循环和音量', icon: Play, needsPicker: true },
-  { key: 'displayText', label: '显示文字', description: '在舞台上显示独立文字', icon: FileText, needsPicker: true },
+  { key: 'displayText', label: '显示文字', description: '显示独立文字，可选字体与文字动画', icon: FileText, needsPicker: true },
   { key: 'hideVisual', label: '隐藏对象', description: '按 ID 隐藏图片、视频或文字', icon: Square, needsPicker: true },
   { key: "jump", label: "跳转", description: "跳到章节、小章节或段落，可设置过渡效果", icon: ArrowRight, needsPicker: true },
   { key: "background", label: "背景", description: "切换图片背景并设置淡入", icon: Image, needsPicker: true },
@@ -178,8 +183,7 @@ const COMMANDS: CommandDefinition[] = [
   { key: "hide", label: "隐藏角色", description: "让角色离开舞台", icon: UserRound, needsPicker: true },
   { key: "hideInterface", label: "隐藏界面", description: "手动隐藏对话框及快捷按钮", icon: Square, argumentless: true },
   { key: "showInterface", label: "显示界面", description: "恢复对话框及快捷按钮", icon: Play, argumentless: true },
-  { key: "startDialogue", label: "播放台词演出", description: "从此处播放本句文字和配音，后续演出继续", icon: Play, argumentless: true },
-  { key: "characterFeature", label: "角色功能", description: "调用角色的可复用功能", icon: UserRound, needsPicker: true },
+  { key: "startDialogue", label: "开始台词演出", description: "从此处开始本句文字和配音，后续演出继续", icon: Play, argumentless: true },
   { key: "effect", label: "效果", description: "调用可复用演出效果实例", icon: Sparkles, needsPicker: true },
   { key: "blueprint", label: "蓝图", description: "选择并调用工程里的自定义演出", icon: Workflow, needsPicker: true },
   { key: "wait", label: "等待", description: "暂停若干秒再继续", icon: Timer, needsPicker: true },
@@ -247,7 +251,7 @@ function displayAction(action: StageAction, project: Project) {
       return "停止音乐";
     case 'hideInterface': return '隐藏界面';
     case 'showInterface': return '显示界面';
-    case 'startDialogue': return '播放台词演出';
+    case 'startDialogue': return '开始台词演出';
     case "animate":
       return "动画关键帧";
   }
@@ -350,7 +354,6 @@ function CommandPicker({ project, state, onInsert, onCancel, assetUrl }: { proje
   const [audioId, setAudioId] = useState(categoryAssets(project, 'audio', audioCategory)[0]?.id ?? "");
   const [characterId, setCharacterId] = useState(state.command === "show" ? "" : project.characters[0]?.id ?? "");
   const [expressionId, setExpressionId] = useState("");
-  const [featureId, setFeatureId] = useState(effectiveCharacter(project, project.characters[0]?.id ?? "")?.features?.[0]?.id ?? "");
   const [effectId, setEffectId] = useState(project.effects[0]?.id ?? "builtin_vertical_shake");
   const [blueprintId, setBlueprintId] = useState(state.blueprintId ?? projectGraphs(project)?.[0]?.id ?? "");
   const [blueprintInputs, setBlueprintInputs] = useState<Record<string, string | number | boolean>>();
@@ -378,7 +381,6 @@ function CommandPicker({ project, state, onInsert, onCancel, assetUrl }: { proje
   const [transitionColor, setTransitionColor] = useState('#000000');
   const character = useMemo(() => effectiveCharacter(project, characterId), [project, characterId]);
   const expressions = character?.expressions ?? [];
-  const features = character?.features ?? [];
   const images = project.assets.filter((asset) => asset.kind === "image");
   const audio = project.assets.filter((asset) => asset.kind === "audio");
   const targets = storyTargetItems(project);
@@ -398,8 +400,7 @@ function CommandPicker({ project, state, onInsert, onCancel, assetUrl }: { proje
       : state.command === "bgm" || state.command === "sound" || state.command === 'voice' ? !!audio.find((item) => item.id === audioId)
         : state.command === "show" ? !characterId || !!character && (!expressionId || !!expressions.find((item) => item.id === expressionId))
           : state.command === "hide" ? !!character
-            : state.command === "characterFeature" ? !!character && features.some(feature => feature.id === featureId)
-              : state.command === "effect" ? !!effects.find((item) => item.id === effectId)
+            : state.command === "effect" ? !!effects.find((item) => item.id === effectId)
               : state.command === "blueprint" ? !!projectGraphs(project)?.find((item) => item.id === blueprintId)
               : state.command === "set" ? !!selectedVariable && value.trim().length > 0
                 : state.command === "option" || state.command === "jump" || state.command === "call" ? !!targets.find((item) => item.id === targetId)
@@ -408,7 +409,6 @@ function CommandPicker({ project, state, onInsert, onCancel, assetUrl }: { proje
 
   useEffect(() => {
     setExpressionId(current => character?.expressions.some(expression => expression.id === current) ? current : "");
-    setFeatureId(current => character?.features?.some(feature => feature.id === current) ? current : character?.features?.[0]?.id ?? "");
   }, [character]);
 
   const submit = () => {
@@ -426,7 +426,6 @@ function CommandPicker({ project, state, onInsert, onCancel, assetUrl }: { proje
         break;
       }
       case "hide": onInsert(`@隐藏角色：${ref(character)}\n`); break;
-      case "characterFeature": onInsert(`@角色功能：${ref(character)}，${ref(features.find(feature => feature.id === featureId))}\n`); break;
       case "effect": {
         const selected = effects.find((item) => item.id === effectId);
         onInsert(`@效果：${project.effects.some((item) => item.id === effectId) ? ref(selected) : selected?.name ?? ""}\n`);
@@ -436,7 +435,7 @@ function CommandPicker({ project, state, onInsert, onCancel, assetUrl }: { proje
       case "wait": onInsert(`@等待：${seconds}\n`); break;
       case "shake": onInsert(actionText(project, { kind: "shake", direction, duration, amplitude, wait: waitMotion }) + "\n"); break;
       case "camera": onInsert(actionText(project, { kind: "camera", x, y, zoom, duration, rotation, easing: motionEasing, wait: waitMotion }) + "\n"); break;
-      case "set": onInsert(`@设置：${ref(selectedVariable)} ${operation === "add" ? "+=" : "="} ${value}\n`); break;
+      case "set": onInsert(`@设置：${ref(selectedVariable)} ${operation === "add" ? "+=" : "="} ${selectedVariable?.type === "asset" && value !== "无" ? JSON.stringify(value) : value}\n`); break;
       case "option": onInsert(`@选项：${text || "新选项"} -> ${targets.find(item => item.id === targetId)?.insertText ?? ''}\n`); break;
       case "jump": {
         const transition = transitionMode === 'none' ? '' : `，切换方式=${transitionMode === 'fade' ? '淡入淡出' : '溶解'}，时长=${transitionSeconds}，颜色=${transitionColor}`;
@@ -460,28 +459,27 @@ function CommandPicker({ project, state, onInsert, onCancel, assetUrl }: { proje
       <div className="text-command-fields">
         {state.command === "background" && (images.length ? <div className="text-command-field"><span>背景图片</span><UiAssetSelect project={project} assetUrl={assetUrl} kind="image" category="scene" label="背景图片" value={assetId} empty="选择场景图片" onChange={id => setAssetId(id ?? '')} /></div> : resourceMessage("素材库中没有图片"))}
         {(['bgm', 'sound', 'voice'] as string[]).includes(state.command) && (audio.length ? <div className="text-command-field"><span>{state.command === 'voice' ? '配音素材' : state.command === 'bgm' ? '音乐素材' : '音效素材'}</span><UiAssetSelect project={project} assetUrl={assetUrl} kind="audio" category={audioCategory} label={state.command === 'voice' ? '配音素材' : state.command === 'bgm' ? '音乐素材' : '音效素材'} value={audioId} empty="选择音频" onChange={id => setAudioId(id ?? '')} /></div> : resourceMessage("素材库中没有音频"))}
-        {state.command === "stopMusic" && <NumberField label="淡出秒数" value={seconds} min={0} max={30} step={0.1} onChange={setSeconds} />}
-        {(state.command === "show" || state.command === "hide" || state.command === "characterFeature") && (project.characters.length || state.command === "show" ? <>
+        {state.command === "stopMusic" && <NumberField label="淡出秒数" value={seconds} min={0} step={0.1} onChange={setSeconds} />}
+        {(state.command === "show" || state.command === "hide") && (project.characters.length || state.command === "show" ? <>
           <SelectField label="角色" value={characterId} onChange={setCharacterId}>{state.command === "show" && <option value="">当前台词角色（自动）</option>}{project.characters.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</SelectField>
           {state.command === "show" && (!characterId ? <><p className="text-command-hint">角色留空跟随当前台词。旁白及没有立绘的角色跳过。</p><label className="text-command-field"><span>表情</span><input aria-label="表情" value={expressionId} placeholder="留空使用角色默认表情" onChange={event => setExpressionId(event.target.value)} /></label></> : expressions.length ? <SelectField label="表情" value={expressionId} onChange={setExpressionId}><option value="">角色默认表情</option>{expressions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</SelectField> : resourceMessage("该角色没有表情素材"))}
-          {state.command === "show" && <><div className="text-command-field"><span>站位预设</span><CharacterPresetSelect project={project} characterId={characterId} value={presetId} onChange={setPresetId} /></div>{!presetId && <><div className="text-command-inline"><NumberField label="横向位置" value={position} step={0.05} onChange={setPosition} /><NumberField label="缩放" value={scale} min={0.05} max={4} step={0.05} onChange={setScale} /><NumberField label="纵向位置" value={verticalPosition} step={0.05} onChange={setVerticalPosition} /></div><p className="text-command-hint">纵向位置以立绘底部为锚点，1 为画面底部；大于 1 可把下半身移出画面，位置也可为负数。</p></>}{presetId && <p className="text-command-hint">关联角色站位；在角色页调整预设后，所有引用同步更新。</p>}</>}
-          {state.command === "characterFeature" && (features.length ? <SelectField label="角色功能" value={featureId} onChange={setFeatureId}>{features.map(feature => <option key={feature.id} value={feature.id}>{feature.name}</option>)}</SelectField> : resourceMessage("该角色尚未定义功能"))}
+          {state.command === "show" && <><div className="text-command-field"><span>站位预设</span><CharacterPresetSelect project={project} characterId={characterId} value={presetId} onChange={setPresetId} /></div>{!presetId && <><div className="text-command-inline"><NumberField label="横向位置" value={position} step={0.05} onChange={setPosition} /><NumberField label="缩放" value={scale} min={0.01} step={0.05} onChange={setScale} /><NumberField label="纵向位置" value={verticalPosition} step={0.05} onChange={setVerticalPosition} /></div><p className="text-command-hint">纵向位置以立绘底部为锚点，1 为画面底部；大于 1 可把下半身移出画面，位置也可为负数。</p></>}{presetId && <p className="text-command-hint">关联角色站位；在角色页调整预设后，所有引用同步更新。</p>}</>}
         </> : resourceMessage("尚未创建角色"))}
         {state.command === "effect" && (effects.length ? <SelectField label="效果实例" value={effectId} onChange={setEffectId}>{effects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</SelectField> : resourceMessage("尚未创建效果实例"))}
         {state.command === "blueprint" && <><SelectField label="通用蓝图" value={blueprintId} onChange={id => { setBlueprintId(id); setBlueprintInputs(undefined); }}>{projectGraphs(project).map(item => <option key={item.id} value={item.id}>{blueprintGroup(project, item.id) ? blueprintGroup(project, item.id) + ' / ' : ''}{item.name}</option>)}</SelectField><BlueprintCallFields project={project} graph={projectGraphs(project).find(graph => graph.id === blueprintId)} inputs={blueprintInputs} onChange={setBlueprintInputs} assetUrl={assetUrl} /></>}
-        {state.command === "wait" && <NumberField label="秒数" value={seconds} min={0} max={120} step={0.1} onChange={setSeconds} />}
+        {state.command === "wait" && <NumberField label="秒数" value={seconds} min={0} step={0.1} onChange={setSeconds} />}
         {state.command === "shake" && <SelectField label="方向" value={direction} onChange={(next) => setDirection(next as typeof direction)}><option value="horizontal">横向</option><option value="vertical">纵向</option></SelectField>}
-        {state.command === "camera" && <div className="text-command-grid"><NumberField label="横移" value={x} step={0.05} onChange={setX} /><NumberField label="纵移" value={y} step={0.05} onChange={setY} /><NumberField label="缩放" value={zoom} min={0.25} max={4} step={0.05} onChange={setZoom} /><NumberField label="时长" value={duration} min={0} max={60} step={0.1} onChange={setDuration} /></div>}
+        {state.command === "camera" && <div className="text-command-grid"><NumberField label="横移" value={x} step={0.05} onChange={setX} /><NumberField label="纵移" value={y} step={0.05} onChange={setY} /><NumberField label="缩放" value={zoom} min={0.01} step={0.05} onChange={setZoom} /><NumberField label="时长" value={duration} min={0} step={0.1} onChange={setDuration} /></div>}
         {(state.command === 'camera' || state.command === 'shake') && <><label className="check-field"><input type="checkbox" checked={waitMotion} onChange={event => setWaitMotion(event.target.checked)} />等待完成</label><p className="text-command-hint">关闭等待后，后面的演出会同时开始。镜头移动与震动可以直接相接。</p></>}
         {state.command === 'camera' && <><NumberField label="旋转" value={rotation} onChange={setRotation} /><SelectField label="缓动" value={motionEasing} onChange={value => setMotionEasing(value as typeof motionEasing)}><option value="ease">缓入缓出</option><option value="linear">匀速</option><option value="easein">缓入</option><option value="easeout">缓出</option></SelectField></>}
         {state.command === 'shake' && <><NumberField label="时长" value={duration} step={0.1} onChange={setDuration} /><NumberField label="幅度（像素）" value={amplitude} onChange={setAmplitude} /></>}
-        {state.command === "set" && (variables.length ? <div className="text-command-grid"><SelectField label="状态变量" value={variableId} onChange={(next) => { setVariableId(next); const variable = variables.find((item) => item.id === next); setValue(variable?.type === "boolean" ? "是" : variable?.type === "number" ? "1" : ""); if (variable?.type !== "number") setOperation("set"); }}>{variables.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</SelectField><SelectField label="操作" value={operation} onChange={(next) => setOperation(next as typeof operation)}>{selectedVariable?.type === "number" && <option value="add">增加</option>}<option value="set">设为</option></SelectField><label className="text-command-field"><span>值</span>{selectedVariable?.type === "boolean" ? <select aria-label="状态值" value={value} onChange={(event) => setValue(event.target.value)}><option value="是">是</option><option value="否">否</option></select> : <NumberInput aria-label="状态值" type={selectedVariable?.type === "number" ? "number" : "text"} value={value} onChange={(event) => setValue(event.target.value)} />}</label></div> : resourceMessage("尚未创建状态变量"))}
+        {state.command === "set" && (variables.length ? <div className="text-command-grid"><SelectField label="状态变量" value={variableId} onChange={(next) => { setVariableId(next); const variable = variables.find((item) => item.id === next); setValue(variable?.type === "boolean" ? "是" : variable?.type === "number" ? "1" : variable?.type === "asset" ? "无" : ""); if (variable?.type !== "number") setOperation("set"); }}>{variables.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</SelectField><SelectField label="操作" value={operation} onChange={(next) => setOperation(next as typeof operation)}>{selectedVariable?.type === "number" && <option value="add">增加</option>}<option value="set">设为</option></SelectField><label className="text-command-field"><span>值</span>{selectedVariable?.type === "boolean" ? <select aria-label="状态值" value={value} onChange={(event) => setValue(event.target.value)}><option value="是">是</option><option value="否">否</option></select> : selectedVariable?.type === "asset" ? <select aria-label="状态值" value={value} onChange={(event) => setValue(event.target.value)}><option value="无">无</option>{project.assets.filter((asset) => asset.kind === variableAssetKind(selectedVariable)).map((asset) => { const text = parameterAssetText(project, selectedVariable, asset.id); return <option key={asset.id} value={text}>{text}</option>; })}</select> : <NumberInput aria-label="状态值" type={selectedVariable?.type === "number" ? "number" : "text"} value={value} onChange={(event) => setValue(event.target.value)} />}</label></div> : resourceMessage("尚未创建状态变量"))}
         {(state.command === "option" || state.command === "jump" || state.command === "call") && (targets.length ? <>
           <SelectField label="目标目录项" value={targetId} onChange={setTargetId}>{['章节', '小章节', '段落'].map(kind => <optgroup key={kind} label={kind}>{targets.filter(item => item.kind === kind).map(item => <option key={item.id} value={item.id}>{kind === '章节' ? item.label : item.detail}</option>)}</optgroup>)}</SelectField>
           {state.command === "option" && <label className="text-command-field"><span>选项文字</span><input aria-label="选项文字" value={text} placeholder="例如：一起去图书馆" onChange={(event) => setText(event.target.value)} /></label>}
           {state.command === "jump" && <>
             <SelectField label="跳转过渡" value={transitionMode} onChange={next => setTransitionMode(next as typeof transitionMode)}><option value="none">无</option><option value="dissolve">溶解</option><option value="fade">淡入淡出</option></SelectField>
-            {transitionMode !== 'none' && <div className="text-command-inline"><NumberField label="过渡秒数" value={transitionSeconds} min={0} max={60} step={0.1} onChange={setTransitionSeconds} />{transitionMode === 'fade' && <label className="text-command-field"><span>过渡颜色</span><input aria-label="过渡颜色" type="color" value={transitionColor} onChange={event => setTransitionColor(event.target.value)} /></label>}</div>}
+            {transitionMode !== 'none' && <div className="text-command-inline"><NumberField label="过渡秒数" value={transitionSeconds} min={0} step={0.1} onChange={setTransitionSeconds} />{transitionMode === 'fade' && <label className="text-command-field"><span>过渡颜色</span><input aria-label="过渡颜色" type="color" value={transitionColor} onChange={event => setTransitionColor(event.target.value)} /></label>}</div>}
           </>}
           {state.command === "call" && <p className="text-command-hint">目标剧情用 @返回 结束；调用后可用 @跳转 指定返回后继续的位置。</p>}
         </> : resourceMessage("尚未创建可连接的目录项"))}
@@ -512,7 +510,7 @@ export function TextEditor({ project, source: storedSource, parsedResult, readTe
   const [revealedSourceLine, setRevealedSourceLine] = useState<number>();
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   useEffect(() => setCollapsedSections(new Set()), [project.id]);
-  const parsed = useMemo(() => parsedResult ?? readTextScript(project, storedSource), [project, storedSource, parsedResult, readTextScript]);
+  const parsed = useMemo<TextParseResult>(() => isModule ? { project, issues: [], sourceMap: [], nodeLocations: [] } : parsedResult ?? readTextScript(project, storedSource), [isModule, project, storedSource, parsedResult, readTextScript]);
   const chapters = useMemo(() => textChapters(storedSource, parsed.project.chapters), [storedSource, parsed.project.chapters]);
   const [chapterChoice, setChapterChoice] = useState(() => {
     try { const saved = JSON.parse(localStorage.getItem(`vns:text-chapter:${project.id}`) ?? 'null'); if (typeof saved?.key === 'string' && Number.isInteger(saved.index) && saved.index >= 0) return saved as { key: string; index: number }; } catch { /* Start at the current story chapter. */ }
@@ -530,6 +528,9 @@ export function TextEditor({ project, source: storedSource, parsedResult, readTe
   const projectedDocument = (candidate: Project, source: string, hide: boolean, revealLine?: number) => foldTextDocument(performanceTextDocument(candidate, source, hide, revealLine, viewRange(source, candidate), readTextScript), isModule ? new Set() : collapsedSections);
   const documentCache = useRef<{ source: string; document: TextDocument; sourceMap: TextParseResult['sourceMap']; hide: boolean; module: boolean; rangeStart?: number } | undefined>(undefined);
   const document = useMemo(() => {
+    // Module mode has no text surface/caret. Its rows, directory and preview
+    // read the current project directly; keep the text projection for text mode.
+    if (isModule) return emptyModuleDocument;
     const cached = documentCache.current;
     // Typing ordinary prose changes one raw line but does not change its
     // references or hidden markers. Shift the existing projection instead of
@@ -611,7 +612,7 @@ export function TextEditor({ project, source: storedSource, parsedResult, readTe
   const findInput = useRef<HTMLInputElement>(null);
   const cursorLine = source.slice(0, cursorOffset ?? 0).split('\n').length;
   const cursorColumn = (cursorOffset ?? 0) === 0 ? 1 : (cursorOffset ?? 0) - source.lastIndexOf('\n', (cursorOffset ?? 0) - 1);
-  const rememberPosition = () => {
+  const rememberPosition = (ownSelection = false) => {
     const input = textareaRef.current;
     if (!input) return;
     const measured = readViewport(input);
@@ -619,7 +620,8 @@ export function TextEditor({ project, source: storedSource, parsedResult, readTe
     // Updating an unfocused textarea can reset its native selection before
     // Chromium finishes updating scroll/selection events. Keep the authored
     // caret while the user is working in stage fields or the undo toolbar.
-    const position = input.ownerDocument.activeElement === input ? measured : { ...measured, start: previous.start, end: previous.end };
+    // On blur, focus has already moved, but the selection is still the author's.
+    const position = ownSelection || input.ownerDocument.activeElement === input ? measured : { ...measured, start: previous.start, end: previous.end };
     positions.current.set(input.value, position); lastPosition.current = position;
     chapterPositions.current.set(range?.key ?? 'all', position);
     if (positions.current.size > 64) positions.current.delete(positions.current.keys().next().value!);
@@ -694,9 +696,14 @@ export function TextEditor({ project, source: storedSource, parsedResult, readTe
     focusAfterChange.current = false;
     lastPosition.current = position;
     setCursorOffset(Math.min(position.start, source.length)); setSelectionEnd(Math.min(position.end, source.length));
-    // Chromium can reveal the old caret after a controlled value update. Restore
-    // the viewport again after that selection notification, without moving focus.
-    const frame = requestAnimationFrame(() => { if (input.value === source) { input.scrollTop = position.top; input.scrollLeft = position.left; } });
+    // Chromium can reveal the old caret after a controlled value update, and an
+    // unfocused textarea can lose its selection when React syncs defaultValue.
+    // Restore the caret and viewport again on the next frame, without moving focus.
+    const frame = requestAnimationFrame(() => {
+      if (input.value !== source) return;
+      if (input.ownerDocument.activeElement !== input) input.setSelectionRange(Math.min(position.start, source.length), Math.min(position.end, source.length));
+      input.scrollTop = position.top; input.scrollLeft = position.left;
+    });
     return () => cancelAnimationFrame(frame);
   }, [source, storedSource, isModule]);
   useLayoutEffect(() => { if (paletteOpen && !picker) paletteSearch.current?.focus({ preventScroll: true }); }, [paletteOpen, picker]);
@@ -732,7 +739,9 @@ export function TextEditor({ project, source: storedSource, parsedResult, readTe
   }, [focusLine, focusSourceLine, document, chapters, activeChapter.key, chapterChoice.key, isModule]);
 
   const rows = useMemo(() => previewMode === 'structure' ? previewRows(parsed.project, range ? new Set([...previewNodeLocations, ...previewSourceMap.filter(location => !location.reference)].map(location => location.nodeId)) : undefined) : [], [previewMode, parsed.project, range, previewNodeLocations, previewSourceMap]);
-  const allIssues = useMemo(() => uniqueDiagnostics([...parsed.issues, ...validateProject(parsed.project), ...errors]), [errors, parsed]);
+  // The app already checks the project after edits. Only the text surface needs
+  // an immediate second pass for its inline line markers.
+  const allIssues = useMemo(() => isModule ? [] : uniqueDiagnostics([...parsed.issues, ...validateProject(parsed.project), ...errors]), [isModule, errors, parsed]);
   const issueLines = useMemo(() => {
     const lines = new Map<number, string>();
     for (const issue of allIssues) {
@@ -819,6 +828,20 @@ export function TextEditor({ project, source: storedSource, parsedResult, readTe
     positions.current.set(clean.text, position); lastPosition.current = position; focusAfterChange.current = true;
     onAuthoringEdit?.(label, result.project, nextSource);
   };
+  // Part-line marks go on the words of one dialogue row, after any speaker prefix.
+  const markupSyntaxAt = (at: number): TextMarkupSyntax => {
+    const sourceLine = storedSource.slice(0, sourceTextOffset(document, at)).split('\n').length;
+    return parsed.sourceMap.find(location => location.sourceLine === sourceLine && !location.reference && location.actionCount === undefined)?.markupSyntax ?? 'legacy';
+  };
+  const markableRange = (range: { start: number; end: number }) => {
+    const rowStart = source.lastIndexOf('\n', range.start - 1) + 1, nextBreak = source.indexOf('\n', range.start);
+    const row = source.slice(rowStart, nextBreak < 0 ? undefined : nextBreak), selected = source.slice(range.start, range.end);
+    if (/\n|〖|〗/.test(selected) || /^\s*(?:[#／/]|$)/.test(row) || /^\s*@(?!续行\s*[:：])/.test(row)) return false;
+    const colon = row.search(/[:：]/);
+    if (colon >= 0 && range.start - rowStart <= colon) return false;
+    const wordsStart = colon < 0 ? 0 : colon + 1;
+    return plainTextMarkupRange(row.slice(wordsStart), range.start - rowStart - wordsStart, range.end - rowStart - wordsStart, markupSyntaxAt(range.start));
+  };
   const selectedLines = () => {
     const range = contextMenu ?? lastPosition.current;
     const first = source.slice(0, range.start).split('\n').length;
@@ -900,7 +923,7 @@ export function TextEditor({ project, source: storedSource, parsedResult, readTe
       const action = textCommandAction(pickerProject, text.trim());
       const graph = action?.kind === 'blueprint' ? performanceGraphs.find(graph => graph.id === action.blueprintId) : undefined;
       if (graph && !projectGraphs(project).some(item => item.id === graph.id)) {
-        const next = structuredClone(parsed.project); installPerformanceBlueprint(next, graph); assignBlueprintGroup(next, graph.id, '演出 / 角色');
+        const next = cloneData(parsed.project); installPerformanceBlueprint(next, graph); assignBlueprintGroup(next, graph.id, '演出 / 角色');
         commitAuthoring('插入内置演出蓝图', next, nextSource, caret);
       } else onChange(nextSource, true);
     } else onChange(nextSource, true);
@@ -1027,7 +1050,7 @@ export function TextEditor({ project, source: storedSource, parsedResult, readTe
       </div>
       <div className="text-editor-layout" ref={split.root} style={split.style}>
         <section className="text-source-panel">
-          <div className="text-panel-heading"><strong>{isModule ? '对白与演出' : '剧情脚本'}</strong>{!isModule && <button type="button" className="small-button" aria-pressed={softWrap} title="只改变显示换行，不修改剧本内容" onClick={()=>{setSoftWrap(value=>{const next=!value;try{localStorage.setItem('vns:text-soft-wrap',String(next));}catch{}return next;});if(textareaRef.current)textareaRef.current.scrollLeft=0;}}>自动换行</button>}{!isModule && <button type="button" className={`small-button hide-performance-toggle ${hidePerformance ? 'active' : ''}`} aria-pressed={hidePerformance} title="在正文中隐藏演出指令，在预览下方编辑所选段落的演出" onClick={() => changeProjection(!hidePerformance)}><EyeOff size={14} />隐藏演出</button>}<button type="button" className="small-button" aria-pressed={colorfulText} title="为章节标题、演出指令和不同发言人的台词着色" onClick={() => setColorfulText(value => !value)}>彩色标注</button><button type="button" className="icon-button" aria-label="文本配色设置" title="文本配色设置" onClick={() => setColorSettings(true)}><Settings2 size={15} /></button>{colorSettings && <TextColorSettings source={source} onClose={() => setColorSettings(false)} />}<span>{isModule ? '点击演出模块编辑参数' : source.split('\n').length + ' 行'}</span><div className="spacer" />{onOpenEntrySettings && <button type="button" className="story-entry-link" title="新游戏从故事入口开始。点击可更换入口，并查看它与 @开始 的区别。" onClick={onOpenEntrySettings}><Play size={12} /><span>故事入口：{parsed.project.nodes.find(node => node.id === parsed.project.entryId)?.name ?? '未设置'}</span></button>}{!isModule && <><button type="button" className="icon-button" aria-label="查找文本" title="查找（Ctrl+F）" onClick={() => openFind()}><Search size={14} /></button><button type="button" className="icon-button" aria-label="替换文本" title="替换（Ctrl+H）" onClick={() => openFind(true)}><Replace size={14} /></button></>}</div>
+          <div className="text-panel-heading">{!isModule && <><strong>剧情脚本</strong>{!isModule && <button type="button" className="small-button" aria-pressed={softWrap} title="只改变显示换行，不修改剧本内容" onClick={()=>{setSoftWrap(value=>{const next=!value;try{localStorage.setItem('vns:text-soft-wrap',String(next));}catch{}return next;});if(textareaRef.current)textareaRef.current.scrollLeft=0;}}>自动换行</button>}{!isModule && <button type="button" className={`small-button hide-performance-toggle ${hidePerformance ? 'active' : ''}`} aria-pressed={hidePerformance} title="在正文中隐藏演出指令，在预览下方编辑所选段落的演出" onClick={() => changeProjection(!hidePerformance)}><EyeOff size={14} />隐藏演出</button>}<button type="button" className="small-button" aria-pressed={colorfulText} title="为章节标题、演出指令和不同发言人的台词着色" onClick={() => setColorfulText(value => !value)}>彩色标注</button><button type="button" className="icon-button" aria-label="文本配色设置" title="文本配色设置" onClick={() => setColorSettings(true)}><Settings2 size={15} /></button>{colorSettings && <TextColorSettings source={source} onClose={() => setColorSettings(false)} />}<span>{source.split('\n').length + ' 行'}</span></>}<div className="spacer" />{onOpenEntrySettings && <button type="button" className="story-entry-link" title="新游戏从故事入口开始。点击可更换入口，并查看它与 @开始 的区别。" onClick={onOpenEntrySettings}><Play size={12} /><span>故事入口：{parsed.project.nodes.find(node => node.id === parsed.project.entryId)?.name ?? '未设置'}</span></button>}{!isModule && <><button type="button" className="icon-button" aria-label="查找文本" title="查找（Ctrl+F）" onClick={() => openFind()}><Search size={14} /></button><button type="button" className="icon-button" aria-label="替换文本" title="替换（Ctrl+H）" onClick={() => openFind(true)}><Replace size={14} /></button></>}</div>
           {isModule ? <>{moduleEditor}</> : <>
           {findOpen && <div className="text-find-panel" role="search" aria-label="查找和替换" onKeyDown={event => { if (event.key === 'Escape') { setFindOpen(false); textareaRef.current?.focus({ preventScroll: true }); } }}>
             <div className="text-find-row"><input ref={findInput} aria-label="查找内容" value={findText} placeholder="查找…" onChange={event => setFindText(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); findNext(event.shiftKey); } }} /><small>{matches.length} 处</small><button type="button" className="icon-button" aria-label="上一个匹配" disabled={!matches.length} onClick={() => findNext(true)}><ArrowUp size={14} /></button><button type="button" className="icon-button" aria-label="下一个匹配" disabled={!matches.length} onClick={() => findNext()}><ArrowDown size={14} /></button><button type="button" className="icon-button" aria-label="关闭查找" onClick={() => setFindOpen(false)}><X size={14} /></button></div>
@@ -1058,10 +1081,10 @@ export function TextEditor({ project, source: storedSource, parsedResult, readTe
                 const repeated = clickedCommandLine.current === key && input.selectionStart === input.selectionEnd;
                 clickedCommandLine.current = key;
                 setAssistanceEnabled(repeated); setDismissedAssistance('');
-              }} onChange={onTextChange} onKeyDown={onTextKeyDown} onScroll={rememberPosition} onFocus={() => setInputFocused(true)} onBlur={() => { rememberPosition(); setInputFocused(false); clickedCommandLine.current = undefined; }} onCompositionStart={() => setComposing(true)} onCompositionEnd={() => { setComposing(false); setAssistanceEnabled(true); }} onSelect={(event) => { if (event.currentTarget.ownerDocument.activeElement !== event.currentTarget) return; setCursorOffset(event.currentTarget.selectionStart); setSelectionEnd(event.currentTarget.selectionEnd); setSelectionCollapsed(event.currentTarget.selectionStart === event.currentTarget.selectionEnd); setPreviewSelection(undefined); rememberPosition(); }} spellCheck={false} aria-label="中文文本剧本" aria-autocomplete="list" aria-controls={assistance?.items.length ? 'text-completion-list' : undefined} aria-activedescendant={assistance?.items.length ? `text-completion-${selectedCompletion}` : undefined} placeholder={'# 章节：第一章\n# 小章节：开场\n# 段落：相遇\n\n@背景：校园.png\n旁白：故事从这里开始。\n'} />
+              }} onChange={onTextChange} onKeyDown={onTextKeyDown} onScroll={() => rememberPosition()} onFocus={() => setInputFocused(true)} onBlur={() => { rememberPosition(true); setInputFocused(false); clickedCommandLine.current = undefined; }} onCompositionStart={() => setComposing(true)} onCompositionEnd={() => { setComposing(false); setAssistanceEnabled(true); }} onSelect={(event) => { if (event.currentTarget.ownerDocument.activeElement !== event.currentTarget) return; setCursorOffset(event.currentTarget.selectionStart); setSelectionEnd(event.currentTarget.selectionEnd); setSelectionCollapsed(event.currentTarget.selectionStart === event.currentTarget.selectionEnd); setPreviewSelection(undefined); rememberPosition(); }} spellCheck={false} aria-label="中文文本剧本" aria-autocomplete="list" aria-controls={assistance?.items.length ? 'text-completion-list' : undefined} aria-activedescendant={assistance?.items.length ? `text-completion-${selectedCompletion}` : undefined} placeholder={'# 章节：第一章\n# 小章节：开场\n# 段落：相遇\n\n@背景：校园.png\n旁白：故事从这里开始。\n'} />
             </TextCodeSurface>
             {paletteOpen && !picker && <NodePicker x={0} y={0} embedded closeOnChoose={false} initialQuery={query} title="插入指令" onClose={closePalette} items={[
-              ...COMMANDS.filter(item => item.key !== "characterFeature" || project.characters.some(c => effectiveCharacter(project, c.id)?.features?.length)).map(item => ({ id: item.key, name: item.label, hint: item.description, category: commandGroup(item.label), choose: () => item.needsPicker ? setPicker({ command: item.key, range: paletteRange ?? { start: source.length, end: source.length } }) : insertText(`@${item.label}${item.argumentless ? '' : '：'}\n`) })),
+              ...COMMANDS.map(item => ({ id: item.key, name: item.label, hint: item.description, category: commandGroup(item.label), choose: () => item.needsPicker ? setPicker({ command: item.key, range: paletteRange ?? { start: source.length, end: source.length } }) : insertText(`@${item.label}${item.argumentless ? '' : '：'}\n`) })),
               ...commandPerformanceBlueprints(parsed.project).map(graph => ({ id: graph.id, name: blueprintCallName(graph), hint: `${graph.exposedInputs.length} 个输入`, category: blueprintGroup(project, graph.id) || (projectGraphs(project).some(item => item.id === graph.id) ? '未分组蓝图' : '内置演出'), choose: () => graph.exposedInputs.length ? setPicker({ command: 'blueprint', blueprintId: graph.id, range: paletteRange ?? { start: source.length, end: source.length } }) : insertText(actionText(pickerProject, { kind: 'blueprint', blueprintId: graph.id }) + '\n') })),
             ].sort((a, b) => Number(b.category === '基础') - Number(a.category === '基础'))} />}
             {paletteOpen && picker && (['displayImage', 'displayVideo', 'displayText', 'hideVisual'].includes(picker.command) ? <MediaCommandPicker key={picker.command} project={pickerProject} content={picker.command === 'displayImage' ? 'image' : picker.command === 'displayVideo' ? 'video' : picker.command === 'displayText' ? 'text' : 'hide'} assetUrl={assetUrl ?? (id => project.assets.find(asset => asset.id === id)?.path)} onInsert={insertText} onCancel={closePalette} /> : <CommandPicker key={`${picker.command}/${picker.blueprintId ?? ''}`} project={pickerProject} state={picker} assetUrl={assetUrl ?? (id => project.assets.find(asset => asset.id === id)?.path)} onInsert={insertText} onCancel={closePalette} />)}
@@ -1072,13 +1095,15 @@ export function TextEditor({ project, source: storedSource, parsedResult, readTe
         </section>
         {split.divider}
         <section className="text-preview-panel">
-          <TextPreview allowSuspend={!isModule} onNotice={onNotice} performanceContent={onStageCommit ? (active, select, following, liveProject, liveCommit) => parsed.issues.some(issue => issue.severity === 'error') ? <section className="passage-performances"><h3>演出设置</h3><p role="status" className="muted">文本中有未完成或无效的指令。修正后即可编辑当前台词的演出设置。</p></section> : <PassagePerformances selectedLineIds={following && active.nodeId === cursorSelection?.nodeId ? selectedDialogueIds : undefined} key={active.nodeId} project={liveProject} nodeId={active.nodeId} lineId={active.lineId} commit={liveCommit ?? commitStage} assetUrl={assetUrl ?? (id => project.assets.find(asset => asset.id === id)?.path)} select={select} openBlueprint={onOpenBlueprint} openPerformance={onOpenPerformance} /> : undefined} commit={onStageCommit ? commitStage : undefined} editDisabled={parsed.issues.some(issue => issue.severity === 'error') ? '文本中有未完成或无效的指令，修正后可编辑舞台。' : undefined} nodeSelection={isModule ? moduleSelection?.nodeId : cursorSelection?.nodeId} suspended={previewSuspended} project={isModule ? project : parsed.project} source={source} sourceMap={previewSourceMap} cursorOffset={isModule ? undefined : cursorOffset} selection={moduleSelection ?? previewSelection} assetUrl={assetUrl ?? ((id) => project.assets.find((asset) => asset.id === id)?.path)} headerActions={<div className="segmented text-preview-modes"><button type="button" className={previewMode === 'stage' ? 'active' : ''} onClick={() => setPreviewMode('stage')}>画面</button><button type="button" className={previewMode === 'structure' ? 'active' : ''} onClick={() => setPreviewMode('structure')}>结构</button></div>} alternateContent={previewMode === 'structure' ? <div className="text-preview-scroll">
+          <TextPreview allowSuspend={!isModule} onNotice={onNotice} performanceContent={onStageCommit ? (active, select, following, liveProject, liveCommit) => isModule ? null : parsed.issues.some(issue => issue.severity === 'error') ? <section className="passage-performances"><h3>演出设置</h3><p role="status" className="muted">文本中有未完成或无效的指令。修正后即可编辑当前台词的演出设置。</p></section> : <PassagePerformances selectedLineIds={following && active.nodeId === cursorSelection?.nodeId ? selectedDialogueIds : undefined} key={active.nodeId} project={liveProject} nodeId={active.nodeId} lineId={active.lineId} commit={liveCommit ?? commitStage} assetUrl={assetUrl ?? (id => project.assets.find(asset => asset.id === id)?.path)} select={select} openBlueprint={onOpenBlueprint} openPerformance={onOpenPerformance} /> : undefined} commit={onStageCommit ? commitStage : undefined} editDisabled={parsed.issues.some(issue => issue.severity === 'error') ? '文本中有未完成或无效的指令，修正后可编辑舞台。' : undefined} nodeSelection={isModule ? moduleSelection?.nodeId : cursorSelection?.nodeId} suspended={previewSuspended} project={isModule ? project : parsed.project} source={source} sourceMap={previewSourceMap} cursorOffset={isModule ? undefined : cursorOffset} selection={moduleSelection ?? previewSelection} assetUrl={assetUrl ?? ((id) => project.assets.find((asset) => asset.id === id)?.path)} headerActions={<div className="segmented text-preview-modes"><button type="button" className={previewMode === 'stage' ? 'active' : ''} onClick={() => setPreviewMode('stage')}>画面</button><button type="button" className={previewMode === 'structure' ? 'active' : ''} onClick={() => setPreviewMode('structure')}>结构</button></div>} alternateContent={previewMode === 'structure' ? <div className="text-preview-scroll">
             <TextStructure key={range?.key ?? 'all'} rows={rows} onSelect={row => { if (row.nodeId && row.lineId) { setPreviewSelection({ nodeId: row.nodeId, lineId: row.lineId }); setPreviewMode('stage'); } }} />
           </div> : undefined} />
         </section>
       </div>
       {contextMenu && createPortal(<div className="performance-context-menu" role="menu" aria-label="文本编辑菜单" style={{ left: Math.max(8, contextMenu.x), top: Math.max(8, contextMenu.y) }} onKeyDown={event => { if (event.key === 'Escape') setContextMenu(undefined); }}>
         <button role="menuitem" disabled={!canUndo} onClick={() => { setContextMenu(undefined); onUndo?.(); }}>撤销</button><button role="menuitem" disabled={!canRedo} onClick={() => { setContextMenu(undefined); onRedo?.(); }}>重做</button>
+        <button role="menuitem" disabled={contextMenu.start === contextMenu.end || !markableRange(contextMenu)} onClick={() => { const range = contextMenu, text = spanMarkupText(source.slice(range.start, range.end), '颜色=#ff5a4f', markupSyntaxAt(range.start)); setContextMenu(undefined); commitEdits([{ start: range.start, end: range.end, text }], range.start + text.length); }}>设为局部文字效果</button>
+        <button role="menuitem" disabled={!markableRange(contextMenu)} onClick={() => { const range = contextMenu, text = '〖停顿=0.5〗'; setContextMenu(undefined); commitEdits([{ start: range.start, end: range.start, text }], range.start + text.length); }}>在此处停顿</button>
         <button role="menuitem" disabled={contextMenu.start === contextMenu.end} onClick={() => { void navigator.clipboard.writeText(source.slice(contextMenu.start, contextMenu.end)).catch(() => setAuthoringMessage('复制失败，请用 Ctrl+C 复制选中的内容。')); setContextMenu(undefined); }}>复制</button>
         <button role="menuitem" disabled={contextMenu.start === contextMenu.end} onClick={() => { const range = contextMenu; void navigator.clipboard.writeText(source.slice(range.start, range.end)).then(() => commitEdits([{ start: range.start, end: range.end, text: '' }], range.start)).catch(() => setAuthoringMessage('剪切失败，原文已保留。请用 Ctrl+X 重试。')); setContextMenu(undefined); }}>剪切</button>
         <button role="menuitem" onClick={() => { const range = contextMenu; setContextMenu(undefined); void navigator.clipboard.readText().then(text => commitEdits([{ start: range.start, end: range.end, text }], range.start + textDocument(text).text.length)).catch(() => setAuthoringMessage('请用 Ctrl+V 粘贴剪贴板内容。')); }}>粘贴</button><hr />
@@ -1095,7 +1120,7 @@ export function TextEditor({ project, source: storedSource, parsedResult, readTe
       }} />}
       {encapsulation && <EncapsulatePerformance project={parsed.project} actions={encapsulation.actions} assetUrl={assetUrl ?? (id => project.assets.find(asset => asset.id === id)?.path)} onClose={() => setEncapsulation(undefined)} onCreate={(graph, group) => {
         graph.performanceKind = encapsulation.standalone ? 'standalone' : 'dialogue';
-        const next = structuredClone(parsed.project); installPerformanceBlueprint(next, graph); assignBlueprintGroup(next, graph.id, group);
+        const next = cloneData(parsed.project); installPerformanceBlueprint(next, graph); assignBlueprintGroup(next, graph.id, group);
         const moduleName = source.slice(encapsulation.start, encapsulation.end).match(/@独立演出\s*[:：]\s*([^\n]+)/)?.[1] ?? graph.name;
         const replacement = actionText(next, { kind: 'blueprint', blueprintId: graph.id }) + (encapsulation.standalone ? `\n@独立演出：${moduleName}` : '');
         const nextSource = editTextDocument(document, { start: encapsulation.start, end: encapsulation.end, text: replacement });
@@ -1104,7 +1129,7 @@ export function TextEditor({ project, source: storedSource, parsedResult, readTe
       }} />}
       {batch && <BatchPerformance project={isModule ? project : parsed.project} selectedIds={batch.ids} assetUrl={assetUrl ?? (id => project.assets.find(asset => asset.id === id)?.path)} onClose={() => setBatch(undefined)} onApply={(action, narration, graph) => {
         try {
-          const next = structuredClone(isModule ? project : parsed.project); if (graph) { installPerformanceBlueprint(next, graph); if (!projectGraphs(project).some(item => item.id === graph.id)) assignBlueprintGroup(next, graph.id, '演出 / 角色'); }
+          const next = cloneData(isModule ? project : parsed.project); if (graph) { installPerformanceBlueprint(next, graph); if (!projectGraphs(project).some(item => item.id === graph.id)) assignBlueprintGroup(next, graph.id, '演出 / 角色'); }
           const count = addPerformanceToLines(next, action, batch.ids, narration);
           commitAuthoring('批量添加台词演出', next, projectToText(next)); setBatch(undefined); setAuthoringMessage(`已为 ${count} 句台词添加演出，可一次撤销。`);
         } catch (error) { setAuthoringMessage(error instanceof Error ? error.message : String(error)); }

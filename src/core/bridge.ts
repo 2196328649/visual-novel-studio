@@ -1,3 +1,5 @@
+import type { BlueprintBreakpoint, BlueprintDebugRequest, BlueprintDebugPacket } from './blueprint-debug';
+import type { UiPreviewAction, UiPreviewActionHandler, UiPreviewActionResult } from './ui-preview-actions';
 import type { AiConversation, AiConversationList } from './ai-conversations';
 import type { BlueprintSelection, UiPageSelection, UiAnimationSelection } from './ai-selection';
 import type { EditorLayoutAction } from './editor-layout';
@@ -5,7 +7,7 @@ import type { AiEditorTarget } from './ai-editor-targets';
 import type { AiEditorCommand, AiEditorResult } from './ai-editor-commands';
 import type { Asset, AssetCategory, Diagnostic, Project, UiComponent, VariableValue } from './model';
 import type { ExportPlatform } from './export-settings';
-import type { AiChange, AiConfigUpdate, AiConfigView, AiRequest, AiResponse } from './ai';
+import type { AiChange, AiConfigResetResult, AiConfigUpdate, AiConfigView, AiRequest, AiResponse } from './ai';
 import type { ImportedText, TextExportMode } from './text-exchange';
 import type { AiProgress, AiWorkflowProposal } from './ai-workflow';
 import type { AiAttachment } from './ai-attachments';
@@ -20,7 +22,17 @@ export interface AssetImportReport { imported: number; duplicates: number; skipp
 export interface RecentProject { path: string; name: string; lastOpenedAt: number; available: boolean; recoveryAvailable?: boolean; projectId?: string }
 export interface ProjectHubInfo { recent: RecentProject[]; templates: ProjectTemplateInfo[]; defaultDirectory: string; recovery?: { name: string; savedAt: number }; direct?: ProjectSession }
 
+export interface ProjectRecoveryOptions {
+  uiDraft?: Project;
+  projectDirty?: boolean;
+  /** Clear a discarded or fully undone draft without writing the main file. */
+  clear?: boolean;
+}
+
 export interface ProjectSession {
+  /** Recovery preserves the distinction between project edits and UI drafts. */
+  uiDraft?: Project;
+  recoveredProjectDirty?: boolean;
   locationMissing?: boolean;
   template?: { id: ProjectTemplateInfo['id'] };
   project: Project;
@@ -57,13 +69,13 @@ export interface ExportSetupResult { ok: boolean; cancelled?: boolean; check?: E
 export type ExportTool = 'androidSetup' | 'androidHelp' | 'androidLicense' | 'signing';
 export type PreviewMode = 'embedded' | 'window';
 export type PreviewPhase = 'idle' | 'compiling' | 'starting' | 'running' | 'paused' | 'failed';
-export interface PreviewOptions { entryId?: string; variables?: Record<string, VariableValue>; mode?: PreviewMode }
+export interface PreviewOptions { entryId?: string; variables?: Record<string, VariableValue>; mode?: PreviewMode; flowStart?: 'launch' | 'title'; blueprintDebug?: boolean; blueprintBreakpoints?: BlueprintBreakpoint[] }
 export interface PreviewViewport { x: number; y: number; width: number; height: number; visible: boolean }
 export type PreviewCommand = 'pause' | 'resume' | 'stop' | 'focus';
 export interface RuntimeEvent {
-  kind: 'log' | 'exit' | 'position' | 'diagnostics' | 'preview'; message: string; code?: number;
+  kind: 'log' | 'exit' | 'position' | 'diagnostics' | 'preview' | 'blueprintDebug'; message: string; code?: number;
   nodeId?: string; lineId?: string; variables?: Record<string, VariableValue>; diagnostics?: Diagnostic[];
-  phase?: PreviewPhase; mode?: PreviewMode; sessionId?: string; windowId?: string; visible?: boolean;
+  phase?: PreviewPhase; mode?: PreviewMode; sessionId?: string; windowId?: string; visible?: boolean; firstFramePending?: boolean; blueprintDebug?: BlueprintDebugPacket;
 }
 export interface StudioBridge {
   listAiConversations?(projectId: string): Promise<AiConversationList>;
@@ -71,8 +83,14 @@ export interface StudioBridge {
   saveAiConversation?(conversation: AiConversation): Promise<void>;
   deleteAiConversation?(projectId: string, id: string): Promise<void>;
   exportAiConversation?(conversation: AiConversation): Promise<boolean>;
-  onAiBeforeClose?(callback: () => void): () => void;
+  exportAiConversationBackup?(conversation: AiConversation): Promise<boolean>;
+  onAiBeforeClose?(callback: (requestId?: string) => void): () => void;
+  completeAiClose?(requestId: string, error?: string): Promise<boolean>;
+  onAiCloseCancelled?(callback: (requestId: string) => void): () => void;
+  readyAiClose?(projectId: string, ready: boolean): Promise<void>;
   onAiChunk?(callback: (chunk: {id: string; text: string}) => void): () => void;
+  requestUiPreviewAction?(action: UiPreviewAction): Promise<UiPreviewActionResult>;
+  onUiPreviewAction?(callback: UiPreviewActionHandler): () => void;
   openUiPreviewWindow?(context: UiPreviewWindowContext): Promise<void>;
   closeUiPreviewWindow?(): Promise<void>;
   updateUiPreviewContext?(context: UiPreviewWindowContext): Promise<void>;
@@ -81,6 +99,7 @@ export interface StudioBridge {
   onUiPreviewWindowState?(callback: (open: boolean) => void): () => void;
   getAiConfig?(): Promise<AiConfigView>;
   saveAiConfig?(config: AiConfigUpdate): Promise<AiConfigView>;
+  resetAiConfig?(recoveryId: string): Promise<AiConfigResetResult>;
   onAiConfig?(callback: (config: AiConfigView) => void): () => void;
   onAiProgress?(callback: (progress: AiProgress) => void): () => void;
   requestAi?(request: AiRequest): Promise<AiResponse>;
@@ -113,7 +132,7 @@ export interface StudioBridge {
   create(name: string, template?: ProjectTemplate): Promise<ProjectSession | null>;
   open(): Promise<ProjectSession | null>;
   save(project: Project, saveAs?: boolean): Promise<ProjectSession | null>;
-  autosave(project: Project): Promise<{ savedAt: number; locationMissing?: boolean }>;
+  autosave(project: Project, options?: ProjectRecoveryOptions): Promise<{ savedAt: number; locationMissing?: boolean }>;
   importAssets(project: Project, options?: AssetImportOptions): Promise<ProjectSession | null>;
   discoverAssets?(project: Project): Promise<ProjectSession | null>;
   revealAsset?(project: Project, assetId: string): Promise<void>;
@@ -124,6 +143,7 @@ export interface StudioBridge {
   exportText?(project: Project, mode: TextExportMode): Promise<string | null>;
   preview(project: Project, options?: PreviewOptions): Promise<RunResult>;
   controlPreview?(command: PreviewCommand): Promise<void>;
+  controlBlueprintDebug?(request: BlueprintDebugRequest): Promise<{ revision: number }>;
   setPreviewViewport?(viewport: PreviewViewport): Promise<void>;
   exportGame(project: Project): Promise<RunResult | null>;
   chooseExportDirectory?(current?: string): Promise<string | null>;
@@ -138,7 +158,7 @@ export interface StudioBridge {
   defaultFontUrl?(): string;
   environment(): Promise<{ sdkPath: string | null; appVersion: string }>;
   onRuntimeEvent(callback: (event: RuntimeEvent) => void): () => void;
-  onCloseRequested?(snapshot: () => { project: Project; dirty: boolean }, beforeClose?: () => Promise<boolean>): () => void;
+  onCloseRequested?(snapshot: () => { project: Project; dirty: boolean }, beforeClose?: () => Promise<boolean>, afterClose?: (error?: string) => void): () => void;
 }
 declare global { interface Window { studio?: StudioBridge } }
 export function projectAssetUrl(asset: Asset): string { return window.studio?.assetUrl(asset.path) ?? asset.path; }

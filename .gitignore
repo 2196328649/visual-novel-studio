@@ -32,3 +32,8 @@ saves/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Local agent handoffs and development launch shortcuts
+/AGENTS.md
+/docs/handoff-*.md
+/*开发*.cmd

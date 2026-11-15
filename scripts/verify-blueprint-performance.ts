@@ -28,7 +28,7 @@ delete env.ELECTRON_RUN_AS_NODE;
 let app: ElectronApplication | undefined;
 const errors: string[] = [], phases: Record<string, unknown> = {};
 try {
-  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env, timeout: 60000 });
+  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env: { ...env, VNS_TEST_DISCARD_ON_CLOSE: '1' }, timeout: 60000 });
   const page = await app.firstWindow(); page.setDefaultTimeout(20000);
   page.on('pageerror', error => errors.push(error.message));
   await expect(page.locator('.project-title strong')).toHaveText(project.name);
@@ -112,7 +112,7 @@ try {
   }
   await page.getByRole('button', { name: '框选全部节点', exact: true }).click(); await page.waitForTimeout(250);
   const editable = graph.nodes.find(node => node.type === 'random')!;
-  await page.locator('.blueprint-toolbar .blueprint-title').click(); await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:'框选全部节点',exact:true}).focus(); await page.keyboard.press('Escape');
   await page.locator('.blueprint-node-outline').getByRole('button', { name: editable.name, exact: true }).first().click(); await page.waitForTimeout(250);
   const number = page.locator(`.react-flow__node[data-id="${editable.id}"]`).getByLabel(`${editable.name} · ${editable.pins.find(pin => pin.id === 'min')!.name}`, { exact: true });
   await measure('parameters', async () => {

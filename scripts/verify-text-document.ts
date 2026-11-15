@@ -7,7 +7,9 @@ import path from 'node:path';
 import { createProject, type Project } from '../src/core/model';
 import { applyTextScript, projectToText } from '../src/core/text-script';
 import { textDocument } from '../src/core/text-document';
+import { textChapters } from '../src/core/text-chapters';
 import { saveProject } from '../src/desktop/project-store';
+import { cleanVerificationDirectories } from './lib/verification-cleanup';
 
 const root = path.resolve('.'), require = createRequire(import.meta.url);
 const output = path.join(root, 'artifacts/text-document', new Date().toISOString().replaceAll(':', '-'));
@@ -34,20 +36,23 @@ delete env.ELECTRON_RUN_AS_NODE;
 let app: ElectronApplication | undefined;
 const checks: string[] = [], errors: string[] = [];
 try {
-  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env, timeout: 60000 });
+  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env: { ...env, VNS_TEST_DISCARD_ON_CLOSE: '1' }, timeout: 60000 });
   const page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message));
   await expect(page.locator('.project-title strong')).toHaveText(project.name);
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 960));
   const tabs = page.locator('.view-tabs .tabs');
-  await expect(tabs.locator('button')).toHaveText(['剧本', '演出', '蓝图', '界面', '素材', '角色', '状态']);
+  await expect(tabs.locator('button')).toHaveText(['剧本', '流程图', '蓝图', '界面', '资源', '角色', '参数集']);
   await openStoryMode(page, 'text');
   const input = page.getByLabel('中文文本剧本', { exact: true });
-  const original = textDocument(project.scriptText.content).text;
+  const range = textChapters(project.scriptText.content, project.chapters).find(chapter => chapter.chapterId === project.chapters[0].id)!;
+  const original = textDocument(project.scriptText.content, [], { range }).text;
   await expect(input).toHaveValue(original);
   expect(await input.inputValue()).not.toContain('@对白标记');
   expect(await input.inputValue()).not.toMatch(/【[a-z][a-z0-9_]*】/);
   await expect(page.getByRole('button', { name: '文本编辑', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.text-code-gutter')).toBeVisible();
+  await page.getByRole('button', { name: '彩色标注', exact: true }).click();
+  await expect(page.getByRole('button', { name: '彩色标注', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.code-token-heading').first()).toBeVisible();
   await expect(page.locator('.code-token-command').first()).toBeVisible();
   const select = async (text: string, length = 0) => input.evaluate((element, args) => {
@@ -163,4 +168,8 @@ try {
   if (app) await app.firstWindow().then(page => page.screenshot({ path: path.join(output, 'failure.png') })).catch(() => undefined);
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'failed', checks, errors, error: String(error) }, null, 2));
   console.error(error); console.log(output); process.exitCode = 1;
-} finally { await app?.close(); await server.close(); }
+} finally {
+  await app?.close(); await server.close();
+  const cleanup = await cleanVerificationDirectories(output, ['project', 'profile']);
+  expect(cleanup.errors).toEqual([]);
+}

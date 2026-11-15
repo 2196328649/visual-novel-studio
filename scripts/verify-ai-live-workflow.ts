@@ -60,7 +60,7 @@ const ask = async (text: string) => {
   return assistant!.getByLabel('AI 创作方案', { exact: true }).last();
 };
 try {
-  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env, timeout: 60000 });
+  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env: { ...env, VNS_TEST_DISCARD_ON_CLOSE: '1' }, timeout: 60000 });
   page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message));
   await expect(page.locator('.project-title strong')).toHaveText(original.name, { timeout: 60000 });
   const provider = await sessionProvider();

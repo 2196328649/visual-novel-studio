@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createProject } from '../src/core/model';
 import { commandSignatures, completionScore, textAssistance } from '../src/core/text-completion';
 import { editTextDocument, textDocument, textEdit } from '../src/core/text-document';
-import { textCommandAction } from '../src/core/text-script';
+import { actionText, expandStageAction, textCommandAction } from '../src/core/text-script';
 
 function fixture() {
   const p = createProject();
@@ -80,6 +80,21 @@ test('only the full show-character command is offered and parsed', () => {
   assert.equal(assist('@角色').items.some(item => item.label === '角色'), false);
   assert.equal(textCommandAction(fixture(), '@角色：穗，通常，0.5，0.4，1.2'), undefined);
   assert.equal(textCommandAction(fixture(), '@显示角色：穗，通常，0.5，0.4，1.2')?.kind, 'show');
+});
+test('old character features remain readable without returning to new command suggestions', () => {
+  const project = fixture();
+  project.characters[0].features = [{ id: 'old_wait', name: '旧等待', actions: [{ kind: 'pause', seconds: .25 }] }];
+  for (const source of ['@', '@角色', '@角色功', '@jsgn']) {
+    assert.equal(textAssistance(project, source, source.length, true)?.items.some(item => item.id === 'command:角色功能'), false);
+  }
+  const action = textCommandAction(project, '@角色功能：穗，旧等待', true);
+  assert.deepEqual(action, { kind: 'characterFeature', characterId: 'sui', featureId: 'old_wait' });
+  assert.deepEqual(textCommandAction(project, actionText(project, action!), true), action);
+  assert.deepEqual(expandStageAction(project, action!), [{ kind: 'pause', seconds: .25 }]);
+  const oldSource = '@角色功能：穗，旧等';
+  const assistance = textAssistance(project, oldSource, oldSource.length)!;
+  assert.equal(assistance.signature?.legacy, true);
+  assert.ok(assistance.items.some(item => item.id === 'old_wait'), 'existing commands keep parameter help');
 });
 test('asset completions respect scene, BGM, voice and sound categories', () => {
   assert.deepEqual(assist('@背景：yy').items.map(i => i.id), ['night']);

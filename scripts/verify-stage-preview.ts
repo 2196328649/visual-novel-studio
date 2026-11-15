@@ -53,7 +53,7 @@ delete env.ELECTRON_RUN_AS_NODE;
 let app: ElectronApplication | undefined, page: Page | undefined;
 const checks: string[] = [], errors: string[] = [];
 try {
-  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env });
+  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env: { ...env, VNS_TEST_DISCARD_ON_CLOSE: '1' } });
   page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message));
   await expect(page.locator('.project-title strong')).toHaveText(project.name);
   await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1440, 960); });

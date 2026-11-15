@@ -1,19 +1,20 @@
 import { useId, useRef, useState } from 'react';
 import { Plus } from 'lucide-react';
 import type { Project, UiComponent } from '../core/model';
-import { sliderPreferences } from '../core/preferences';
-import { componentNames, preferenceNames, bindingNames } from './UiNames';
+import { preferenceInfo, sliderPreferences } from '../core/preferences';
+import { componentNames, bindingNames } from './UiNames';
 
-export function UiAddMenu({project,page,canAdd,add,specialKind,confirmation}:{project:Project;page:UiComponent['page'];canAdd:boolean;add:(kind:UiComponent['kind'],patch?:Partial<UiComponent>)=>void;specialKind?:UiComponent['kind'];confirmation?:()=>void}) {
+export function UiAddMenu({project,page,pageId,canAdd,add,specialKind,confirmation}:{project:Project;page:UiComponent['page'];pageId?:string;canAdd:boolean;add:(kind:UiComponent['kind'],patch?:Partial<UiComponent>)=>void;specialKind?:UiComponent['kind'];confirmation?:()=>void}) {
  const id=useId(),menu=useRef<HTMLDivElement>(null),[query,setQuery]=useState('');
  const items:{name:string;disabled?:boolean;run:()=>void}[]=[];
  const kind=(value:UiComponent['kind'])=>items.push({name:componentNames[value],disabled:['image','spine','video'].includes(value)&&!project.assets.some(a=>a.kind===value),run:()=>add(value)});
  for(const value of ['text','button','image','panel','progress','spine','video'] as const)kind(value);
  const binding=(value:NonNullable<UiComponent['binding']>)=>items.push({name:bindingNames[value],run:()=>add('text',{binding:value,text:''})});
  binding('tooltip');if(page==='main')binding('title');if(page==='say'){binding('speaker');binding('dialogue');}
- if(page==='custom'){binding('minigameTitle');binding('minigamePrompt');binding('minigameStatus');}
+ const legacyPage = page === 'custom' && (project.minigames.some(game => game.uiPageId === pageId) || project.ui.customPages.find(page => page.id === pageId)?.components.some(component => ['minigameTitle', 'minigamePrompt', 'minigameStatus'].includes(component.binding ?? '')));
+ if(legacyPage){binding('minigameTitle');binding('minigamePrompt');binding('minigameStatus');}
  if(page==='choice')kind('choiceList');if(page==='save')kind('saveSlots');
- if(page==='preferences'||page==='voiceSettings'){for(const preference of sliderPreferences)items.push({name:preferenceNames[preference],run:()=>add('preference',{preference,text:''})});kind('preferenceChoice');}
+ if(page==='preferences'||page==='voiceSettings'){for(const preference of sliderPreferences)items.push({name:preferenceInfo(project,preference).name,run:()=>add('preference',{preference,text:''})});kind('preferenceChoice');}
  if(page==='messageBox'){binding('confirmation');if(confirmation)items.push({name:'创建确认框布局',run:confirmation});}
  if(specialKind)kind(specialKind);
  const filtered=items.filter(item=>item.name.includes(query.trim()));

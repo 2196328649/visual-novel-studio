@@ -28,13 +28,16 @@ function PortraitComparison({ portrait }: { portrait: AiPortraitComparison }) {
 }
 
 export function AiAgentReview({ proposal, applied }: { proposal: AiWorkflowProposal; applied: boolean }) {
+  const tasks = proposal.tasks ?? [];
+  const incomplete = tasks.filter(task => task.status === 'incomplete'), completed = tasks.filter(task => task.status !== 'incomplete');
+  const taskList = (items: typeof tasks) => <ul>{items.map(task => <li key={task.id} data-status={task.status}>
+    <div><b>{task.status === 'incomplete' ? '未完成' : task.status === 'unchanged' ? '无需修改' : applied ? '已应用' : '已核对'}</b><span>{task.title}</span></div>
+    {task.detail && <p>{task.detail}</p>}
+  </li>)}</ul>;
   return <>
-    {!!proposal.tasks?.length && <div className="ai-task-review" aria-label="逐项结果核对">
-      <strong>逐项结果核对</strong>
-      <ul>{proposal.tasks.map(task => <li key={task.id} data-status={task.status}>
-        <div><b>{task.status === 'incomplete' ? '未完成' : task.status === 'unchanged' ? '无需修改' : applied ? '已应用' : '已核对'}</b><span>{task.title}</span></div>
-        <p>{task.detail}</p>
-      </li>)}</ul>
+    {!!tasks.length && <div className="ai-task-review" aria-label="逐项结果核对">
+      {incomplete.length > 0 && <div aria-label="未完成事项">{taskList(incomplete)}</div>}
+      {completed.length > 0 && <details className="ai-review-details"><summary>核对结果 · {completed.length} 项</summary>{taskList(completed)}</details>}
     </div>}
     {!!proposal.portraits?.length && <div className="ai-portrait-review" aria-label="立绘前后对比">
       <strong>立绘前后对比</strong>

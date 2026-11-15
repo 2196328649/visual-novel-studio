@@ -45,3 +45,21 @@ export function parseBezierPath(path: string): Bezier | undefined {
   if (values.length !== 8 || !values.every(Number.isFinite)) return;
   return [{ x: values[0], y: values[1] }, { x: values[2], y: values[3] }, { x: values[4], y: values[5] }, { x: values[6], y: values[7] }];
 }
+
+/** The story canvas uses several cubics for return wires; selection follows the whole visible path. */
+export function parseBezierSegments(path: string): Bezier[] {
+  const chunks = path.match(/[MC][^MC]*/g);
+  if (!chunks?.length || !chunks[0].startsWith('M')) return [];
+  const values = (text: string) => text.slice(1).trim().split(/[,\s]+/).filter(Boolean).map(Number);
+  const move = values(chunks[0]);
+  if (move.length !== 2 || !move.every(Number.isFinite)) return [];
+  let from: Point = { x: move[0], y: move[1] };
+  const segments: Bezier[] = [];
+  for (const chunk of chunks.slice(1)) {
+    const coords = values(chunk);
+    if (!chunk.startsWith('C') || coords.length !== 6 || !coords.every(Number.isFinite)) return [];
+    const to = { x: coords[4], y: coords[5] };
+    segments.push([from, { x: coords[0], y: coords[1] }, { x: coords[2], y: coords[3] }, to]); from = to;
+  }
+  return segments;
+}

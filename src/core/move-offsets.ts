@@ -1,3 +1,4 @@
+import { cloneData } from "./project-mutation";
 import { actionSchema, actorCurvesSchema, moveOffsetsSchema, type BlueprintNode, type StageAction } from './model';
 import { actorCurveProperties } from './actor-animation';
 import { visualCurve } from './visual-object';
@@ -31,7 +32,7 @@ export function applyMoveOffsets<T extends Pose>(pose: T, action: Show, progress
   return result;
 }
 export function setMoveOffsets(node: OffsetSource, phase: number, current: Pose, patch: Partial<Pose>) {
-  const curves = structuredClone(nodeMoveOffsets(node) ?? {});
+  const curves = cloneData(nodeMoveOffsets(node) ?? {});
   for (const property of actorCurveProperties) {
     const value = patch[property]; if (value === undefined || !Number.isFinite(value)) continue;
     const offset = visualCurve({ curves }, property, phase, 0) + value - current[property];
@@ -88,7 +89,7 @@ export function setAfterOffsetCurve(node: OffsetSource, property: typeof actorCu
 }
 export function setAfterOffsets(node: OffsetSource, seconds: number, current: Pose, patch: Partial<Pose>) {
   if (!Number.isFinite(seconds) || seconds < 0) throw new Error('后续关键帧时间必须是有限的非负数。');
-  const draft = structuredClone(node), oldDuration = afterOffsetDuration(nodeAfterOffsets(node));
+  const draft = cloneData(node), oldDuration = afterOffsetDuration(nodeAfterOffsets(node));
   for (const property of actorCurveProperties) {
     const value = patch[property]; if (value === undefined || !Number.isFinite(value)) continue;
     const curves = nodeAfterOffsets(draft), frames = curves?.[property]?.map(frame => ({ ...frame })) ?? [{ at: 0, value: 0, easing: 'linear' as const }];

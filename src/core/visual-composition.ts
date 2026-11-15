@@ -1,3 +1,4 @@
+import { cloneData } from "./project-mutation";
 import { projectGraphs } from './project-resources';
 import { actionSchema, type Project, type VisualObject } from './model';
 import { applyVisualInputs, createVisualObject, retimeVisualObject, visualInputFields } from './visual-object';
@@ -44,7 +45,7 @@ function derivedId(instanceId: string, sourceId: string) {
 }
 
 export function instantiateVisualComposition(project: Pick<Project, 'blueprints' | 'timelinePresets'>, id: string, instanceId: string): VisualObject {
-  const root = structuredClone(compositionResourceRoot(project, id)), ids = new Map<string, string>();
+  const root = cloneData(compositionResourceRoot(project, id)), ids = new Map<string, string>();
   const identify = (object: VisualObject) => { ids.set(object.instanceId, derivedId(instanceId, object.instanceId)); object.children?.forEach(identify); };
   identify(root);
   const renew = (object: VisualObject) => {
@@ -61,7 +62,7 @@ export function instantiateVisualComposition(project: Pick<Project, 'blueprints'
 
 /** Expand resources at playback/export, so instances follow edits without shared identities. */
 export function materializeVisualCompositions(project: Pick<Project, 'blueprints' | 'timelinePresets'>, root: VisualObject, stack: string[] = []): VisualObject {
-  let result = structuredClone(root);
+  let result = cloneData(root);
   if (root.compositionId) {
     if (stack.includes(root.compositionId) || stack.length >= 16) throw new Error('组合资源不能循环嵌套，最多嵌套 16 层。');
     const source = instantiateVisualComposition(project, root.compositionId, root.instanceId);

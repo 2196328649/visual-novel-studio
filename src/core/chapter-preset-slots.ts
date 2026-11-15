@@ -1,3 +1,4 @@
+import { cloneData } from "./project-mutation";
 import { projectGraphs } from './project-resources';
 import { type Project, type BlueprintGraph, type VisualObject } from './model';
 import { blueprintNodeDefaults, callablePins, connectBlueprintPins, synchronizeBlueprintSignatures } from './blueprint';
@@ -53,9 +54,9 @@ export function upgradeChapterPresetSlots(project: Project): boolean {
     }
     for (const pin of graph.exposedInputs) {
       if (!owner.exposedInputs.some(p => p.id === pin.id)) {
-        owner.exposedInputs.push(structuredClone(pin));
+        owner.exposedInputs.push(cloneData(pin));
         const read = blueprintNodeDefaults('getInput'); read.name = '输入 · ' + pin.name; read.properties.inputId = pin.id; read.pins[0].dataType = pin.dataType;
-        read.x = 40; read.y = 230 + (owner.exposedInputs.length - 1) * 140;
+        read.x = 40; read.y = 230 + (owner.exposedInputs.length - 1) * 56;
         owner.nodes.push(read); call!.pins = callablePins(graph);
         connectBlueprintPins(owner, read.id, 'value', call!.id, 'arg_' + pin.id);
       }

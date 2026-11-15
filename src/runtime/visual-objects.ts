@@ -1,8 +1,13 @@
 import { chapterSource } from '../core/chapter';
 import { visualTransitionsRuntime } from './visual-transitions';
+import { textEasings, textOrders } from '../core/model';
+import { entranceAnimations, exitAnimations } from '../core/text-animation';
+import { defaultEntranceTime, defaultExitTime, defaultExitTotal, defaultLoopSpeed, defaultLoopStrength } from '../core/text-presentation';
+import { pythonLiteral } from './literals';
 
 export const visualObjectRuntime = `
 default vn_chapter_visual_tags = []
+default vn_flow_retired_visual_media = []
 
 init python:
     import math as vn_visual_math
@@ -409,6 +414,86 @@ init python:
         t = min(1.0, max(0.0, (time - d["start"]) / (d["end"] - d["start"]))) if d["end"] > d["start"] else float(time >= d["start"])
         return vn_visual_curve(data, "dissolveStrength", time, d["from"] + (d["to"] - d["from"]) * t)
 
+    class VnClipText(VnTimedText):
+        # A clip's words run on their own clock: the clip's parent may be rebuilt every frame.
+        vn_reveal_timing = True
+
+        def __init__(self, text, vn_clock=None, **kwargs):
+            self.vn_clock = vn_clock if vn_clock is not None else {}
+            super(VnClipText, self).__init__(text, **kwargs)
+
+        def render(self, width, height, st, at):
+            clock = getattr(self, "vn_clock", None)
+            if clock is None:
+                # Save files from before connection transitions used this
+                # scalar clock. Keep the loaded text displayable compatible.
+                clock = self.vn_clock = dict(started=getattr(self, "vn_started", None))
+            now = renpy.display.interface.frame_time
+            if clock.get("frozen") is not None:
+                elapsed = clock["frozen"]
+            elif clock.get("holding"):
+                elapsed = 0.0
+            else:
+                if clock.get("started") is None:
+                    clock["started"] = now
+                elapsed = max(0.0, now - clock["started"])
+            return super(VnClipText, self).render(width, height, elapsed, at)
+
+    vn_text_anim_tables = ${pythonLiteral({ entrance: entranceAnimations, exit: exitAnimations, entranceTime: defaultEntranceTime, exitTotal: defaultExitTotal, exitTime: defaultExitTime, easings: textEasings, orders: textOrders, strength: defaultLoopStrength, speed: defaultLoopSpeed })}
+
+    def vn_text_anim_spec(table, name, own, seconds):
+        full = dict(x=0.0, y=0.0, scale=1.0, flip=False, rotation=0.0, opacity=0.0, easing="linear", order="forward")
+        full.update(vn_text_anim_tables[table][name])
+        full.update({key: value for key, value in (own or {}).items() if value is not None})
+        return ",".join(str(value) for value in (full["x"], full["y"], full["scale"] * (-1 if full["flip"] else 1), full["scale"], vn_visual_math.radians(full["rotation"]), full["opacity"], seconds, vn_text_anim_tables["easings"].index(full["easing"]), vn_text_anim_tables["orders"].index(full["order"])))
+
+    def vn_visual_text_motion(data):
+        motion = data.get("textMotion")
+        count = len([character for character in data["text"] if character != "\\n"])
+        if not motion or not count:
+            return {"slow_cps": 0}
+        entrance, leave = motion.get("entrance", "none"), motion.get("exit", "none")
+        seconds = motion.get("entranceTime", vn_text_anim_tables["entranceTime"][entrance]) if entrance != "none" else 0.0
+        speed = motion.get("speed") or "player"
+        if speed == "duration" and motion.get("duration"):
+            seconds = min(seconds, motion["duration"] / 2.0)
+            # With no pauses or local spans, ordered starts are fractions of
+            # the glyph spread. Solve the same constraints as textRevealPlan.
+            order = vn_text_anim_tables["orders"].index((motion.get("entranceAnimation") or {}).get("order", "forward"))
+            glyph_indexes, glyph_index, has_text = [], 0, False
+            for character in data["text"]:
+                if character == "\\n":
+                    if not has_text:
+                        glyph_index += 1
+                    has_text = False
+                else:
+                    glyph_indexes.append(glyph_index)
+                    glyph_index += 1
+                    has_text = True
+            ratio = max(vn_text_order_position(order, (index + 1.0) / count, glyph) for index, glyph in enumerate(glyph_indexes)) if entrance != "none" else 0.0
+            unit = min(motion["duration"] / count, (motion["duration"] - seconds) / (count * ratio)) if ratio else motion["duration"] / count
+            cps = 1.0 / unit
+        elif speed == "cps" and motion.get("cps"):
+            cps = motion["cps"]
+        else:
+            cps = 0 if speed == "instant" else renpy.game.preferences.text_cps
+        glyphs = count / float(cps) if cps else 0.0
+        parts = []
+        if entrance != "none" and cps:
+            parts.append(vn_text_anim(vn_text_anim_spec("entrance", entrance, motion.get("entranceAnimation"), seconds), glyphs, glyphs))
+        elif cps:
+            parts.append("vn_typewriter")
+        loop = motion.get("loop", "none")
+        if loop != "none":
+            parts.append(vn_text_shader(dict(loop=loop, loopStrength=motion.get("loopStrength", vn_text_anim_tables["strength"][loop]), loopSpeed=motion.get("loopSpeed", vn_text_anim_tables["speed"][loop])), cps).replace("vn_typewriter|", ""))
+        if leave != "none" and not data.get("persistent"):
+            total = motion.get("exitTotal", vn_text_anim_tables["exitTotal"])
+            each = min(motion.get("exitTime", vn_text_anim_tables["exitTime"]), total)
+            parts.append(vn_text_anim(vn_text_anim_spec("exit", leave, motion.get("exitAnimation"), each), glyphs or count / 1000.0, total - each, max(0.0, data["duration"] - total), "vn_anim_out"))
+        if not parts:
+            return {"slow_cps": 0}
+        return {"slow": True, "slow_cps": cps or 1000.0, "textshader": "|".join(parts), "vn_text_class": True}
+
     def vn_visual_text(data, width, height, color=None):
         effects = {key: value for key, value in (data.get("textEffects") or {}).items() if value is not None}
         outlines = []
@@ -430,7 +515,11 @@ init python:
             outlines.append((0, effect_color("shadowColor", "shadowOpacity", "#000000"), effects.get("shadowX", 0), effects.get("shadowY", 0)))
         horizontal = {"left": 0.0, "right": 1.0}.get(data.get("textAlign"), .5)
         vertical = {"top": 0.0, "bottom": 1.0}.get(data.get("textVerticalAlign"), .5)
-        text = Text(data["text"].replace("{", "{{"), substitute=False, font=data.get("fontPath", "fonts/SourceHanSansLite.ttf"), size=data["fontSize"], italic=data.get("textItalic", False), color=color or data["color"], text_align=horizontal, xsize=width, slow_cps=0, outlines=outlines)
+        motion_args = vn_visual_text_motion(data)
+        text_class = VnClipText if motion_args.pop("vn_text_class", False) else Text
+        if text_class is VnClipText:
+            motion_args["vn_clock"] = data.setdefault("_vn_text_clock", {})
+        text = text_class(data["text"].replace("{", "{{"), substitute=False, font=data.get("fontPath", "fonts/SourceHanSansLite.ttf"), size=data["fontSize"], italic=data.get("textItalic", False), color=color or data["color"], text_align=horizontal, xsize=width, outlines=outlines, **motion_args)
         box = Fixed(Transform(text, align=(horizontal, vertical)), xysize=(width, height))
         box = Transform(box, crop=(0, 0, width, height))
         clip = data.get("textClip")
@@ -443,16 +532,41 @@ init python:
             box = AlphaMask(box, mask)
         return box
 
-    def vn_stop_visual_media(data):
+    def vn_stop_visual_media(data, force=False):
+        global vn_flow_retired_visual_media
+        retiring = not force and not data.get("_vn_flow_hold") and (data.get("_vn_flow_retired") or vn_flow_transition_holding() or vn_game_flow_source_holds(data))
+        if retiring and "_vn_started" in data and data.get("_vn_flow_frozen_age") is None:
+            vn_visual_freeze_frame(data, vn_visual_age(data))
         movie = data.get("_vn_movie")
         if movie is not None and not data.get("_vn_media_stopped"):
-            data["_vn_media_stopped"] = True
-            movie.stop()
-            # Rebuild Ren'Py's visible-movie registry as well. Otherwise a
-            # pending show event can restart the just-stopped looping movie.
-            renpy.restart_interaction()
+            if retiring:
+                # Native transitions still render the source displayable. A
+                # stopped Movie loses its texture, so keep this retired source
+                # paused until the transition releases it, including scene clear.
+                data.pop("_vn_flow_movie_restart", None)
+                if not data.get("_vn_flow_retired"):
+                    data["_vn_flow_retired"] = True
+                    vn_flow_retired_visual_media = vn_flow_retired_visual_media + [data]
+                    movie.play_callback = vn_visual_functools.partial(vn_visual_movie_start, data=data)
+                movie.ensure_channels()
+                renpy.music.set_pause(True, channel=movie.channel)
+            else:
+                data["_vn_media_stopped"] = True
+                data.pop("_vn_flow_retired", None)
+                data.pop("_vn_flow_movie_restart", None)
+                movie.stop()
+                # Rebuild Ren'Py's visible-movie registry as well. Otherwise a
+                # pending show event can restart the just-stopped looping movie.
+                renpy.restart_interaction()
         for child in data.get("children") or []:
-            vn_stop_visual_media(child)
+            vn_stop_visual_media(child, force)
+
+    def vn_release_flow_source_media():
+        global vn_flow_retired_visual_media
+        retired = vn_flow_retired_visual_media
+        vn_flow_retired_visual_media = []
+        for data in retired:
+            vn_stop_visual_media(data, force=True)
 
     def vn_visual_artwork_key(data, width, height):
         content = data["content"]
@@ -461,10 +575,68 @@ init python:
         if content == "image":
             return (content, width, height, data.get("path"), data.get("imageFit"), data.get("imageAlign"))
         if content == "text":
-            return (content, width, height, data["text"], data.get("fontPath"), data["fontSize"], data["color"], data.get("textAlign"), data.get("textVerticalAlign"), data.get("textItalic", False), tuple(sorted((data.get("textEffects") or {}).items())), tuple(sorted((data.get("textClip") or {}).items())))
+            return (content, width, height, data["text"], data.get("fontPath"), data["fontSize"], data["color"], data.get("textAlign"), data.get("textVerticalAlign"), data.get("textItalic", False), tuple(sorted((data.get("textEffects") or {}).items())), tuple(sorted((data.get("textClip") or {}).items())), repr(data.get("textMotion")))
         return None
 
+    def vn_visual_resume_flow_movie(data):
+        movie = data.get("_vn_movie")
+        data.pop("_vn_flow_movie_paused", None)
+        if movie is None or movie._play is None or data.get("_vn_media_stopped") or data.get("_vn_flow_retired"):
+            data.pop("_vn_flow_movie_restart", None)
+            return
+        movie.ensure_channels()
+        # Decoding a first texture can advance the media clock before it is
+        # paused, especially on a slow frame. Start the authored interval again
+        # at release; the same Movie/channel retains its decoded texture until
+        # the restarted decoder supplies a frame. Never save a native texture.
+        data["_vn_flow_movie_restart"] = (movie, movie.channel, movie._play)
+        renpy.music.play(movie._play, channel=movie.channel, loop=movie.loop, fadeout=0)
+
+    def vn_visual_movie_start(old, new, data):
+        # Movie starts at Ren'Py's render boundary. Preserve its decoded first
+        # frame during the connection effect and resume this channel only.
+        restarted = data.pop("_vn_flow_movie_restart", None)
+        if data.get("_vn_media_stopped"):
+            return
+        if data.get("_vn_flow_retired"):
+            renpy.music.set_pause(True, channel=new.channel)
+            return
+        # music.play refreshes Ren'Py's Movie registry. Its ensuing callback is
+        # an acknowledgement of that same restart, not a second playback.
+        if restarted is not None and restarted[0] is new and restarted[1] == new.channel and restarted[2] == new._play and renpy.music.get_playing(channel=new.channel) == new._play:
+            renpy.music.set_pause(False, channel=new.channel)
+            return
+        if data.get("_vn_flow_hold") and data.get("_vn_flow_movie_paused") and renpy.music.get_playing(channel=new.channel):
+            renpy.music.set_pause(True, channel=new.channel)
+            return
+        data.pop("_vn_flow_movie_paused", None)
+        renpy.music.play(new._play, channel=new.channel, loop=new.loop, relative_volume=0.0 if data.get("_vn_game_flow_movie") and data.get("_vn_flow_hold") else 1.0)
+
+    class VNFlowMovieFrame(renpy.Displayable):
+        """Pause a new Movie after it has actually decoded its first frame."""
+        def __init__(self, movie, data):
+            super(VNFlowMovieFrame, self).__init__()
+            self.movie, self.data = movie, data
+
+        def visit(self):
+            return [self.movie]
+
+        def render(self, width, height, st, at):
+            result = renpy.render(self.movie, width, height, st, at)
+            if self.data.get("_vn_flow_hold") and not self.data.get("_vn_flow_movie_paused") and result.width > 0 and result.height > 0 and renpy.music.get_playing(channel=self.movie.channel):
+                # Starting already paused prevents the decoder from acquiring
+                # any texture. This gate uses the normal render cycle, without
+                # adding an interaction or caching native textures in save data.
+                renpy.music.set_pause(True, channel=self.movie.channel)
+                self.data["_vn_flow_movie_paused"] = True
+            renpy.redraw(self, 0)
+            return result
+
     def vn_visual_display(st, at, data, viewport=None):
+        if data.get("_vn_flow_frozen_age") is not None:
+            st = data["_vn_flow_frozen_age"]
+        elif data.get("_vn_flow_hold"):
+            st = 0.0
         if not data.get("persistent") and (data.get("_vn_expired") or st >= data["duration"]):
             # Interaction restarts can move the sampled render clock back by
             # one frame. Once expired, never recreate/restart the Movie.
@@ -473,8 +645,12 @@ init python:
             # interaction. Ren'Py only clears movie registrations at the next
             # interaction, so explicitly stop the decoder at the clip end.
             vn_stop_visual_media(data)
-            if not (vn_performance_active and data.get("_vn_performance_end", -1) >= vn_performance_until - 0.03 and (vn_performance_settings.get("transition") or {}).get("mode") in ("color", "dissolve")):
+            if not vn_visual_holds_final(data):
                 return Null(), None
+            # A lifecycle source's deadline can still grow at the next authored
+            # wait. Its tail hold stays conditional, unlike a finished performance.
+            if not vn_game_flow_source_holds(data):
+                data["_vn_hold_final_frame"] = True
             st = max(0.0, data["duration"] - 0.00001)
         pose = vn_visual_pose(data, st)
         duration = float("inf") if data.get("persistent") else data["duration"]
@@ -495,7 +671,7 @@ init python:
             child = Fixed(xysize=(width, height))
             for item in sorted(data.get("children") or [], key=lambda item: item["layer"]):
                 elapsed = st - item.get("startAt", 0)
-                if elapsed >= 0 and (item.get("persistent") or elapsed < item["duration"]):
+                if elapsed >= 0 and (item.get("persistent") or elapsed < item["duration"] or vn_visual_holds_final(item)):
                     display, delay = vn_visual_display(elapsed, elapsed, item, (width, height))
                     child.add(display)
                 elif elapsed >= item["duration"]:
@@ -517,12 +693,14 @@ init python:
             # its decoder whenever replay_movie_sprites is enabled.
             key = (source, width, height, data.get("loop", False))
             if data.get("_vn_movie_key") != key:
-                data["_vn_movie"] = Movie(play=source, loop=data.get("loop", False))
+                data["_vn_movie"] = Movie(play=source, loop=data.get("loop", False), keep_last_frame=bool(data.get("_vn_keep_final_frame")), play_callback=vn_visual_functools.partial(vn_visual_movie_start, data=data) if data.get("_vn_flow_hold") else None)
+                data["_vn_movie_frame"] = VNFlowMovieFrame(data["_vn_movie"], data) if data.get("_vn_flow_hold") else data["_vn_movie"]
                 data["_vn_movie_key"] = key
-            child = data["_vn_movie"]
-            child.ensure_channels()
-            volume = 0.0 if data.get("muted", False) else max(0.0, min(1.0, data.get("volume", 1.0))) * vn_visual_media_gain(data, st)
-            renpy.music.set_volume(volume, channel=child.channel)
+            movie = data["_vn_movie"]
+            movie.ensure_channels()
+            volume = 0.0 if data.get("muted", False) or data.get("_vn_flow_hold") else max(0.0, min(1.0, data.get("volume", 1.0))) * vn_visual_media_gain(data, st)
+            renpy.music.set_volume(volume, channel=movie.channel)
+            child = data.get("_vn_movie_frame", movie)
             fitted = Transform(child, xysize=(width, height), fit=None if fit == "stretch" else fit)
             child = Transform(Fixed(Transform(fitted, align=(.5, .5)), xysize=(width, height)), crop=(0, 0, width, height))
         elif data["content"] == "text":
@@ -574,13 +752,16 @@ init python:
             if tag not in vn_chapter_visual_tags:
                 vn_chapter_visual_tags = vn_chapter_visual_tags + [tag]
         data = vn_prepare_visual(data)
+        data["_vn_task"] = vn_bp_task
+        keep_final = bool(vn_performance_active and (vn_performance_keep_final_frame or (vn_performance_settings.get("transition") or {}).get("mode") in ("color", "dissolve")))
+        vn_visual_performance_frame(data, vn_stage_clock(), keep_final)
+        vn_game_flow_source_visual(data)
         if data.get("persistent") and data.get("lifetime") != "line":
             vn_performance_visual_tags = [item for item in vn_performance_visual_tags if item != tag]
         elif vn_performance_active:
             if tag not in vn_performance_visual_tags:
                 vn_performance_visual_tags = vn_performance_visual_tags + [tag]
             if not data.get("persistent"):
-                data["_vn_performance_end"] = vn_bp_clock() + data["duration"]
                 vn_performance_extend(data["duration"])
         seconds = vn_install_visual(data)
         return data["duration"] if data.get("wait") and not data.get("persistent") else seconds if data.get("transitionWait") else 0.0

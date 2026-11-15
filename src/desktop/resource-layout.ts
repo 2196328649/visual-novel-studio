@@ -28,11 +28,13 @@ export async function prepareResourceLayout(root: string, project: Project) {
   const destinations = new Map<string, string>(), hashes = new Map<string, Promise<string>>();
   const hash = (file: string) => { let result = hashes.get(key(file)); if (!result) { result = digest(file); hashes.set(key(file), result); } return result; };
   const realRoot = await fs.realpath(root);
+  let hasPathAliases = false;
   const checkReal = async (file: string) => {
     let existing = file;
     while (!await stat(existing)) { const parent = path.dirname(existing); if (parent === existing) throw new Error('素材目录无效。'); existing = parent; }
     const real = await fs.realpath(existing);
     if (key(real) !== key(realRoot) && !key(real).startsWith(key(realRoot + path.sep))) throw new Error('素材路径经过项目外的链接：' + file);
+    if (key(real) !== key(path.resolve(realRoot, path.relative(root, existing)))) hasPathAliases = true;
   };
   for (const asset of project.assets) {
     const folder = project.contentBrowser?.assignments['asset:' + asset.id];
@@ -71,12 +73,32 @@ export async function prepareResourceLayout(root: string, project: Project) {
   }
   const next = relocateProjectAssets(project, relocations);
   // Preflight above must finish before any asset is written.
-  for (const plan of plans) {
-    await fs.mkdir(path.dirname(plan.destination), { recursive: true }); await checkReal(plan.destination);
-    try { await fs.copyFile(plan.source, plan.destination, fs.constants.COPYFILE_EXCL); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
-    if (await digest(plan.destination) !== plan.hash) throw new Error('素材复制校验失败：' + plan.to);
-  }
+  // Shared destinations must finish copying before they are verified. Otherwise
+  // another copy can see EEXIST while the first one is still writing that file.
+  const copies = new Map<string, (typeof plans)[number]>();
+  for (const plan of plans) if (!copies.has(key(plan.destination))) copies.set(key(plan.destination), plan);
+  const copyPlans = [...copies.values()];
+  let copyIndex = 0, copyFailed = false;
+  let copyError: unknown;
+  // Internal directory aliases can give one physical destination several names.
+  // Preserve serial behavior in those projects rather than race their writes.
+  await Promise.all(Array.from({ length: Math.min(hasPathAliases ? 1 : 4, copyPlans.length) }, async () => {
+    while (!copyFailed) {
+      const plan = copyPlans[copyIndex++];
+      if (!plan) return;
+      try {
+        await fs.mkdir(path.dirname(plan.destination), { recursive: true }); await checkReal(plan.destination);
+        try { await fs.copyFile(plan.source, plan.destination, fs.constants.COPYFILE_EXCL); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+        if (await digest(plan.destination) !== plan.hash) throw new Error('素材复制校验失败：' + plan.to);
+      } catch (error) {
+        if (!copyFailed) { copyFailed = true; copyError = error; }
+      }
+    }
+  }));
+  // All in-flight copies have settled before the caller may recover or retry.
+  if (copyFailed) throw copyError;
+  const sourceHashes = new Map(plans.map(plan => [plan.source, plan.hash]));
   if (plans.length) {
     const ledger = readResourcePaths(root);
     ledger.assets ??= {};
@@ -103,12 +125,12 @@ export async function prepareResourceLayout(root: string, project: Project) {
       try { await checkReal(source); await checkReal(destination); await fs.rename(source, destination); }
       catch { retained.push(relativeResourcePath(root, source)); }
     }
-    for (const source of new Set(plans.map(plan => plan.source))) {
+    for (const [source, expectedHash] of sourceHashes) {
       if (live.has(key(source))) continue;
       try {
         await checkReal(source);
         // If another program edited it during save, preserve that new content.
-        if (await digest(source) !== plans.find(plan => plan.source === source)!.hash) { retained.push(relativeResourcePath(root, source)); continue; }
+        if (await digest(source) !== expectedHash) { retained.push(relativeResourcePath(root, source)); continue; }
         await fs.unlink(source);
         const assetRoot = containedPath(root, project.resourceSettings?.directory ?? 'assets');
         let parent = path.dirname(source);

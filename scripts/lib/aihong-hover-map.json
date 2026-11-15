@@ -38,5 +38,7 @@
   "ai_settings_buttonendgame": "ai_ui_hover",
   "ai_settings_buttonbacktitle": "ai_ui_hover",
   "ai_settings_characters": "ai_ui_hover",
-  "ai_voice_close": "ai_ui_hover"
+  "ai_voice_close": "ai_ui_hover",
+  "ai_flowchart_items": "ai_ui_hover_highlight",
+  "ai_flowchart_back": "ai_ui_hover_highlight"
 }

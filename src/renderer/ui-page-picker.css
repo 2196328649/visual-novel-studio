@@ -1,0 +1,14 @@
+.ui-page-library h4 { display: flex; align-items: center; gap: 6px; margin: 12px 0 6px; font-size: 12px; }
+.ui-page-library section + section { margin-top: 14px; padding-top: 4px; border-top: 1px solid var(--editor-border); }
+.ui-page-library-row, .ui-page-library-entry { display: flex; align-items: center; gap: 12px; padding: 8px 0; width: 100%; min-width: 0; }
+.ui-page-library-entry { text-align: left; border: 0; background: transparent; padding: 8px 6px; }
+.ui-page-library-entry:hover { background: var(--editor-selection); }
+.ui-page-library-row > span, .ui-page-library-entry > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ui-page-library :is(.small-button, svg) { flex: none; }
+.ui-page-library small { display: block; font-size: 10px; color: var(--editor-muted); margin-top: 3px; line-height: 1.5; }
+.ui-page-usage-hint { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; margin: 0 0 12px; padding: 7px 9px; text-align: left; font-size: 11px; background: transparent; }
+.ui-page-usage-hint span { flex: 1; min-width: 0; }
+.ui-page-usage-hint svg { flex: none; }
+.ui-legacy-page-note { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin: 0; padding: 8px 12px; font-size: 11px; color: var(--editor-muted); background: var(--editor-panel); border-bottom: 1px solid var(--editor-border); }
+.ui-legacy-page-note p { flex: 1; min-width: 180px; margin: 0; }
+.ui-legacy-page-note button { font-size: 11px; }

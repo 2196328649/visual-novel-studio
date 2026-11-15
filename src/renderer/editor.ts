@@ -14,8 +14,10 @@ import {
   type StageAction,
 } from "../core/model";
 import { expandStageAction } from "../core/text-script";
-import { shareProjectBranches } from "../core/project-history";
+import { shareProjectBranches, singleProjectChange } from "../core/project-history";
+import { mutateProject } from '../core/project-mutation';
 import { relocateProjectAssets, type AssetRelocation } from '../core/asset-relocation';
+import { pruneStoryGroups } from '../core/story-groups';
 
 export type Commit = (label: string, edit: (project: Project) => void, options?: { separate?: boolean }) => void;
 export type EditorView = "script" | "text" | "blueprint" | "ui" | "flowchart";
@@ -48,7 +50,7 @@ export const actionNames: Record<StageAction["kind"], string> = {
   pause: "等待",
   hideInterface: "隐藏界面",
   showInterface: "显示界面",
-  startDialogue: "播放台词演出",
+  startDialogue: "开始台词演出",
   animate: "角色动画",
   camera: "镜头",
   shake: "震动",
@@ -57,6 +59,11 @@ export const actionNames: Record<StageAction["kind"], string> = {
   chapter: "章节进入演出",
   characterFeature: "角色功能",
 };
+
+// Legacy actions keep their labels and editors for existing scripts, but must
+// not reappear in creation menus just because an old project still defines them.
+export const authorableActions = (Object.entries(actionNames) as [StageAction['kind'], string][])
+  .filter(([kind]) => kind !== 'characterFeature');
 
 export function useProjectHistory(initial?: Project) {
   const [project, setProject] = useState<Project>(
@@ -67,16 +74,19 @@ export function useProjectHistory(initial?: Project) {
   const past = useRef<Project[]>([]);
   const future = useRef<Project[]>([]);
   const current = useRef(project);
-  const lastEdit = useRef({ label: "", time: 0 });
+  const lastEdit = useRef<{ label: string; time: number; field?: string }>({ label: "", time: 0 });
   const accept = useCallback((label: string, prepared: Project, options?: { separate?: boolean }) => {
     const next = shareProjectBranches(current.current, prepared);
     if (next === current.current) return current.current;
     const now = Date.now();
-    if (options?.separate || lastEdit.current.label !== label || now - lastEdit.current.time > 700) {
+    // Typing into one field is one undo step; a quick edit of another field
+    // with the same label is not. Multi-field commits (drags) keep merging.
+    const field = singleProjectChange(current.current, next);
+    if (options?.separate || lastEdit.current.label !== label || lastEdit.current.field !== field || now - lastEdit.current.time > 700) {
       past.current.push(current.current);
       if (past.current.length > 100) past.current.shift();
     }
-    lastEdit.current = { label: options?.separate ? '' : label, time: now };
+    lastEdit.current = { label: options?.separate ? '' : label, time: now, field };
     future.current = [];
     current.current = next;
     setProject(next);
@@ -84,9 +94,7 @@ export function useProjectHistory(initial?: Project) {
     return next;
   }, []);
   const commit = useCallback((label: string, edit: (draft: Project, before: Project) => void, options?: { separate?: boolean }) => {
-    const draft = structuredClone(current.current);
-    edit(draft, current.current);
-    return accept(label, draft, options);
+    return accept(label, mutateProject(current.current, edit), options);
   }, [accept]);
   const commitPrepared = useCallback((label: string, prepare: (before: Project) => Project | undefined, options?: { separate?: boolean }) => {
     const prepared = prepare(current.current);
@@ -142,6 +150,7 @@ export function useProjectHistory(initial?: Project) {
   }, []);
   return {
     project,
+    getProject: () => current.current,
     commit,
     commitPrepared,
     commitText,
@@ -175,6 +184,7 @@ export function removeNodes(project: Project, ids: string[]) {
       }
       return next;
     });
+  pruneStoryGroups(project);
 }
 
 export function findLine(

@@ -1,0 +1,9 @@
+.ui-flow-preview-controls { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ui-flow-preview-controls p { margin: 0; }
+.ui-flow-preview-controls > label { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.ui-flow-preview-controls > label > span { flex: 0 0 64px; }
+.ui-flow-preview-controls > label > select { flex: 1 1 170px; width: 0; min-width: min(170px, 100%); max-width: 100%; }
+.ui-flow-preview-controls small { line-height: 1.5; color: var(--muted); }
+.ui-flow-preview-controls > button { align-self: flex-start; }
+.ui-flow-preview-state { max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--muted); }
+.ui-layout-tools[data-ui-flow-tools] .ui-layout-tool-row > strong { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; font-size: 12px; }

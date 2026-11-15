@@ -23,8 +23,10 @@ test('the following line inherits the stage after all explicit waits, not the ea
 test('dialogue marker roundtrips through text and timeline blueprints', () => {
  const p=createProject(), n=p.nodes.find(n=>n.kind==='passage')!;
  n.lines=[{id:'a',text:'测试',actions:[{kind:'pause',seconds:1},{kind:'startDialogue'},{kind:'pause',seconds:2}]}];
+ assert.deepEqual(textCommandAction(p,'@开始台词演出'),{kind:'startDialogue'});
+ // Scripts written with the earlier name keep working.
  assert.deepEqual(textCommandAction(p,'@播放台词演出'),{kind:'startDialogue'});
- assert.equal(actionText(p,{kind:'startDialogue'}),'@播放台词演出');
+ assert.equal(actionText(p,{kind:'startDialogue'}),'@开始台词演出');
  const parsed=applyTextScript(p,projectToText(p)); assert.deepEqual(parsed.issues,[]);
  const graph=blueprintFromPerformance(p,n.lines[0].actions); p.blueprints.push(graph);
  const timeline=performanceTimeline(p,graph); assert.equal(timeline.reason,undefined); assert.equal(timeline.clips.find(c=>graph.nodes.find(n=>n.id===c.nodeId)?.type==='startDialogue')?.at,1);

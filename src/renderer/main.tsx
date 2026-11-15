@@ -11,6 +11,8 @@ import './story-workspace.css';
 import './editor-themes.css';
 import './ui-preview-window.css';
 import './editor-controls.css';
+import './blueprint-toolbar.css';
+import './blueprint-nodes.css';
 import { initializeEditorTheme } from './editor-theme';
 
 initializeEditorTheme();

@@ -1,4 +1,4 @@
-import { actorInstanceIds, actorKey, actorReference } from '../core/actor-instance';
+import { actorInstanceLabel, actorKey, actorReference, nextActorInstanceId } from '../core/actor-instance';
 import { ActorLifetimeSelect } from './ActorInstanceFields';
 import { CharacterPresetSelect } from './CharacterPresets';
 import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type PointerEvent } from 'react';
@@ -71,14 +71,12 @@ export function useStageEditing({ project, selection, state, commit, enabled, mi
   const addActor = (id: string) => {
     const character = effectiveCharacter(project, id);
     if (!character?.expressions[0]) return;
-    let instanceId: string | undefined;
-    if ([...state.actors.values()].some(actor => actor.characterId === id)) {
-      const used = new Set(actorInstanceIds(project)); let number = 1;
-      while (used.has(`actor_${number}`)) number++;
-      instanceId = `actor_${number}`;
-    }
-    setActorId(actorKey({ characterId: id, instanceId }));
-    setAction({ kind: 'show', instanceId, lifetime: 'line', characterId: id, expressionId: character.defaultExpressionId ?? character.expressions[0].id, presetId: 'default', x: .5, y: 1, scale: 1, layer: 10, transition: 'dissolve' });
+    try {
+      const instanceId = nextActorInstanceId(project, id, state.actors.values());
+      setActorId(actorKey({ characterId: id, instanceId }));
+      setAction({ kind: 'show', instanceId, lifetime: 'line', characterId: id, expressionId: character.defaultExpressionId ?? character.expressions[0].id, presetId: 'default', x: .5, y: 1, scale: 1, layer: 10, transition: 'dissolve' });
+      setEditError('');
+    } catch (error) { setEditError(error instanceof Error ? error.message : String(error)); }
   };
   const actorEvents = (actor: PreviewActor) => ({
     onPointerDown: (event: PointerEvent<HTMLDivElement>) => {
@@ -144,18 +142,18 @@ export function StageTools({ project, selection, state, controls, assetUrl }: {
       <label><UserRound size={14} /><select aria-label="舞台添加角色" value="" onChange={event => controls.addActor(event.target.value)}><option value="">添加角色</option>{project.characters.filter(character => !!effectiveCharacter(project, character.id)?.expressions.length).map(character => <option key={character.id} value={character.id}>{character.name}</option>)}</select></label>
     </div>
     {controls.editError && <p role="alert">{controls.editError}</p>}
-    <div className="preview-actor-heading"><Move size={14} /><select aria-label="舞台选择角色" value={actor ? actorKey(actor) : ''} onChange={event => controls.setActorId(event.target.value)}><option value="" disabled>{state.actors.size ? '选择角色' : '画面中暂无角色'}</option>{[...state.actors.values()].sort((a, b) => b.layer - a.layer).map(actor => <option key={actorKey(actor)} value={actorKey(actor)}>{project.characters.find(character => character.id === actor.characterId)?.name ?? '角色'}{actor.instanceId ? ` [${actor.instanceId}]` : ''} · 图层 {actor.layer}</option>)}</select><span className="spacer" />{actor && <button className="small-button" onClick={() => controls.setAction({ kind: 'hide', ...actorReference(actor), transition: 'dissolve' })}>隐藏角色</button>}</div>
+    <div className="preview-actor-heading"><Move size={14} /><select aria-label="舞台选择角色" value={actor ? actorKey(actor) : ''} onChange={event => controls.setActorId(event.target.value)}><option value="" disabled>{state.actors.size ? '选择角色' : '画面中暂无角色'}</option>{[...state.actors.values()].sort((a, b) => b.layer - a.layer).map(actor => <option key={actorKey(actor)} value={actorKey(actor)}>{project.characters.find(character => character.id === actor.characterId)?.name ?? '角色'} · {actorInstanceLabel(actor.instanceId)} · 图层 {actor.layer}</option>)}</select><span className="spacer" />{actor && <button className="small-button" onClick={() => controls.setAction({ kind: 'hide', ...actorReference(actor), transition: 'dissolve' })}>隐藏角色</button>}</div>
     {actor && character && <>
       <div className="preview-stage-fields">
         <Field label="舞台显示范围"><ActorLifetimeSelect label="舞台显示范围" value={actor.lifetime} onChange={lifetime => { const { rotation: _r, opacity: _o, ...show } = actor; controls.setAction({ ...show, lifetime }); }} /></Field>
-        <div className="muted">实例 ID：{actor.instanceId ?? '角色默认'}；再次添加同一角色可创建独立副本。</div>
+        <div className="muted">{actorInstanceLabel(actor.instanceId)}；再次添加同一角色会使用新的编号。</div>
         <Field label="舞台站位预设"><CharacterPresetSelect label="舞台站位预设" project={project} characterId={actor.characterId} value={actor.presetId} onChange={presetId => {
           const { rotation: _r, opacity: _o, presetId: _p, ...show } = actor;
           controls.setAction({ ...show, ...(presetId ? { presetId } : {}) });
         }} /></Field>
         <NumberField label="角色横向位置 %" value={(position?.x ?? actor.x) * 100} step={.1} onChange={x => controls.move(actorKey(actor), { x: x / 100 })} />
         <NumberField label="角色纵向位置 %" value={(position?.y ?? actor.y) * 100} step={.1} onChange={y => controls.move(actorKey(actor), { y: y / 100 })} />
-        <NumberField label="角色缩放 %" value={actor.scale * 100} min={5} max={400} onChange={scale => controls.move(actorKey(actor), { scale: scale / 100 })} />
+        <NumberField label="角色缩放 %" value={actor.scale * 100} min={1} onChange={scale => controls.move(actorKey(actor), { scale: scale / 100 })} />
         <NumberField label="角色旋转 度" value={actor.rotation} step={1} onChange={rotation => controls.move(actorKey(actor), { rotation })} />
         <NumberField label="角色不透明度 %" value={actor.opacity * 100} min={0} max={100} step={1} onChange={opacity => controls.move(actorKey(actor), { opacity: Math.max(0, Math.min(1, opacity / 100)) })} />
         <NumberField label="角色图层" value={actor.layer} min={0} max={100} onChange={layer => controls.move(actorKey(actor), { layer: Math.round(layer) })} />

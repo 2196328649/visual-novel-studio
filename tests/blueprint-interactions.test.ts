@@ -48,7 +48,7 @@ test('blueprint rename rewrites calls, including unbound text, without rewriting
   assert.deepEqual(result.issues.filter(issue => issue.severity === 'error'), []);
   assert.equal(refreshTextReferenceNames(project, '@雨幕【night_entry】'), '@镜头入场【night_entry】');
   const before = structuredClone(project);
-  for (const callName of ['背景', '背景音乐', '播放台词演出', '复用节点']) assert.throws(() => renameBlueprint(project, graph.id, { callName }), /基础指令/);
+  for (const callName of ['背景', '背景音乐', '开始台词演出', '播放台词演出', '复用节点']) assert.throws(() => renameBlueprint(project, graph.id, { callName }), /基础指令/);
   assert.deepEqual(project, before);
 });
 test('direct commands complete by Chinese initials, then provide typed named parameters', () => {
@@ -72,7 +72,7 @@ test('a callable graph builds a playable UI game with mouse, key, timer and resu
   assert.deepEqual(parsed.issues, []);
   const compiled = compileProject(project);
   assert.deepEqual(compiled.diagnostics.filter(issue => issue.severity === 'error'), []);
-  assert.match(compiled.files['game/screens.rpy'], /key "K_SPACE" action \[Function\(vn_run_blueprint/);
+  assert.match(compiled.files['game/screens.rpy'], /key "K_SPACE" action If\(_vn_interactive, Function\(vn_run_blueprint/);
   assert.match(compiled.files['game/screens.rpy'], /timer 1 repeat True action Function\(vn_run_blueprint/);
   assert.match(compiled.files['game/story.rpy'], /renpy.random.uniform/);
   assert.match(compiled.files['game/story.rpy'], /vn_ui_open_page\(/);

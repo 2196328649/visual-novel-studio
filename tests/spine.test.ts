@@ -64,9 +64,9 @@ test('component references and property types pass through reusable blueprint in
   assert.equal(connectBlueprintPins(graph, getter.id, 'value', pause.id, 'paused'), undefined);
   for (const [from, to] of [[graph.nodes[0], setter], [setter, pause], [pause, play]]) assert.equal(connectBlueprintPins(graph, from.id, from.type === 'event' ? 'exec' : 'exec_out', to.id, 'exec_in'), undefined);
   const compiled = compileProject(project); assert.deepEqual(compiled.diagnostics.filter(d => d.severity === 'error'), []);
-  assert.match(compiled.files['game/story.rpy'], /vns_spine.pause\("title_rig", vn_ui_get\("title_rig", "visible"\)\)/);
+  assert.match(compiled.files['game/story.rpy'], /vns_spine.pause\("title_rig", \(vn_ui_lifecycle_require_operation\("getUiProperty", None\), vn_ui_get\("title_rig", "visible"\)\)\[1\]\)/);
   assert.match(compiled.files['game/story.rpy'], /vns_spine.play\("title_rig", "idle", True, False\)/);
-  assert.match(compiled.files['game/screens.rpy'], /vns_spine.player\("title_rig", max\(1, int\(vn_ui_get\("title_rig", "width"\)/);
+  assert.match(compiled.files['game/screens.rpy'], /vns_spine.player\("title_rig", vn_ui_layout_size\("title_rig", "width", _vn_layout\)/);
   assert.doesNotMatch(compiled.files['game/screens.rpy'], /add Movie\(/);
   play.properties.animation = 'missing'; assert.ok(compileProject(project).diagnostics.some(d => d.nodeId === play.id && d.message.includes('没有所选动画')));
 });

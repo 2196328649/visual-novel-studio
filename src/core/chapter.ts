@@ -1,4 +1,4 @@
-import { effectiveUiTheme, type Project, type StoryNode } from './model';
+import { effectiveUiComponents, effectiveUiTheme, type Project, type StoryNode } from './model';
 import chapterSource from './chapter-source.json';
 export { chapterSource };
 
@@ -83,7 +83,7 @@ export function chapterParticleFrame(p: ReturnType<typeof chapterParticle>, time
 }
 
 export function chapterTitleRect(project: Project) {
-  const c = effectiveUiTheme(project.ui).components.find(c => c.page === 'chapterTitle' && c.kind === 'chapterTitle');
+  const c = effectiveUiComponents(project.ui).find(c => c.page === 'chapterTitle' && c.kind === 'chapterTitle');
   return c ? { x: c.x, y: c.y, width: c.width, height: c.height } : { x: .1, y: .4, width: .8, height: .16 };
 }
 

@@ -1,0 +1,18 @@
+.blueprint-encapsulation-dialog { width: min(720px, calc(100vw - 40px)); max-height: calc(100vh - 48px); padding: 0; border: 1px solid var(--border, #37434a); border-radius: 10px; background: var(--panel, #20262b); color: inherit; }
+.blueprint-encapsulation-dialog::backdrop { background: #0008; }
+.blueprint-encapsulation-dialog form { display: flex; flex-direction: column; max-height: calc(100vh - 50px); }
+.blueprint-encapsulation-dialog header, .blueprint-encapsulation-dialog footer { display: flex; align-items: center; gap: 10px; padding: 16px 20px; flex: 0 0 auto; }
+.blueprint-encapsulation-dialog footer { justify-content: flex-end; border-top: 1px solid var(--border, #37434a); }
+.blueprint-encapsulation-dialog h2 { font-size: 18px; margin: 0; }
+.blueprint-encapsulation-body { padding: 0 20px 14px; overflow: auto; }
+.blueprint-encapsulation-body input { width: 100%; }
+.blueprint-encapsulation-body p { line-height: 1.6; }
+.blueprint-encapsulation-ports { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.blueprint-encapsulation-ports h3 { font-size: 13px; }
+.blueprint-encapsulation-ports ul { list-style: none; padding: 0; margin: 0; max-height: 240px; overflow: auto; }
+.blueprint-encapsulation-ports li { border: 1px solid var(--border, #37434a); border-radius: 6px; padding: 8px 10px; margin: 0 0 6px; overflow-wrap: anywhere; }
+.blueprint-encapsulation-ports strong { display: flex; justify-content: space-between; gap: 8px; }
+.blueprint-encapsulation-ports strong span, .blueprint-encapsulation-ports small { color: var(--muted, #a8b4c0); font-size: 11px; font-weight: normal; }
+.blueprint-encapsulation-ports small { display: block; margin-top: 5px; line-height: 1.5; }
+.blueprint-encapsulation-problem { border-left: 3px solid #d9a354; padding: 8px 12px; background: #d9a35412; }
+@media (max-width: 640px) { .blueprint-encapsulation-ports { grid-template-columns: 1fr; } }

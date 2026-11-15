@@ -110,7 +110,7 @@ test('changing direction twice keeps the same curve; a replaced track causes an 
  const t=f.target([click(),advance(.5),click('stop'),click('replace')]);assert.equal(t.x,.3);assert.equal(t.style?.opacity,0);
 });
 test('invalid literal or connected playback options fail atomically and keep active animations',()=>{
- for(const properties of [{playMode:'bad'},{loops:-1},{loops:1.5},{loops:1000001},{speed:0},{speed:101},{speed:Infinity},{fromCurrent:'true'}]){
+ for(const properties of [{playMode:'bad'},{loops:-1},{loops:1.5},{loops:Infinity},{speed:0},{speed:-1},{speed:Infinity},{fromCurrent:'true'}]){
   const f=fixture();Object.assign(f.play.properties,properties);assert.ok(compileProject(f.p).diagnostics.some(d=>d.severity==='error'));const p=f.preview([click()]);assert.equal(p.incomplete,true);assert.equal(p.components[0].component.x,.1);
  }
  const f=fixture();f.play.properties.wait=false;const bad=f.node('playUiAnimation',{animationId:f.clip.id}),literal=f.node('literal',{value:-3});literal.pins[0].dataType='number';f.chain(f.event('replace'),bad);connectBlueprintPins(f.graph,literal.id,'value',bad.id,'speed');

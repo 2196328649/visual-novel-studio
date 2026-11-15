@@ -14,16 +14,16 @@ function fixture() {
 }
 test('control summaries explain the authored target, property and value without changing project data',()=>{
  const {project,graph,write}=fixture(),before=JSON.stringify(project);
- assert.equal(blueprintNodeSummary(project,graph,write),'说明文字 · 横向位置（画面比例） = 0.5');assert.equal(JSON.stringify(project),before);
+ assert.equal(blueprintNodeSummary(project,graph,write),'说明文字 · 横向位置（父级比例） = 0.5');assert.equal(JSON.stringify(project),before);
  write.properties.property='visible';write.properties.value=false;assert.equal(blueprintNodeSummary(project,graph,write),'说明文字 · 显示 = 否');
  write.properties.property='text';write.properties.value='';assert.equal(blueprintNodeSummary(project,graph,write),'说明文字 · 文字 = 空文字');
  write.properties.value='新的说明';assert.ok(blueprintNodeSummary(project,graph,write).includes('「新的说明」'));
 });
 test('connected values describe their actual source and never display an inactive fallback',()=>{
  const {project,graph,read,write}=fixture();connectBlueprintPins(graph,read.id,'value',write.id,'value');
- assert.deepEqual(blueprintInputSource(project,graph,write.id,'value'),{nodeId:read.id,label:'变量 · 展开位置'});
- assert.equal(blueprintNodeSummary(project,graph,write),'说明文字 · 横向位置（画面比例） = 变量 · 展开位置');
- read.properties.variableId='value_b';assert.equal(blueprintInputSource(project,graph,write.id,'value')!.label,'变量 · 收回位置');
+ assert.deepEqual(blueprintInputSource(project,graph,write.id,'value'),{nodeId:read.id,label:'作品状态 · 展开位置'});
+ assert.equal(blueprintNodeSummary(project,graph,write),'说明文字 · 横向位置（父级比例） = 作品状态 · 展开位置');
+ read.properties.variableId='value_b';assert.equal(blueprintInputSource(project,graph,write.id,'value')!.label,'作品状态 · 收回位置');
  graph.nodes=graph.nodes.filter(n=>n.id!==read.id);assert.equal(blueprintInputSource(project,graph,write.id,'value')!.label,'缺失节点');assert.ok(!blueprintNodeSummary(project,graph,write).includes('0.5'));
  graph.links=[];assert.ok(blueprintNodeSummary(project,graph,write).endsWith('0.5'));
 });
@@ -38,6 +38,6 @@ test('upstream node edits invalidate connected source labels while unrelated nod
  const {project,graph,read,write}=fixture();connectBlueprintPins(graph,read.id,'value',write.id,'value');const cache=new BlueprintViewCache(),edit=()=>{},toggle=()=>{},collapsed=new Set<string>();
  const view=(p:typeof project)=>cache.update(p,p.blueprints[0],[],edit,collapsed,toggle);const first=view(project),changed=structuredClone(project);
  changed.blueprints[0].nodes.find(n=>n.id===read.id)!.properties.variableId='value_b';const second=view(changed);
- assert.equal(second[0].data,first[0].data);assert.notEqual(second.find(n=>n.node.id===write.id)!.data,first.find(n=>n.node.id===write.id)!.data);assert.equal(second.find(n=>n.node.id===write.id)!.data.inputSources.get('value'),'变量 · 收回位置');
+ assert.equal(second[0].data,first[0].data);assert.notEqual(second.find(n=>n.node.id===write.id)!.data,first.find(n=>n.node.id===write.id)!.data);assert.equal(second.find(n=>n.node.id===write.id)!.data.inputSources.get('value'),'作品状态 · 收回位置');
  const moved=structuredClone(changed);moved.blueprints[0].nodes.find(n=>n.id===read.id)!.x+=50;assert.ok(view(moved).every((n,i)=>n.data===second[i].data));
 });

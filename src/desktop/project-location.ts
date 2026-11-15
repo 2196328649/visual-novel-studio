@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { Project } from '../core/model';
+import type { ProjectRecoveryOptions } from '../core/bridge';
 import { autosaveProject, loadProject } from './project-store';
 
 export const projectFileExists = (file: string) => fs.stat(file).then(stat => stat.isFile(), error => {
@@ -15,16 +16,16 @@ export function projectRecoveryFile(userData: string, file: string): string {
   return path.join(userData, 'project-recovery', key, 'project.vns.json');
 }
 
-export async function autosaveAtLocation(file: string | null, project: Project, userData: string): Promise<{ savedAt: number; locationMissing?: boolean }> {
-  if (!file) return autosaveProject(path.join(userData, 'draft.vns.json'), project);
+export async function autosaveAtLocation(file: string | null, project: Project, userData: string, options: ProjectRecoveryOptions = {}): Promise<{ savedAt: number; locationMissing?: boolean }> {
+  if (!file) return autosaveProject(path.join(userData, 'draft.vns.json'), project, true, options);
   if (await projectFileExists(file)) {
-    try { return { ...await autosaveProject(file, project, false), locationMissing: false }; }
+    try { return { ...await autosaveProject(file, project, false, options), locationMissing: false }; }
     catch (error) {
       if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
       // The folder can disappear between stat and writing the recovery file.
     }
   }
-  return { ...await autosaveProject(projectRecoveryFile(userData, file), project), locationMissing: true };
+  return { ...await autosaveProject(projectRecoveryFile(userData, file), project, true, options), locationMissing: true };
 }
 
 /** Explicitly discarding edits must also discard their crash-recovery copies. */

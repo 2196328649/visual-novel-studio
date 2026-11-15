@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createProject, projectSchema } from '../src/core/model';
-import { createMediaVisual } from '../src/core/media-command';
+import { createFloatingText, createMediaVisual } from '../src/core/media-command';
 import { actionText, applyTextScript, projectToText, textCommandAction } from '../src/core/text-script';
 import { finishPreviewPerformance, initialPreviewStage, linePlaybackPlan, linePreviewSnapshot, sampleLinePlayback } from '../src/core/line-preview';
 import { applyVisualInputs, createVisualObject, videoFadeGain, videoPlaybackState } from '../src/core/visual-object';
@@ -58,6 +58,77 @@ test('invalid media options report errors instead of producing unusable actions'
   assert.equal(textCommandAction(project, '@显示图片：movie', true), undefined);
   assert.equal(textCommandAction(project, '@显示视频：picture', true), undefined);
   assert.throws(() => textCommandAction(project, '@显示文字：测试，颜色=red', true));
+});
+
+test('display text round trips optional font, appearance and animation without a performance snapshot', () => {
+  const project = fixture();
+  project.assets.push({ id: 'font', name: '字体，是，带逗号', kind: 'font', path: 'font.ttf' });
+  const action = createMediaVisual('text', '第一句，\n第二句 "引号"', {
+    instanceId: 'caption', x: -.1, y: .3, width: 5, fontSize: 420, duration: 4,
+    fontAssetId: 'font', textItalic: false, textAlign: 'left',
+    textEffects: { outlineWidth: 2, outlineColor: '#000000', shadowX: -4, shadowY: 3, shadowBlur: 5, shadowOpacity: 0 },
+    textMotion: { speed: 'duration', duration: 1.2, cps: 24, entrance: 'drop', entranceTime: .3,
+      entranceAnimation: { x: 10, y: -40, scale: .5, flip: true, opacity: 0, rotation: 90, easing: 'back', order: 'reverse' },
+      loop: 'wave', loopStrength: 6, loopSpeed: 2, exit: 'rise', exitTotal: .8, exitTime: .2,
+      exitAnimation: { flip: false, order: 'random' } },
+    visualTransitions: { enter: { mode: 'dissolve', duration: .5 } }, transitionWait: false,
+  });
+  const command = actionText(project, action);
+  assert.match(command, /^@显示文字：/);
+  assert.match(command, /时长=4.*逐字时长=1.2/);
+  assert.deepEqual(textCommandAction(project, command, true), action);
+  assert.deepEqual(textCommandAction(project, command.replace('@显示文字', '@添加文字演出'), true), action);
+  const node = project.nodes.find(node => node.kind === 'passage')!;
+  node.lines[0] = { ...node.lines[0], text: '台词保留自己的样式', textPresentation: { color: '#00ff00', speed: 'instant' }, actions: [action] };
+  const text = projectToText(project);
+  assert.match(text, /@显示文字/); assert.doesNotMatch(text, /@演出实例/);
+  const parsed = applyTextScript(project, text);
+  assert.deepEqual(parsed.issues, []);
+  const restored = parsed.project.nodes.find(n => n.id === node.id)!;
+  assert.ok(restored.kind === 'passage');
+  assert.deepEqual(restored.lines[0].actions, [action]);
+  assert.deepEqual(restored.lines[0].textPresentation, node.lines[0].textPresentation);
+});
+
+test('plain and positional display-text commands retain the old defaults; animation remains optional', () => {
+  const project = fixture();
+  const plain = createMediaVisual('text', '旧文字');
+  assert.deepEqual(textCommandAction(project, '@显示文字：旧文字', true), plain);
+  assert.equal(plain.textMotion, undefined);
+  assert.equal(plain.instanceId, 'text');
+  assert.deepEqual(textCommandAction(project, '@显示文字：旧文字,old_caption,0.2,0.3,0.7,0.1,2,25,否,48,#aabbcc,渐变,0.2', true),
+    createMediaVisual('text', '旧文字', { instanceId: 'old_caption', x: .2, y: .3, width: .7, height: .1, duration: 2, layer: 25, fontSize: 48, color: '#aabbcc', visualTransitions: { enter: { mode: 'dissolve', duration: .2 } } }));
+  const inferred = textCommandAction(project, '@显示文字：测试，时长=5，逐字时长=2，斜体=是，入场翻转=否', true);
+  assert.ok(inferred?.kind === 'visual');
+  assert.equal(inferred.duration, 5);
+  assert.equal(inferred.textItalic, true);
+  assert.deepEqual(inferred.textMotion, { speed: 'duration', duration: 2, entranceAnimation: { flip: false } });
+  const styled = textCommandAction(project, '@显示文字：测试，斜体=否，描边宽度=0', true);
+  assert.ok(styled?.kind === 'visual'); assert.equal(styled.textMotion, undefined);
+});
+
+test('display-text animation rejects invalid fields and does not accept dialogue-only controls', () => {
+  const project = fixture();
+  for (const suffix of ['逐字时长=0', '每秒字数=-2', '频率=0', '入场透明度=101', '斜体=也许', '入场翻转="否"', '退场时间=-1', '字体=不存在', '位置=画面', '打字音=不存在']) {
+    assert.throws(() => textCommandAction(project, '@显示文字：测试，' + suffix, true), suffix);
+  }
+});
+
+test('new text objects coexist with styled dialogue, expire independently and can be hidden individually', () => {
+  const first = createFloatingText('第一段'), second = createFloatingText('第二段');
+  assert.notEqual(first.instanceId, second.instanceId);
+  const project = fixture(), node = project.nodes.find(node => node.kind === 'passage')!;
+  node.lines = [
+    { id: 'both', text: '台词仍在对话框里', textPresentation: { entrance: 'slam', color: '#ff0000' }, actions: [first, { ...second, persistent: false, duration: 2, textMotion: { speed: 'instant', loop: 'wave', exit: 'fade' } }] },
+    { id: 'hide', text: '隐藏第一段', actions: [{ kind: 'hideVisual', instanceId: first.instanceId }] },
+  ];
+  const before = initialPreviewStage(), plan = linePlaybackPlan(before, node.lines[0].actions);
+  assert.equal(plan.dialogueAt, 0);
+  assert.deepEqual(sampleLinePlayback(before, plan, 500).visuals.map(visual => visual.object.instanceId), [first.instanceId, second.instanceId]);
+  assert.deepEqual(sampleLinePlayback(before, plan, 2100).visuals.map(visual => visual.object.instanceId), [first.instanceId]);
+  // Advancing immediately does not erase the other object's remaining lifetime.
+  assert.deepEqual([...linePreviewSnapshot(project, { nodeId: node.id, lineId: 'hide' }).after.visuals.keys()], [second.instanceId]);
+  assert.deepEqual(node.lines[0].textPresentation, { entrance: 'slam', color: '#ff0000' });
 });
 
 test('persistent overlays carry across dialogue and silent performances, replace by ID and hide independently', () => {
@@ -174,6 +245,8 @@ test('general catalog exposes media and reusable performances; project stories r
   assert.ok(catalog.some(graph => graph.id === reusable.id));
   const general = textAssistance(project, '@', 1)!.items;
   for (const label of ['显示图片', '显示视频', '显示文字', '隐藏对象', '蓝图']) assert.ok(general.some(item => item.label === label), label);
+  assert.equal(general.filter(item => item.label === '显示文字').length, 1);
+  assert.ok(!general.some(item => item.label === '添加文字演出'));
   assert.ok(!general.some(item => item.label === ui.name || item.label === story.name));
   const selector = textAssistance(project, '@蓝图：', 4, true)!.items;
   assert.ok(selector.some(item => item.id === story.id)); assert.ok(!selector.some(item => item.id === ui.id));

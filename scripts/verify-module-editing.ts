@@ -5,16 +5,24 @@ import { expect, type ElectronApplication, type Page } from '@playwright/test';
 import { createServer } from 'vite';
 import { launchDesktopFixture } from './lib/desktop-fixture';
 import { openStoryMode } from './lib/story-workspace';
+import { cleanVerificationDirectories } from './lib/verification-cleanup';
 import { createProject, projectSchema } from '../src/core/model';
 import { applyTextScript } from '../src/core/text-script';
+import { parseProject } from '../src/desktop/project-store';
 import { isStandaloneNode } from '../src/core/standalone-performance';
 
 const root = path.resolve('.'), output = path.join(root, 'artifacts/module-editing', new Date().toISOString().replaceAll(':', '-'));
 await fs.mkdir(output, { recursive: true });
 const source = '# 章节：第一章\n# 小章节：庭院\n@章节标题：酒醒城破｜副标题｜7\n@独立演出：第一章进入动画\n# 段落：相遇\n旁白：第一句\n旁白：第二句\n# 段落：离开\n旁白：离开庭院\n# 章节：第二章\n# 小章节：街道\n# 段落：后续\n旁白：第二章正文';
-const parsed = applyTextScript(createProject('模块交互验收'), source);
+// The retired @章节标题 line is migrated on load into a chapter-intro preset
+// call, exactly as an older author's project would be.
+const legacy = createProject('模块交互验收'); legacy.scriptText = { format: 'vns-text-1', content: source };
+const migrated = parseProject(legacy).project;
+const parsed = applyTextScript(migrated, migrated.scriptText!.content);
 assert.deepEqual(parsed.issues, []);
-const projectFile = path.join(output, 'project.vns.json');
+// Screenshots are evidence, not source assets: keep them outside the watched project.
+const projectFile = path.join(output, 'project/project.vns.json');
+await fs.mkdir(path.dirname(projectFile), { recursive: true });
 await fs.writeFile(projectFile, JSON.stringify(parsed.project));
 const chapter = parsed.project.nodes.find(isStandaloneNode)!;
 const passage = parsed.project.nodes.find(node => node.name === '相遇')!;
@@ -40,9 +48,10 @@ try {
   await module.getByRole('button', { name: '收起模块', exact: true }).click();
   await expect(module.locator('.module-body')).toBeHidden();
   await module.getByRole('button', { name: '展开模块', exact: true }).click();
-  await expect(module.getByLabel('章节标题', { exact: true })).toBeVisible();
-  await module.getByLabel('章节标题', { exact: true }).fill('修改后的章名');
-  await module.getByLabel('章节标题', { exact: true }).press('Tab');
+  await expect(module.getByLabel('单独设置标题', { exact: true })).toBeVisible();
+  await module.getByLabel('单独设置标题', { exact: true }).check();
+  await module.getByLabel('标题', { exact: true }).fill('修改后的章名');
+  await module.getByLabel('标题', { exact: true }).press('Tab');
   await page!.screenshot({ path: path.join(output, '01-module-parameters.png') });
   checks.push('模块仅显示名字，可双击改名、折叠；章节文字可直接编辑');
   await dialogue.locator('.passage-header').click({ button: 'right' });
@@ -98,8 +107,9 @@ try {
   await expect(module.locator('.standalone-node-card > p')).toHaveCount(0);
   await expect(module.locator('.standalone-node-card > button')).toHaveCount(0);
   await module.locator('.action-editor-header').getByRole('button', { name: '编辑演出', exact: true }).click();
-  await expect(page!.locator('.timeline-clip')).toHaveCount(1);
-  await expect(page!.locator('.timeline-clip')).toContainText('7.00s');
+  // The migrated chapter preset opens straight into its timeline (title group + chapter sound).
+  await expect.poll(() => page!.locator('.timeline-clip').count()).toBeGreaterThan(0);
+  await expect(page!.locator('.timeline-clip').first()).toContainText('7.00s');
   await expect(page!.getByLabel('演出目标', { exact: true }).locator('option:checked')).toContainText('章节进入演出');
   const library = await page!.getByLabel('演出素材库', { exact: true }).boundingBox();
   const preview = await page!.locator('.timeline-preview').boundingBox();
@@ -120,7 +130,7 @@ try {
   await openStoryMode(page!, 'script');
   await expect(module.getByLabel('单独设置标题', { exact: true })).toBeVisible();
   await module.getByLabel('单独设置标题', { exact: true }).check();
-  const modeLabel = await module.locator('.blueprint-input-mode label').first().boundingBox();
+  const modeLabel = await module.locator('.blueprint-parameter-label').first().boundingBox();
   assert.ok(modeLabel && modeLabel.height <= 30, '参数勾选标签应保持单行，不能逐字竖排');
   await module.getByLabel('标题', { exact: true }).fill('本模块标题');
   await module.getByLabel('标题', { exact: true }).press('Tab');
@@ -142,4 +152,9 @@ try {
   await page?.screenshot({ path: path.join(output, 'failure.png') }).catch(() => undefined);
   await fs.writeFile(path.join(output, 'failure.json'), JSON.stringify({ error: String(error), checks, errors }, null, 2));
   throw error;
-} finally { await app?.close(); await server.close(); console.log(output); }
+} finally {
+  await app?.close(); await server.close();
+  const cleanup = await cleanVerificationDirectories(output, ['project', 'profile']);
+  assert.deepEqual(cleanup.errors, []);
+  console.log(output);
+}

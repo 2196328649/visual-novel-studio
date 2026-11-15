@@ -11,7 +11,7 @@ test('new stories and previews stop menu music before entering the selected stor
   for (const options of [{}, { preview: { entryId: passage.id } }]) {
     const built = compileProject(project, options);
     assert.deepEqual(built.diagnostics.filter(issue => issue.severity === 'error'), []);
-    assert.match(built.files['game/story.rpy'], /label start:\n    stop music fadeout 0\n/);
+    assert.match(built.files['game/story.rpy'], /label start:\n    \$ vn_flow_start_game\(\)\n    \$ vn_bp_async_clear\(\)\n    \$ vn_ui_clear_pages\(\)\n    stop music fadeout 0\n/);
     assert.match(built.files['game/story.rpy'], /play music "story\.ogg" loop fadein 0\.5/);
   }
 });

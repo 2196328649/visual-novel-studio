@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createProject } from '../src/core/model';
 import { createVisualObject } from '../src/core/visual-object';
 import { blueprintFromPerformance, exposePerformanceInputs, performanceInputs } from '../src/core/blueprint-authoring';
-import { blueprintNodeDefaults, synchronizeBlueprintSignatures } from '../src/core/blueprint';
+import { blueprintNodeDefaults, blueprintPin, connectBlueprintPins, createBlueprintGraph, synchronizeBlueprintSignatures } from '../src/core/blueprint';
 import { blueprintAssetFilter, blueprintNodeAssetFilter } from '../src/core/blueprint-assets';
 import { textAssistance } from '../src/core/text-completion';
 import { createAudioClip } from '../src/core/audio-clip';
@@ -61,3 +61,35 @@ test('an unused input reader does not hide a later connected consumer', () => {
   exposePerformanceInputs(owner, performanceInputs(owner).filter(f => f.dataType === 'asset'));
   assert.deepEqual(blueprintAssetFilter(project, owner, owner.exposedInputs[0]), { kind: 'audio', category: 'sound' });
 });
+
+for (const kind of ['audio', 'video'] as const) for (const route of ['direct', 'select', 'nested calls'] as const) {
+  test(`${route} public asset inputs follow ${kind} variable consumers instead of their image defaults`, () => {
+    const project = createProject();
+    project.assets = [{ id: 'image_default', name: '旧图片默认值', path: 'default.png', kind: 'image', category: 'scene' }];
+    project.variables.push({ id: 'media_variable', name: '媒体参数', type: 'asset', assetKind: kind, initial: '', persistent: false });
+    const publicGraph = (name: string) => {
+      const graph = createBlueprintGraph('function', name), reader = blueprintNodeDefaults('getInput');
+      const pin = blueprintPin('media', '媒体输入', 'input', 'asset', 'image_default');
+      reader.properties.inputId = pin.id; graph.exposedInputs.push(pin); graph.nodes.push(reader); project.blueprints.push(graph);
+      return { graph, reader, pin };
+    };
+    let current = publicGraph('写入媒体变量');
+    const writer = blueprintNodeDefaults('setVariable'); writer.properties.variableId = 'media_variable'; current.graph.nodes.push(writer);
+    if (route === 'select') {
+      const select = blueprintNodeDefaults('select'); current.graph.nodes.push(select);
+      synchronizeBlueprintSignatures(project);
+      assert.equal(connectBlueprintPins(current.graph, current.reader.id, 'value', select.id, 'true_value'), undefined);
+      assert.equal(connectBlueprintPins(current.graph, select.id, 'result', writer.id, 'value'), undefined);
+    } else {
+      synchronizeBlueprintSignatures(project);
+      assert.equal(connectBlueprintPins(current.graph, current.reader.id, 'value', writer.id, 'value'), undefined);
+    }
+    if (route === 'nested calls') for (let depth = 0; depth < 3; depth++) {
+      const outer = publicGraph('公开调用层' + depth), call = blueprintNodeDefaults('callFunction');
+      call.properties.graphId = current.graph.id; outer.graph.nodes.push(call); synchronizeBlueprintSignatures(project);
+      assert.equal(connectBlueprintPins(outer.graph, outer.reader.id, 'value', call.id, 'arg_' + current.pin.id), undefined);
+      current = outer;
+    }
+    assert.deepEqual(blueprintAssetFilter(project, current.graph, current.pin), { kind, category: 'all' });
+  });
+}

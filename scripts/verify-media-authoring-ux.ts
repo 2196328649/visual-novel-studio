@@ -118,9 +118,9 @@ try {
   await page.locator('.character-item[data-character-id="hero"]').click();
   await page.getByRole('tab', { name: '构图与站位', exact: true }).click();
   await expect(page.getByLabel('角色站位预设', { exact: true })).toBeVisible();
-  await expect(page.getByLabel('角色默认过渡', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('group', { name: '角色过渡', exact: true })).toHaveCount(0);
   await page.getByRole('tab', { name: '角色过渡', exact: true }).click();
-  await expect(page.getByLabel('角色默认过渡', { exact: true })).toBeVisible();
+  await expect(page.getByRole('group', { name: '角色过渡', exact: true })).toBeVisible();
   checks.push('character transitions have their own tab, outside staging');
   await page.reload();
   await enterFixtureProject(page, file);

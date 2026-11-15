@@ -1,4 +1,5 @@
 import { projectGraphs } from './project-resources';
+import { blueprintContext } from './blueprint-context';
 import { uiPageSchema } from './model';
 import { aiSelectedUiAnimation } from './ai-selection';
 import { uiAnimationPropertyNames } from './ui-animation';
@@ -46,23 +47,16 @@ export function resolveAiEditorTarget(project:Project,raw:AiEditorTarget){
   if(graphs.length!==1)throw new Error('找不到唯一蓝图，请重新读取当前工程。');
   const nodeIds=[...new Set(target.nodeIds)],linkIds=[...new Set(target.linkIds)];
   if(nodeIds.some(id=>graph.nodes.filter(n=>n.id===id).length!==1)||linkIds.some(id=>graph.links.filter(l=>l.id===id).length!==1))throw new Error('所选节点或连线已不存在或标识不唯一；本次选择没有更改。');
-  let ui:{page:Project['ui']['components'][number]['page'];instanceId?:string;customPageId?:string}|undefined;
-  if(graph.uiPageId){
-   if(graph.uiPageId.startsWith('ui:')){
-    const page=uiPageSchema.safeParse(graph.uiPageId.slice(3));if(!page.success||page.data==='custom')throw new Error('事件图所属页面已不存在。');
-    const instanceId=graph.uiInstanceId==='base'?undefined:graph.uiInstanceId||project.ui.activeInstanceId;
-    if(instanceId&&!project.ui.instances?.some(i=>i.id===instanceId))throw new Error('事件图所属界面方案已不存在。');
-    ui={page:page.data,instanceId};
-   }else{
-    if(!project.ui.customPages.some(p=>p.id===graph.uiPageId))throw new Error('事件图所属自定义页面已不存在。');
-    ui={page:'custom',customPageId:graph.uiPageId};
-   }
-  }
+  const context = blueprintContext(project, graph, nodeIds[0]);
+  if(context.problem&&!context.legacy)throw new Error(context.problem);
+  const ui = context.ui;
   return {kind:'blueprintSelection' as const,graphId:graph.id,nodeIds,linkIds,frame:target.frame??true,ui,label:graph.name+' · '+(nodeIds.length||linkIds.length?nodeIds.length+' 个节点 / '+linkIds.length+' 条连线':'清空选择')};
  }
  if(target.kind==='blueprint'){
 
-  const graph=projectGraphs(project).find(g=>g.id===target.graphId),node=graph?.nodes.find(n=>n.id===target.nodeId);
+  const matches=projectGraphs(project).filter(g=>g.id===target.graphId);
+  if(matches.length>1)throw new Error('蓝图标识不唯一，请先修复冲突。');
+  const graph=matches[0],node=graph?.nodes.find(n=>n.id===target.nodeId);
   if(!graph||target.nodeId&&!node)throw new Error('蓝图或节点已不存在，请重新读取当前工程。');
   let objectName:string|undefined;
   if(target.objectInstanceId){
@@ -71,7 +65,7 @@ export function resolveAiEditorTarget(project:Project,raw:AiEditorTarget){
    if(!isTimelineComponent(graph)||performanceTimeline(project,graph).reason)throw new Error('此对象当前不能在时间轴中定位，请打开所属蓝图检查。');
    let object=action;for(const index of path)object=object.children![index];objectName=object.name;
   }
-  return {kind:'blueprint' as const,graphId:graph.id,nodeId:node?.id,objectInstanceId:target.objectInstanceId,label:graph.name+(node?' / '+node.name:'')+(objectName?' / '+objectName:'')};
+  return {kind:'blueprint' as const,graphId:graph.id,nodeId:node?.id,objectInstanceId:target.objectInstanceId,ui:blueprintContext(project,graph,node?.id).ui,label:graph.name+(node?' / '+node.name:'')+(objectName?' / '+objectName:'')};
  }
  if(target.kind==='ui'){
   if(target.instanceId&&target.customPageId)throw new Error('界面定位不能同时指定方案和自定义页面。');

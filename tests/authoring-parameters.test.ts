@@ -65,9 +65,28 @@ test('jump accepts positional and named transition values and emits concise comm
     assert.doesNotMatch(projectToText(parsed.project), /-切换方式-|参数：/);
     assert.deepEqual(applyTextScript(parsed.project, projectToText(parsed.project)).issues, []);
   }
-  assert.equal(jumpCommandText('段落 2', { mode: 'none', duration: 0, color: '#000000' }), '@跳转：段落 2');
+  assert.equal(jumpCommandText('段落 2'), '@跳转：段落 2');
+  assert.equal(jumpCommandText('段落 2', { mode: 'none', duration: 0, color: '#000000' }), '@跳转：段落 2，无，0，#000000');
   const old = '// 注释\n@跳转：段落 2-切换方式-淡入淡出-参数：时长=1，颜色=#000000\n旁白：保留原文。';
   assert.equal(replaceLegacyJumpCommands(old), '// 注释\n@跳转：段落 2，淡入淡出，1，#000000\n旁白：保留原文。');
+});
+test('jump text round trips authored zero and remembers an inactive nonzero duration', () => {
+  for (const mode of ['dissolve', 'fade', 'none'] as const) for (const duration of [0, .5, 2]) {
+    const transition = { mode, duration, color: '#000000' };
+    const command = jumpCommandText('终点', transition);
+    const parsed = applyTextScript(fixture(), '# 段落：起点\n' + command + '\n# 段落：终点\n旁白：完成。');
+    assert.deepEqual(parsed.issues, []);
+    const jump = parsed.project.nodes.find(node => node.kind === 'jump');
+    assert.ok(jump?.kind === 'jump');
+    assert.equal(jump.sceneTransition?.mode, mode);
+    assert.equal(jump.sceneTransition?.duration, duration);
+    assert.equal(jump.sceneTransition?.color, '#000000');
+    const saved = applyTextScript(parsed.project, projectToText(parsed.project));
+    assert.deepEqual(saved.issues, []);
+    const restored = saved.project.nodes.find(node => node.id === jump.id);
+    assert.ok(restored?.kind === 'jump');
+    assert.deepEqual(restored.sceneTransition, jump.sceneTransition);
+  }
 });
 test('clickable signatures insert a missing named argument and replace an existing value precisely', () => {
   const project = fixture(), source = '@显示角色：王生，缩放=1\n王生：你好。';

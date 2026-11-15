@@ -1,7 +1,9 @@
+import { cloneData } from "./project-mutation";
 import { z } from 'zod';
 import { currentScriptText } from './script-text';
 import { effectiveCharacter, type Project, type StoryLine } from './model';
 import { applyTextScript, projectToText } from './text-script';
+import { dialogueMarkupRows, dialogueMarkupDeclarationRows, isTextMarkupDeclaration, readMarkedRow, setLineText } from './text-spans';
 
 export type TextExportMode = 'commands' | 'revision' | 'dialogue';
 const lineMapEntry = z.object({ id: z.string(), speaker: z.string(), text: z.string() });
@@ -18,7 +20,7 @@ export function dialogueRows(project: Project) {
 }
 
 export function currentTextProject(project: Project): Project {
-  if (!project.scriptText) return structuredClone(project);
+  if (!project.scriptText) return cloneData(project);
   const parsed = applyTextScript(project, project.scriptText.content);
   const error = parsed.issues.find(issue => issue.severity === 'error');
   if (error) throw new Error(`请先修正当前剧本第 ${error.sourceLine} 行：${error.message}`);
@@ -38,11 +40,26 @@ export function exportText(project: Project, mode: TextExportMode, includeSpeake
   return { text: text + '\n', mapping: { format: 'vns-dialogue-map-1', projectId: project.id, entries } };
 }
 
-export function readDialogueRevision(text: string, silentIds = new Set<string>()): { entries: DialogueRevision[]; ignoredCommands: number } {
+/** A project resolves name-only font parameters in quoted full scripts. Without
+ * one, callers must use stable font references; syntax and style validation stay active. */
+export function readDialogueRevision(text: string, silentIds = new Set<string>(), project?: Project): { entries: DialogueRevision[]; ignoredCommands: number } {
   const entries: DialogueRevision[] = [];
   let pending: string | undefined, ignoredCommands = 0, definitionOpen = false;
+  let quotedDeclaration = false, quotedEntry: DialogueRevision | undefined;
+  const markupProject = project ?? ({ assets: [] } as unknown as Project);
+  const quotedWords = (row: string, sourceLine: number) => {
+    try { return readMarkedRow(markupProject, row, 0, 'quoted').text; }
+    catch (error) { throw new Error(`第 ${sourceLine} 行：${error instanceof Error ? error.message : '局部文字标记无效。'}`); }
+  };
   for (const [index, raw] of text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n').entries()) {
     const value = raw.trim();
+    if (!definitionOpen && isTextMarkupDeclaration(value)) {
+      if (quotedDeclaration) throw new Error(`第 ${index + 1} 行重复声明局部文字语法。`);
+      if (!/^[@／/]\s*局部文字语法\s*[:：]\s*带引号$/.test(value)) throw new Error(`第 ${index + 1} 行的局部文字语法只支持“带引号”。`);
+      quotedDeclaration = true; quotedEntry = undefined; ignoredCommands++; continue;
+    }
+    if (quotedDeclaration && (!value || /^(?:[@／/#]|;)/.test(value) && !/^@对白标记\s*[:：]/.test(value) || /^[-—…\.·]{3,}$/.test(value))) throw new Error(`第 ${index + 1} 行的局部文字语法声明后缺少台词。`);
+    if (quotedEntry && (!value || !/^(?:@续行\s*[:：]|\t)/.test(raw))) quotedEntry = undefined;
     if (/^[@／/]?效果结束\s*$/.test(value)) { definitionOpen = false; ignoredCommands++; continue; }
     if (definitionOpen) { if (value) ignoredCommands++; continue; }
     if (/^[@／/]效果定义\s*[:：]/.test(value)) { definitionOpen = true; ignoredCommands++; continue; }
@@ -54,17 +71,22 @@ export function readDialogueRevision(text: string, silentIds = new Set<string>()
     const continuation = raw.match(/^(?:@续行\s*[:：]|\t)(.*)$/);
     if (continuation) {
       if (!entries.length || pending) throw new Error(`第 ${index + 1} 行续行没有对应的台词。`);
-      entries.at(-1)!.text += '\n' + continuation[1]; continue;
+      entries.at(-1)!.text += '\n' + (quotedEntry === entries.at(-1) ? quotedWords(continuation[1], index + 1) : continuation[1]); continue;
     }
     if (!value || /^\/\//.test(value)) continue;
     if (/^#|^[-—…\.·]{3,}$/.test(value)) { if (pending && silentIds.has(pending)) pending = undefined; continue; }
     if (/^[@／/](?:节点标记|开始|返回|选择|返回标题界面|章节标题|跳转|调用|设置|变量|实例|复用节点|节点实例|互动实例|小游戏实例)(?:\s*[:：]|\s*$)/.test(value) && pending && silentIds.has(pending)) pending = undefined;
     if (/^[@／/]/.test(value)) { ignoredCommands++; continue; }
     const dialogue = raw.match(/^([^:：]{1,80})\s*[:：]\s?(.*)$/);
-    entries.push({ ...(pending ? { id: pending } : {}), ...(dialogue ? { speaker: dialogue[1].trim() } : {}), text: dialogue ? dialogue[2] : raw, row: index + 1 });
+    const words = dialogue ? dialogue[2] : raw;
+    const entry = { ...(pending ? { id: pending } : {}), ...(dialogue ? { speaker: dialogue[1].trim() } : {}), text: quotedDeclaration ? quotedWords(words, index + 1) : words, row: index + 1 };
+    entries.push(entry);
+    if (quotedDeclaration && words) quotedEntry = entry;
+    quotedDeclaration = false;
     pending = undefined;
   }
   if (pending && !silentIds.has(pending)) throw new Error('最后一个对白标记后缺少台词。');
+  if (quotedDeclaration) throw new Error('局部文字语法声明后缺少台词。');
   if (!entries.length) throw new Error('文件中没有可更新的台词。');
   return { entries, ignoredCommands };
 }
@@ -85,7 +107,8 @@ function reviseSource(project: Project, changes: Map<string, StoryLine>) {
   for (const [id, line] of changes) {
     const rows = [...new Set(positions.get(id)!)].sort((a, b) => a - b);
     const speaker = effectiveCharacter(project, line.speakerId ?? '')?.name ?? '旁白';
-    replacements.set(rows[0], [...(marked.has(id) ? [] : ['@对白标记：' + id]), ...line.text.split('\n').map((part, index) => (index ? '@续行：' : speaker + '：') + part)].join('\n'));
+    dialogueMarkupDeclarationRows(sourceRows, rows[0]).forEach(row => replacements.set(row, ''));
+    replacements.set(rows[0], [...(marked.has(id) ? [] : ['@对白标记：' + id]), ...dialogueMarkupRows(project, line, speaker + '：')].join('\n'));
     for (const row of rows.slice(1)) replacements.set(row, '');
   }
   return sourceRows.map((line, row) => replacements.get(row) ?? line).join('\n');
@@ -94,7 +117,7 @@ function reviseSource(project: Project, changes: Map<string, StoryLine>) {
 export function previewDialogueRevision(project: Project, imported: ImportedText, allowOrder = false): TextRevisionPreview {
   const current = currentTextProject(project), rows = dialogueRows(current);
   const silentIds = new Set(current.nodes.flatMap(node => node.kind === 'passage' ? node.lines.filter(line => line.silent).map(line => line.id) : []));
-  const { entries, ignoredCommands } = readDialogueRevision(imported.text, silentIds);
+  const { entries, ignoredCommands } = readDialogueRevision(imported.text, silentIds, current);
   const existing = new Map(rows.map(({ line }) => [line.id, line]));
   let method: TextRevisionPreview['method'];
   if (entries.every(entry => entry.id)) method = 'ids';
@@ -125,10 +148,10 @@ export function previewDialogueRevision(project: Project, imported: ImportedText
     if (before && before.text !== line.text && entry.text !== line.text) throw new Error(`「${speaker}：${line.text.slice(0, 35)}」在导出后已被修改，请重新导出或核对后使用带标识的修订稿。`);
     if (entry.text === line.text) continue;
     changes.push({ id: line.id, speaker, before: line.text, after: entry.text });
-    replacements.set(line.id, { ...line, text: entry.text });
+    const replacement = cloneData(line); setLineText(replacement, entry.text); replacements.set(line.id, replacement);
   }
   const revisedSource = reviseSource(current, replacements);
-  for (const { line } of rows) { const replacement = replacements.get(line.id); if (replacement) line.text = replacement.text; }
+  for (const { line } of rows) { const replacement = replacements.get(line.id); if (replacement) setLineText(line, replacement.text); }
   current.scriptText = currentScriptText(revisedSource ?? projectToText(current), imported.name);
   return { project: current, changes, method, ignoredCommands };
 }

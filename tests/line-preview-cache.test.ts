@@ -49,17 +49,72 @@ test('纯对白编辑复用舞台推演，但返回当前全文和配音所在�
   assert.equal(initial.line?.text, '正在编辑的台词。');
 });
 
+test('文字样式、局部标记和停顿更新对白引用但复用舞台状态', () => {
+  const project = fixture(), read = createLinePreviewReader();
+  const initial = read(project, selection), next = structuredClone(project);
+  const node = next.nodes.find(node => node.id === selection.nodeId);
+  assert.ok(node?.kind === 'passage');
+  if (node?.kind !== 'passage') return;
+  const [prior, current] = node.lines;
+  prior.textPresentation = { italic: true, sizeScale: 1.1 };
+  prior.textSpans = [{ start: 0, end: 2, style: { bold: true } }];
+  prior.textPauses = [{ at: 1, seconds: 0.25 }];
+  current.text = '更新过样式和标记的当前台词。';
+  current.textPresentation = { color: '#ff0000', speed: 'instant' };
+  current.textSpans = [{ start: 0, end: 2, style: { italic: true } }];
+  current.textPauses = [{ at: 2, seconds: 0.5 }];
+
+  const updated = read(next, selection);
+  assert.equal(updated.before.actors, initial.before.actors);
+  assert.equal(updated.after.actors, initial.after.actors);
+  assert.equal(updated.actions, initial.actions);
+  assert.equal(updated.line, current);
+  assert.equal(updated.before.dialogue, prior);
+  assert.equal(updated.after.dialogue, current);
+  assert.deepEqual(updated, linePreviewSnapshot(next, selection));
+
+  const undone = read(project, selection);
+  assert.equal(undone.line, initial.line);
+  assert.equal(undone.after.dialogue, initial.after.dialogue);
+  assert.deepEqual(undone, linePreviewSnapshot(project, selection));
+});
+
+test('转换前的嵌套对白引用也刷新为当前工程对象', () => {
+  const project = fixture(), node = project.nodes.find(node => node.id === selection.nodeId);
+  assert.ok(node?.kind === 'passage');
+  if (node?.kind !== 'passage') return;
+  node.lines.push({ ...structuredClone(node.lines[1]), id: 'third', text: '最后一行。' });
+  node.lines[1].actions.push({ kind: 'background', assetId: 'bg', transition: 'fade', duration: 5, wait: false });
+  const selected = { nodeId: node.id, lineId: 'third' };
+  const read = createLinePreviewReader(), initial = read(project, selected);
+  assert.equal(initial.before.transitionMotion?.before.dialogue, node.lines[0]);
+
+  const next = structuredClone(project), nextNode = next.nodes.find(item => item.id === node.id);
+  assert.ok(nextNode?.kind === 'passage');
+  if (nextNode?.kind !== 'passage') return;
+  nextNode.lines[0].text = '递归转换里的前文已经修改。';
+  next.scriptText = { format: 'vns-text-1', content: 'changed source' };
+  const updated = read(next, selected);
+  assert.equal(updated.before.transitionMotion?.before.dialogue, nextNode.lines[0]);
+  assert.deepEqual(updated, linePreviewSnapshot(next, selected));
+});
+
 test('演出、场景、角色、蓝图和参数变化使舞台缓存失效', () => {
   const project = fixture();
   const changes: ((next: Project) => void)[] = [
     next => { const node = next.nodes.find(node => node.id === 'passage'); if (node?.kind === 'passage') node.lines[0].actions = []; },
     next => { const node = next.nodes.find(node => node.id === 'passage'); if (node?.kind === 'passage') node.lines[1].speakerId = 'new_speaker'; },
+    next => { const node = next.nodes.find(node => node.id === 'passage'); if (node?.kind === 'passage') node.lines[1].silent = true; },
+    next => { const node = next.nodes.find(node => node.id === 'passage'); if (node?.kind === 'passage') node.lines[1].id = 'replacement'; },
+    next => { const node = next.nodes.find(node => node.id === 'passage'); if (node?.kind === 'passage') node.lines.reverse(); },
+    next => { const node = next.nodes.find(node => node.id === 'passage'); if (node?.kind === 'passage') Object.assign(node.lines[1], { futureLineField: true }); },
     next => { next.scenes[0].name += '改'; },
     next => { next.characters.push({ id: 'new_speaker', name: '新人', color: '#ffffff', expressions: [] }); },
     next => { next.variables.push({ id: 'flag', name: '开关', type: 'boolean', initial: true, persistent: false }); },
     next => { next.assets[0].path = 'changed.png'; },
     next => { next.blueprints = []; },
     next => { next.nodes.reverse(); },
+    next => { Object.assign(next, { futureStageField: true }); },
   ];
   for (const change of changes) {
     const read = createLinePreviewReader(), initial = read(project, selection), next = structuredClone(project);

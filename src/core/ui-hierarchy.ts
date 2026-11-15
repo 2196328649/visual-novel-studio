@@ -1,4 +1,6 @@
+import { cloneData } from "./project-mutation";
 import type { UiButtonState, UiComponent } from './model';
+import { resolveUiLayout, uiLayoutViewport, uiLayoutValues, uiLayoutProblem, uiLayoutPropertyFields, uiInverse, uiMultiply, uiTransformPoint, uiDecomposeLinear, type UiLayoutGeometry } from './ui-layout';
 
 export const uiHierarchyDepthLimit = 32;
 
@@ -12,7 +14,7 @@ export function uiListOrder(components: readonly UiComponent[]): UiComponent[] {
 export interface UiListChange { id: string; change: Partial<UiComponent> }
 
 /** Insert beside a row, keeping its sibling group and the dragged subtree's world rectangle. */
-export function reorderUiList(components: readonly UiComponent[], id: string, targetId: string, placement: 'before' | 'after'): UiListChange[] {
+export function reorderUiList(components: readonly UiComponent[], id: string, targetId: string, placement: 'before' | 'after', viewport = uiLayoutViewport): UiListChange[] {
   const source = components.find(c => c.id === id), target = components.find(c => c.id === targetId);
   if (!source || !target || source.page !== target.page || uiSubtreeIds(components, id).has(targetId)) throw new Error('请选择同页中不属于该子树的列表位置。');
   const page = components.filter(c => c.page === source.page);
@@ -21,7 +23,7 @@ export function reorderUiList(components: readonly UiComponent[], id: string, ta
   const index = next.findIndex(c => c.id === targetId) + (placement === 'after' ? 1 : 0);
   next.splice(index, 0, source);
   if (source.parentId === target.parentId && original.every((c, i) => c.id === next[i]?.id)) return [];
-  const parentChange = source.parentId === target.parentId ? {} : reparentUiComponent(components, id, target.parentId);
+  const parentChange = source.parentId === target.parentId ? {} : reparentUiComponent(components, id, target.parentId, viewport);
   const rank = (c: UiComponent) => c.editor?.listOrder ?? -page.findIndex(item => item.id === c.id);
   const before = index > 0 ? rank(next[index - 1]) : undefined;
   const after = index + 1 < next.length ? rank(next[index + 1]) : undefined;
@@ -89,7 +91,7 @@ export function uiPaintOrder(components: readonly UiComponent[]): UiComponent[] 
   return result;
 }
 
-export interface UiHierarchyRow { component: UiComponent; state: UiButtonState; visible: boolean }
+export interface UiHierarchyRow { component: UiComponent; state: UiButtonState; visible: boolean; geometry?: UiLayoutGeometry }
 
 /** World rectangles are derived; authored coordinates and animation values stay local. */
 export function resolveUiHierarchy(components: readonly UiComponent[], options: {
@@ -97,8 +99,11 @@ export function resolveUiHierarchy(components: readonly UiComponent[], options: 
   visible?: (component: UiComponent) => boolean;
   design?: boolean;
   playerOpacity?: number;
+  viewport?: { width: number; height: number };
 } = {}): UiHierarchyRow[] {
   const byId = new Map(components.map(c => [c.id, c])), cache = new Map<string, UiHierarchyRow>();
+  const viewport = options.viewport ?? uiLayoutViewport;
+  const geometries = resolveUiLayout(components, viewport, c => (options.visible?.(c) ?? true) && !(options.design && c.editor?.hidden));
   const resolve = (c: UiComponent, seen = new Set<string>()): UiHierarchyRow => {
     const cached = cache.get(c.id); if (cached) return cached;
     const parent = c.parentId ? byId.get(c.parentId) : undefined;
@@ -109,32 +114,50 @@ export function resolveUiHierarchy(components: readonly UiComponent[], options: 
     const state = p?.state === 'disabled' ? 'disabled' : c.inheritState && p ? p.state : ownState;
     const visible = !cycle && (!c.parentId || !!p?.visible) && (options.visible?.(c) ?? true) && !(options.design && c.editor?.hidden);
     const style = { ...c.style, opacity: (c.style?.opacity ?? 1) * (c.style?.playerOpacity ? options.playerOpacity ?? 1 : 1) * (rect?.style?.opacity ?? 1), playerOpacity: false };
-    const component: UiComponent = { ...c, style, x: (rect?.x ?? 0) + c.x * (rect?.width ?? 1), y: (rect?.y ?? 0) + c.y * (rect?.height ?? 1), width: c.width * (rect?.width ?? 1), height: c.height * (rect?.height ?? 1),
+    const geometry = geometries.get(c.id);
+    const component: UiComponent = { ...c, style, x: geometry ? geometry.matrix[4] / viewport.width : c.x, y: geometry ? geometry.matrix[5] / viewport.height : c.y, width: geometry ? geometry.width / viewport.width : c.width, height: geometry ? geometry.height / viewport.height : c.height,
       editor: { ...c.editor, locked: c.editor?.locked || rect?.editor?.locked },
     };
-    const row = { component, state, visible }; cache.set(c.id, row); return row;
+    const row = { component, state, visible, geometry }; cache.set(c.id, row); return row;
   };
   return uiPaintOrder(components).map(c => resolve(c));
 }
 
-/** Reparenting preserves the visible rectangle, including the full descendant subtree. */
-export function reparentUiComponent(components: readonly UiComponent[], id: string, parentId?: string): Pick<UiComponent, 'parentId' | 'x' | 'y' | 'width' | 'height' | 'childLayer' | 'inheritState'> {
+/** Preserve the complete affine frame; reject unrepresentable shear instead of moving a subtree. */
+export function reparentUiComponent(components: readonly UiComponent[], id: string, parentId?: string, viewport = uiLayoutViewport): Pick<UiComponent, 'parentId' | 'x' | 'y' | 'width' | 'height' | 'childLayer' | 'inheritState' | 'layout'> {
   const c = components.find(c => c.id === id), parent = components.find(c => c.id === parentId);
   if (!c || parentId && (!parent || parent.page !== c.page || uiSubtreeIds(components, id).has(parentId))) throw new Error('请选择同页中不属于该子树的父对象。');
-  const resolved = resolveUiHierarchy(components), world = resolved.find(row => row.component.id === id)!.component;
-  const p = resolved.find(row => row.component.id === parentId)?.component;
-  if (p && (!p.width || !p.height)) throw new Error('父对象的宽高必须大于零。');
-  const result = { parentId, x: (world.x - (p?.x ?? 0)) / (p?.width ?? 1), y: (world.y - (p?.y ?? 0)) / (p?.height ?? 1), width: world.width / (p?.width ?? 1), height: world.height / (p?.height ?? 1),
-    // Parenting adds a relationship, never replaces the parent's appearance.
+  const geometrySources = ['x', 'y', 'width', 'height', 'visible', ...Object.keys(uiLayoutPropertyFields)];
+  // A sibling's size/visibility can change an automatic-layout slot or a
+  // scroll clamp. Include the two affected trees, not only their ancestors.
+  const roots = [uiAncestors(components, id).at(-1)?.id ?? id, ...(parent ? [uiAncestors(components, parent.id).at(-1)?.id ?? parent.id] : [])];
+  const affected = new Set(roots.flatMap(root => [...uiSubtreeIds(components, root)]));
+  if (c.parentId !== parentId && components.some(item => affected.has(item.id) && geometrySources.some(property => Object.hasOwn(item.propertyControls ?? {}, property)))) {
+    throw new Error('控件或相关容器的位置、布局已关联参数；请先将相关属性改回默认设置，再调整父对象。');
+  }
+  if ([c, ...uiAncestors(components, id), ...(parent ? [parent, ...uiAncestors(components, parent.id)] : [])].some(c => uiLayoutProblem(c))) throw new Error('先明确恢复不受支持的布局版本，再调整父级。');
+  const world = resolveUiLayout(components, viewport).get(id);
+  const tentative = components.map(item => item.id === id ? { ...item, parentId } : item);
+  if (uiHierarchyProblems(tentative).length) throw new Error('父对象层级无效或过深。');
+  const target = resolveUiLayout(tentative, viewport).get(id), inverse = target && uiInverse(target.basisMatrix);
+  if (!world || !target || !inverse || !target.basis.width || !target.basis.height) throw new Error('父对象的内容区和缩放必须非零。');
+  const local = uiMultiply(inverse, world.matrix), transform = uiDecomposeLinear(local), layout = uiLayoutValues(c);
+  if (!transform) throw new Error('此父级会产生无法用旋转/缩放表达的斜切，或超出缩放范围；请先统一父级缩放后再移动。');
+  const position = uiTransformPoint(local, { x: layout.pivotX * world.width, y: layout.pivotY * world.height });
+  const changed = Math.abs(transform.rotation-layout.rotation)>1e-8 || Math.abs(transform.scaleX-layout.scaleX)>1e-8 || Math.abs(transform.scaleY-layout.scaleY)>1e-8;
+  const result = { parentId, x: (position.x-target.slot.x)/target.basis.width-layout.anchorX, y: (position.y-target.slot.y)/target.basis.height-layout.anchorY,
+    width: world.width/target.basis.width, height: world.height/target.basis.height,
+    ...(changed ? { layout: { ...c.layout, version: 1, ...transform } } : {}),
     ...(parentId ? { childLayer: c.childLayer ?? 'foreground' as const, inheritState: c.inheritState ?? c.kind !== 'button' } : {}),
   };
-  if (uiHierarchyProblems(components.map(item => item.id === id ? { ...item, ...result } : item)).length) throw new Error('父对象层级无效或过深。');
+  const placed = resolveUiLayout(components.map(item => item.id === id ? { ...item, ...result } : item), viewport).get(id);
+  if (!placed || world.matrix.some((value, i) => Math.abs(value-placed.matrix[i]) > 1e-7*Math.max(1,Math.abs(value))) || Math.abs(world.width-placed.width)>1e-7 || Math.abs(world.height-placed.height)>1e-7) throw new Error('目标容器的滚动边界随子项变化，无法同时保留位置；请先将容器滚动回原点，再调整父级。');
   return result;
 }
 
 export function duplicateUiSubtree(components: readonly UiComponent[], id: string, newId: () => string): UiComponent[] {
   const subtree = uiSubtreeIds(components, id), ids = new Map([...subtree].map(id => [id, newId()]));
-  return components.filter(c => subtree.has(c.id)).map(c => ({ ...structuredClone(c), id: ids.get(c.id)!,
+  return components.filter(c => subtree.has(c.id)).map(c => ({ ...cloneData(c), id: ids.get(c.id)!, nativeSlot: undefined,
     name: ((c.name || c.text || c.kind) + ' 副本').slice(0, 120), parentId: c.parentId ? ids.get(c.parentId) ?? c.parentId : undefined,
     x: c.x + (c.id === id ? .02 : 0), y: c.y + (c.id === id ? .02 : 0),
   }));

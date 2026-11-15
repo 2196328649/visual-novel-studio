@@ -18,7 +18,8 @@ key.properties.pageId = game.pageId; recordKey.properties = { variableId: 'key_p
 connectBlueprintPins(keyGraph, key.id, 'exec', recordKey.id, 'exec_in'); project.blueprints.push(keyGraph);
 const graph = project.blueprints.find(graph => graph.id === game.graphId)!;
 const timeInput = graph.exposedInputs.find(input => input.name === '限时秒数')!.id;
-project.blueprints.find(graph => graph.id === overlay.graphId)!.nodes.find(node => node.type === 'showUiPage')!.properties.wait = false;
+// Continuation and input modality are independent; this fixture intentionally permits story input.
+Object.assign(project.blueprints.find(graph => graph.id === overlay.graphId)!.nodes.find(node => node.type === 'showUiPage')!.properties, { wait: false, modalMode: 'modeless' });
 for (const node of project.blueprints.find(graph => graph.id === motion)!.nodes) if (node.type === 'camera' || node.type === 'shake') node.properties.duration = 2;
 const passage = project.nodes.find(node => node.kind === 'passage')!;
 passage.lines = [
@@ -60,7 +61,8 @@ testsuite global:
 testcase blueprint_game_and_motion:
     click id "vn_main_start"
     pause until "交互测试准备。"
-    advance until screen "vn_custom_page_${game.pageId}"
+    keysym "dismiss"
+    pause until eval ("${game.pageId}" in vn_ui_open_pages)
     assert eval (${v(game.scoreId)} == 0)
     screenshot "game-start.png"
     click id "vn_component_${game.targetId}"
@@ -73,7 +75,7 @@ testcase blueprint_game_and_motion:
     click id "vn_component_${game.targetId}"
     pause until eval (${v(game.scoreId)} == 3)
     run FileLoad("blueprint_game", confirm=False, slot=True)
-    pause until screen "vn_custom_page_${game.pageId}"
+    pause until eval ("${game.pageId}" in vn_ui_open_pages)
     assert eval (${v(game.scoreId)} == 2)
     click id "vn_component_${game.targetId}"
     pause until eval (${v(game.scoreId)} == 3)
@@ -91,7 +93,8 @@ testcase blueprint_game_and_motion:
     assert eval ("${game.pageId}" not in vn_ui_open_pages)
     assert eval (vn_bp_out_${graph.id}_${graph.exposedOutputs[0].id} == "成功")
 
-    advance until screen "vn_custom_page_${game.pageId}"
+    keysym "dismiss"
+    pause until eval ("${game.pageId}" in vn_ui_open_pages)
     assert eval (${v(game.scoreId)} == 0 and vn_ui_get("${game.targetId}", "enabled") is True)
     pause until eval (${v(game.resultId)} == "失败")
     screenshot "game-timeout.png"

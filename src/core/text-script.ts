@@ -1,20 +1,29 @@
+import { cloneData } from "./project-mutation";
 import { projectGraphs } from './project-resources';
 import { characterDisplayPreset } from './character-presets';
 import { isStandaloneNode, normalizeChapterPerformances, standaloneChapter } from './standalone-performance';
-import { actionSchema, performancePlaybackSchema, characterFeatureActions, createProject, effectiveCharacter, targets, type Diagnostic, type EffectDefinition, type PerformancePlayback, type Project, type Scene, type SceneTransition, type StageAction, type StoryLine, type StoryNode } from './model';
-import { actorLifetimes, parseActorInstance, parseActorLifetime } from './actor-instance';
-import { endingPerformanceId, availablePerformanceBlueprints, createEndingPerformance, installPerformanceBlueprint } from './builtin-performances';
+import { actionSchema, performancePlaybackSchema, textPresentationSchema, characterFeatureActions, createProject, effectiveCharacter, targets, type Diagnostic, type VariableValue, type EffectDefinition, type PerformancePlayback, type Project, type Scene, type SceneTransition, type StageAction, type StoryLine, type StoryNode, type TextAnimation, type TextPresentation } from './model';
+import { pruneStoryGroups } from './story-groups';
+import { textPresets } from './text-presentation';
+import { dialogueMarkupRows, readMarkedRow, writeLineMarks, type TextMarkupSyntax } from './text-spans';
+import { actorInstanceNumber, actorLifetimes, parseActorInstance, parseActorLifetime } from './actor-instance-identity';
+import { blueprintActorInstanceTargets } from './blueprint-authoring';
+import { endingPerformanceId, availablePerformanceBlueprints, createEndingPerformance, installPerformanceBlueprint, sharePerformancePresets } from './builtin-performances';
 import { blueprintCallName, resolveBlueprintCall } from './blueprint-names';
-import { commandSignature } from './command-parameters';
+import { commandSignature, floatingTextStyleParameters } from './command-parameters';
 import { argumentTokens, bindArguments, argumentValue, argumentText } from './text-arguments';
 import { parseTextCondition, textCondition } from './text-conditions';
+import { parameterAssetFromText, parameterAssetText, parameterReference, parameterTypeName } from './parameter-sets';
+import { parameterAssignmentPattern, parameterConditionalAssignment } from './parameter-references';
 import { textHeading } from './text-headings';
 import { currentScriptText } from './script-text';
 import { createMediaVisual, isSimpleMediaVisual, mediaLifetime, mediaLifetimeNames, parseMediaLifetime, parseVisualRule, parseVisualTransitions, visualTransitionText } from './media-command';
 import { canonicalImageVisual, defaultImageTransform, imageTransform, imageTransformText, parseImageTransform } from './image-transform';
+import { defaultFlowTransition, flowTransitionSchema, remapStoryTransitionPorts, setStoryTransition, storyTransitionPorts, type FlowTransition } from './flow-transitions';
+import { playerFlowStoryIds, type PlayerFlowStoryIdentityKind } from './player-flow-story-identities';
 
 export interface TextIssue extends Diagnostic { sourceLine: number }
-export interface TextSourceLocation { sourceLine: number; nodeId: string; lineId: string; actionCount?: number; reference?: boolean; playback?: boolean }
+export interface TextSourceLocation { sourceLine: number; nodeId: string; lineId: string; actionCount?: number; reference?: boolean; playback?: boolean; markupSyntax?: TextMarkupSyntax }
 export interface TextNodeLocation { sourceLine: number; nodeId: string }
 export interface TextParseResult { project: Project; issues: TextIssue[]; sourceMap: TextSourceLocation[]; nodeLocations: TextNodeLocation[] }
 const palette = ['#72bba6', '#dba776', '#8eaade', '#c88cab', '#8eb777', '#b59ade'];
@@ -26,7 +35,9 @@ const key = (prefix: string, text: string) => {
 };
 const commandParts = (line: string) => {
   const text = line.trim();
-  const match = text.match(/^[@／/]?\s*([^:：]+?)\s*[:：]\s*(.*)$/) ?? text.match(/^[@／/]?\s*([^\s:：]+)\s+(.*)$/);
+  // "@独立演出 1【id】" calls a graph whose name starts like a command; an
+  // explicit 【reference】 is never split into "command + value" at a space.
+  const match = text.match(/^[@／/]?\s*([^:：]+?)\s*[:：]\s*(.*)$/) ?? (/【[^】]+】\s*$/.test(text) ? null : text.match(/^[@／/]?\s*([^\s:：]+)\s+(.*)$/));
   if (match) return { name: match[1].trim().toLowerCase(), value: match[2].trim() };
   return /^[@／/]/.test(text) ? { name: text.slice(1).trim().toLowerCase(), value: '' } : undefined;
 };
@@ -158,6 +169,33 @@ function named<T extends { id: string; name: string }>(items: T[], value: string
   return candidates.length === 1 ? candidates[0] : undefined;
 }
 
+function parseFlowTransition(text: string): { owner: string; port: string; transition: FlowTransition } {
+  const [owner, port, modeValue, duration, outDuration, hold, inDuration, color] = bindArguments(text, commandSignature('连线过渡')!.parameters).values.map(raw => raw === undefined || raw === '' ? undefined : argumentValue(raw));
+  if (typeof owner !== 'string' || !owner.trim()) throw new Error('连线过渡需要指定来源模块。');
+  if (typeof port !== 'string' || !port.trim()) throw new Error('连线过渡需要指定出口。');
+  const modes: Record<string, FlowTransition['mode']> = { 无: 'none', 直接切换: 'none', 叠化: 'dissolve', 溶解: 'dissolve', 纯色: 'color', none: 'none', dissolve: 'dissolve', color: 'color' };
+  const modeText = String(modeValue ?? ''), mode = Object.hasOwn(modes, modeText) ? modes[modeText] : undefined;
+  if (!mode) throw new Error('连线过渡方式请选择直接切换、叠化或纯色。');
+  if (mode !== 'color' && [outDuration, hold, inDuration, color].some(value => value !== undefined)) throw new Error('淡出、停留、淡入和颜色只用于纯色过渡。');
+  if (mode !== 'dissolve' && duration !== undefined) throw new Error('时长只用于叠化；纯色过渡请分别填写淡出、停留和淡入。');
+  const result = flowTransitionSchema.safeParse({ ...defaultFlowTransition(mode), ...(duration === undefined ? {} : { duration }), ...(outDuration === undefined ? {} : { outDuration }), ...(hold === undefined ? {} : { hold }), ...(inDuration === undefined ? {} : { inDuration }), ...(color === undefined ? {} : { color }) });
+  if (!result.success) throw new Error('连线过渡无效：时长必须是不小于 0 的有限数值，纯色必须使用六位颜色。');
+  return { owner, port, transition: result.data };
+}
+
+/** Keep connection settings visible and removable, separate from node snapshots. */
+function nodeFlowTransitionText(node: StoryNode): string[] {
+  const branchName = (port: string) => node.kind === 'choice' ? node.choices.find(option => option.id === port)?.text : node.kind === 'interaction' ? node.hotspots.find(hotspot => hotspot.id === port)?.name : undefined;
+  const value = (text: string) => /[\r\n"'\\]/.test(text) ? JSON.stringify(text) : serializeParameterValue(text);
+  return Object.entries(node.transitions ?? {}).map(([port, transition]) => {
+    const label = branchName(port);
+    const prefix = `@连线过渡：模块=${value(textReference(node.name, node.id))}，出口=${value(label ? textReference(label, port) : port)}`;
+    if (transition.mode === 'none') return `${prefix}，方式=直接切换`;
+    if (transition.mode === 'dissolve') return `${prefix}，方式=叠化，时长=${transition.duration}`;
+    return `${prefix}，方式=纯色，淡出=${transition.outDuration}，停留=${transition.hold}，淡入=${transition.inDuration}，颜色=${transition.color}`;
+  });
+}
+
 function preserveLineIds(previous: StoryLine[], lines: StoryLine[], nodeId: string, pinned = new Set<StoryLine>()) {
   const contentKey = (line: StoryLine) => JSON.stringify([line.speakerId ?? '', line.text]);
   const matching = new Map<string, { ids: string[]; used: number }>();
@@ -200,7 +238,9 @@ export function textCommandAction(project: Project, text: string, strict = false
 }
 export function jumpCommandText(target: string, transition?: SceneTransition) {
   const args = [serializeParameterValue(target)];
-  if (transition && (transition.mode !== 'none' || transition.duration !== 0 || transition.color !== '#000000' || Object.keys(transition.parameters ?? {}).length)) {
+  // An explicit immediate/zero setting is different from having no setting:
+  // keep it through text editing so enabling another mode does not invent .5s.
+  if (transition) {
     args.push({ none: '无', dissolve: '溶解', fade: '淡入淡出' }[transition.mode], String(transition.duration), transition.color);
     args.push(...Object.entries(transition.parameters ?? {}).map(([name, value]) => name + '=' + serializeParameterValue(value)));
   }
@@ -224,7 +264,10 @@ function parseTextCommandAction(project: Project, text: string): StageAction | u
   const signature = commandSignature(command.name);
   if (signature) command.name = signature.name.toLowerCase();
   const args = () => {
-    const values = bindArguments(command!.value, signature?.parameters ?? []).values.map(argumentText);
+    const values = bindArguments(command!.value, signature?.parameters ?? []).values.map((raw, index) =>
+      // Preserve the number's spelling so 0, 1.5, 01 and 1e2 cannot silently
+      // become another actor. Quoted legacy names still use normal decoding.
+      signature?.parameters[index]?.name === '第几个' && raw && !/^["']/.test(raw.trim()) ? raw.trim() : argumentText(raw));
     values.forEach((value, index) => {
       if (!value) return;
       const parameter = signature?.parameters[index];
@@ -275,14 +318,20 @@ function parseTextCommandAction(project: Project, text: string): StageAction | u
       const fit = { 容纳: 'contain', 填满: 'cover', 拉伸: 'stretch' } as const;
       if (content !== 'text' && values[9] && !(values[9] in fit)) throw new Error('适应方式为容纳、填满或拉伸。');
       if (content === 'video' && values[10] && !/^(是|否|true|false)$/i.test(values[10])) throw new Error('循环需要填写是或否。');
+      // Keep raw values here: decoding and re-quoting would turn boolean flags
+      // into strings and lose the distinction between literal text and keywords.
+      const raw = content === 'text' ? bindArguments(command.value, signature!.parameters).values : [];
+      const look = content === 'text' ? parseTextPresentation(project, floatingTextStyleParameters.flatMap((field, index) => raw[18 + index] ? [`${field.name === '逐字时长' ? '时长' : field.name}=${raw[18 + index]}`] : []).join('，')) : undefined;
+      const { fontAssetId, italic: textItalic, align: textAlign, textEffects, ...textMotion } = look ?? {};
       return createMediaVisual(content, content === 'text' ? values[0] ?? '' : selected!.id, { ...parseVisualTransitions(values.slice(content === 'video' ? 12 : 11)), instanceId: values[1], x: numberOr(values[2], .5), y: numberOr(values[3], .5), width: numberOr(values[4], content === 'text' ? .8 : 1), height: numberOr(values[5], content === 'text' ? .2 : 1), duration: numberOr(values[6], 0), layer: numberOr(values[7], 20), wait: /^(是|true)$/i.test(values[8] ?? ''),
+        ...(look ? { fontAssetId, textItalic, textAlign, textEffects, ...(Object.keys(textMotion).length ? { textMotion } : {}) } : {}),
         ...(content === 'text' ? { fontSize: numberOr(values[9], 60), color: values[10] || '#ffffff' } : { fit: fit[values[9] as keyof typeof fit] ?? 'contain' }),
         ...(content === 'video' ? { loop: /^(是|true)$/i.test(values[10] ?? ''), volume: numberOr(values[11], 1) } : {}) });
     }
     case '隐藏对象': return actionSchema.parse({ kind: 'hideVisual', ...(args()[1] || args()[2] ? { exitTransition: parseVisualRule(args()[1], args()[2]) } : {}), ...(args()[3] ? { wait: /^(是|true)$/i.test(args()[3]) } : {}), instanceId: args()[0] || (requestedCommand === '隐藏视频' ? 'video' : requestedCommand === '隐藏文字' ? 'text' : 'image') });
     case '隐藏界面': return { kind: 'hideInterface' };
     case '显示界面': return { kind: 'showInterface' };
-    case '播放台词演出': return { kind: 'startDialogue' };
+    case '开始台词演出': case '播放台词演出': return { kind: 'startDialogue' };
     case '等待': case '暂停': {
       const seconds = args()[0];
       if (seconds && !Number.isFinite(Number(seconds))) throw new Error('等待时长需要填写秒数，例如 @等待：0.5。');
@@ -344,11 +393,16 @@ function parseTextCommandAction(project: Project, text: string): StageAction | u
       if (!graph) return;
       const input: Record<string, string | number | boolean> = {};
       const parameterSource = split < 0 ? '' : command.value.slice(split + 1);
-      const parameters = parameterSource.trim().startsWith('{') ? Object.entries(parseParameters(parameterSource)).map(([name, raw]) => ({ pin: named(graph.exposedInputs, name), raw, name })) : bindArguments(parameterSource, graph.exposedInputs).bindings.filter(({ token }) => token.raw !== '').map(({ token, index }) => ({ pin: graph.exposedInputs[index], raw: argumentValue(token.raw), name: token.name ?? String(index + 1) }));
-      for (const { pin, raw, name } of parameters) {
+      const parameters = parameterSource.trim().startsWith('{') ? Object.entries(parseParameters(parameterSource)).map(([name, raw]) => ({ pin: named(graph.exposedInputs, name), raw, name, source: undefined as string | undefined })) : bindArguments(parameterSource, graph.exposedInputs).bindings.filter(({ token }) => token.raw !== '').map(({ token, index }) => ({ pin: graph.exposedInputs[index], raw: argumentValue(token.raw), name: token.name ?? String(index + 1), source: token.raw }));
+      for (const { pin, raw, name, source } of parameters) {
         if (!pin) throw new Error(`蓝图“${graph.name}”没有输入“${name}”。`);
         let argument = raw;
-        if (typeof raw === 'string') {
+        if (blueprintActorInstanceTargets(graph, pin.id, { blueprints: availablePerformanceBlueprints(project) }).length) {
+          const token = source !== undefined && !/^["']/.test(source.trim()) ? source.trim() : typeof raw === 'number' ? String(raw) : raw;
+          if (typeof token !== 'string') throw new Error('第几个需要填写从 1 开始的整数。');
+          parseActorInstance(token);
+          argument = token;
+        } else if (typeof raw === 'string') {
           if (pin.dataType === 'asset' && raw) argument = raw === '无' || raw.toLowerCase() === 'none' ? '' : named(project.assets, raw)?.id ?? raw;
           else if (pin.dataType === 'character' && raw) argument = named(project.characters, raw)?.id ?? raw;
           else if (pin.dataType === 'scene' && raw) argument = named(project.scenes, raw)?.id ?? raw;
@@ -400,16 +454,46 @@ export function expandStageAction(project: Project, action: StageAction, seen = 
 }
 
 export function applyTextScript(input: Project, source: string, sourceName?: string): TextParseResult {
-  const project = structuredClone(input);
+  const project = cloneData(input);
+  const occupiedStoryIds = playerFlowStoryIds(input);
+  for (const chapter of input.chapters) occupiedStoryIds.chapter.add(chapter.id);
+  for (const scene of input.scenes) occupiedStoryIds.scene.add(scene.id);
+  for (const node of input.nodes) occupiedStoryIds.node.add(node.id);
+  const storyKey = (kind: PlayerFlowStoryIdentityKind, seed: string, prefix: string = kind) => {
+    const base = key(prefix, seed);
+    let id = base, suffix = 2;
+    // New identities cannot revive missing map entries or capture a live object
+    // that appears later in the source. Explicit IDs and old matches bypass this.
+    while (occupiedStoryIds[kind].has(id)) id = `${base}_${suffix++}`;
+    return id;
+  };
+  sharePerformancePresets(input, project);
   const content = normalize(source);
   const issues: TextIssue[] = [];
   const issue = (message: string, sourceLine: number, nodeId?: string) => issues.push({ severity: 'error', message, sourceLine, nodeId });
   const lines = content.split('\n');
   const effects: EffectDefinition[] = [];
+  // A later explicit declaration owns its ID before any implicit copy is matched.
+  const explicitNodeIds = new Set<string>();
+  let scanningEffectBody = false;
   let definition: EffectDefinition | undefined;
   for (const [index, raw] of lines.entries()) {
     if (raw.trimStart().startsWith('//')) continue;
     const command = commandParts(raw);
+    if (command?.name === '效果定义') scanningEffectBody = true;
+    else if (/^\s*[@／/]?效果结束\s*$/.test(raw)) scanningEffectBody = false;
+    else if (!scanningEffectBody) {
+      const heading = textHeading(raw);
+      const identity = heading ? reference(raw.slice(heading.nameFrom!)).id
+        : /^\s*[@／/]/.test(raw) && (command?.name === '节点标记' || command?.name === '实例')
+          ? reference(command.value).id ?? (command.name === '实例' && referenceId.test(command.value.trim()) && input.nodes.some(node => node.id === command.value.trim()) ? command.value.trim() : undefined)
+          : undefined;
+      if (identity) {
+        const kind = heading?.kind === '章节' ? 'chapter' : heading?.kind === '小章节' ? 'scene' : 'node';
+        occupiedStoryIds[kind].add(identity);
+        if (kind === 'node') explicitNodeIds.add(identity);
+      }
+    }
     if (command?.name === '效果定义') {
       const ref = reference(command.value);
       const existing = named(project.effects, command.value);
@@ -421,7 +505,7 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
     else if (definition && raw.trim()) definition.commands.push(raw.trim().replace(/^[@／/]?动作\s*[:：]?\s*/, ''));
   }
   project.effects = [...project.effects.filter(item => !effects.some(effect => effect.id === item.id)), ...effects];
-  let chapter: Project['chapters'][number] = project.chapters[0] ?? { id: key('chapter', project.id), name: '第一章' };
+  let chapter: Project['chapters'][number] = project.chapters[0] ?? { id: storyKey('chapter', project.id), name: '第一章' };
   const oldNodes = new Map<string, StoryNode[]>();
   for (const node of project.nodes) oldNodes.set(node.name, [...(oldNodes.get(node.name) ?? []), node]);
   const oldScenes = project.scenes;
@@ -437,7 +521,11 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
   let declaredPassageId: string | undefined;
   let pendingActions: StageAction[] = [];
   let pendingVoiceId: string | undefined;
+  let pendingTextPresentation: TextPresentation | undefined;
   let pendingLineId: string | undefined;
+  let pendingMarkupDeclaration: { sourceLine: number } | undefined;
+  const quotedDialogueRows = new WeakMap<StoryLine, number>();
+  let pendingChoiceId: { id: string; nodeId: string; sourceLine: number } | undefined;
   let pendingPlayback: PerformancePlayback | undefined;
   let pendingNodeReference: string | undefined;
   let sourceLineNumber = 1;
@@ -450,11 +538,21 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
   let passageNumber = 0;
   let wasBlank = true;
   const links: { nodeId: string; port: string; name: string; sourceLine: number; transition?: SceneTransition }[] = [];
+  const flowTransitions: (ReturnType<typeof parseFlowTransition> & { sourceLine: number })[] = [];
   const sceneBases: { sceneId: string; value: string; sourceLine: number }[] = [];
   let entryReference: { value: string; sourceLine: number } | undefined;
   const explicit = new Set<string>();
   const instances = new Set<string>();
   const usedIds = new Set<string>();
+  const generatedNodeKey = (prefix: 'start' | 'instance', seed: string, kind: StoryNode['kind']) => {
+    const base = key(prefix, seed);
+    // These implicit nodes are reconstructed without a heading on each parse.
+    // Match their prior generated identity before allocating a new one, including
+    // a collision suffix whose original missing reference was later removed.
+    const old = input.nodes.find(node => node.kind === kind && !usedIds.has(node.id) && !explicitNodeIds.has(node.id)
+      && (node.id === base || node.id.startsWith(base + '_') && /^\d+$/.test(node.id.slice(base.length + 1))));
+    return old?.id ?? storyKey('node', seed, prefix);
+  };
   let chapterDeclared = false;
   const previousNode = (value: string, kind?: StoryNode['kind']) => {
     const ref = reference(value);
@@ -467,7 +565,7 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
     const ref = reference(value);
     const old = oldChapters.find(item => ref.id ? item.id === ref.id : item.name === ref.name);
     const existing = project.chapters.find(item => ref.id ? item.id === ref.id : item.name === ref.name);
-    chapter = existing ?? { id: ref.id ?? old?.id ?? key('chapter', `${project.id}/${ref.name}`), name: ref.name || old?.name || '第一章' };
+    chapter = existing ?? { id: ref.id ?? old?.id ?? storyKey('chapter', `${project.id}/${ref.name}`), name: ref.name || old?.name || '第一章' };
     if (!existing) project.chapters.push(chapter);
     scene = { id: '', name: '', chapterId: chapter.id };
     current = undefined;
@@ -479,7 +577,7 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
     if (!chapterDeclared && ref.id && old && old.chapterId !== chapter.id) chapter = project.chapters.find(item => item.id === old.chapterId) ?? oldChapters.find(item => item.id === old.chapterId) ?? chapter;
     if (!project.chapters.some(item => item.id === chapter.id)) project.chapters.push(chapter);
     const existing = project.scenes.find(item => ref.id ? item.id === ref.id : item.name === ref.name && item.chapterId === chapter.id);
-    scene = existing ?? { ...structuredClone(old ?? {}), id: ref.id ?? old?.id ?? key('scene', `${chapter.id}/${ref.name}`), name: ref.name || old?.name || '开场', chapterId: chapter.id };
+    scene = existing ?? { ...cloneData(old ?? {}), id: ref.id ?? old?.id ?? storyKey('scene', `${chapter.id}/${ref.name}`), name: ref.name || old?.name || '开场', chapterId: chapter.id };
     if (!existing) project.scenes.push(scene);
     current = undefined;
     declaredPassageId = undefined;
@@ -487,25 +585,33 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
   const begin = (kind: StoryNode['kind'], value: string, original?: StoryNode, preserveOriginal = false, duplicate = false) => {
     declaredPassageId = undefined;
     if (!scene.id) startScene('开场');
+    const hasNodeMarker = pendingNodeReference !== undefined;
     const identity = pendingNodeReference ?? value;
     pendingNodeReference = undefined;
     const ref = reference(identity);
     const name = ref.name || original?.name || value;
     const old = original ?? previousNode(identity, kind);
-    let id = duplicate ? key('instance', `${scene.id}/${old?.id}/${project.nodes.length}`) : old && !usedIds.has(old.id) ? old.id : ref.id ?? key('node', `${scene.id}/${kind}/${name}`);
-    if (usedIds.has(id)) id = key('node', `${id}/${project.nodes.length}`);
+    let id = duplicate
+      ? (hasNodeMarker ? ref.id : undefined) ?? generatedNodeKey('instance', `${scene.id}/${old?.id}/${project.nodes.length}`, kind)
+      : old && !usedIds.has(old.id) ? old.id : ref.id ?? storyKey('node', `${scene.id}/${kind}/${name}`);
+    if (usedIds.has(id)) id = storyKey('node', `${id}/${project.nodes.length}`);
     usedIds.add(id);
     nodeSourceLines.set(id, sourceLineNumber);
-    const base = { id, name, sceneId: scene.id, x: old?.x ?? 80 + (project.nodes.length % 3) * 290, y: old?.y ?? 80 + Math.floor(project.nodes.length / 3) * 190, textHeading: false as const };
+    // Internal/standalone markers have no heading options. Keep legacy metadata
+    // attached to their stable identity when another heading is edited.
+    const legacyFlowchart = old && (old.textHeading === false || isStandaloneNode(old)) ? old.flowchart : undefined;
+    const base = { id, name, sceneId: scene.id, x: old?.x ?? 80 + (project.nodes.length % 3) * 290, y: old?.y ?? 80 + Math.floor(project.nodes.length / 3) * 190, textHeading: false as const, ...(legacyFlowchart ? { flowchart: cloneData(legacyFlowchart) } : {}) };
     // An instance is an explicit reference to an existing node. Clone the
     // full authored node so animation, interaction and minigame fields do not
     // disappear when the text editor rebuilds the graph.
     if (preserveOriginal && old?.kind === kind) {
-      current = { ...structuredClone(old), ...base };
+      current = { ...cloneData(old), ...base };
       if (current.id !== old.id) {
+        const ports = new Map<string, string>();
         if (current.kind === 'passage') current.lines.forEach(line => { line.id = key('line', `${current!.id}/${line.id}`); });
-        if (current.kind === 'choice') current.choices.forEach(choice => { choice.id = key('option', `${current!.id}/${choice.id}`); });
-        if (current.kind === 'interaction') current.hotspots.forEach(hotspot => { hotspot.id = key('hotspot', `${current!.id}/${hotspot.id}`); });
+        if (current.kind === 'choice') current.choices.forEach(choice => { const id = key('option', `${current!.id}/${choice.id}`); ports.set(choice.id, id); choice.id = id; });
+        if (current.kind === 'interaction') current.hotspots.forEach(hotspot => { const id = key('hotspot', `${current!.id}/${hotspot.id}`); ports.set(hotspot.id, id); hotspot.id = id; });
+        remapStoryTransitionPorts(current, ports);
       }
       project.nodes.push(current);
       return current;
@@ -525,7 +631,7 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
         ...(old?.kind === 'chapterTitle' && old.backgroundId !== undefined ? { backgroundId: old.backgroundId } : {}),
         ...(old?.kind === 'chapterTitle' && old.titleImageId !== undefined ? { titleImageId: old.titleImageId } : {}),
         ...(old?.kind === 'chapterTitle' && old.soundId !== undefined ? { soundId: old.soundId } : {}) }; break;
-      default: current = old ? { ...structuredClone(old), ...base } : { ...base, kind: 'passage', lines: [] };
+      default: current = old ? { ...cloneData(old), ...base } : { ...base, kind: 'passage', lines: [] };
     }
     if (current.kind === 'chapterTitle' && old?.kind === 'passage') Object.assign(current, { ...standaloneChapter(old), kind: 'chapterTitle' });
     project.nodes.push(current);
@@ -541,24 +647,40 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
       usedIds.delete(label.id);
       const node = begin(kind, textReference(label.name, label.id), original ?? input.nodes.find(node => node.id === label.id) ?? label, preserveOriginal);
       delete node.textHeading;
-      if (label.flowchart) node.flowchart = label.flowchart;
+      if (label.flowchart) node.flowchart = label.flowchart; else delete node.flowchart;
       nodeSourceLines.set(node.id, labelSourceLine);
       return node;
     }
     return begin(kind, value, original, preserveOriginal);
   };
   const passage = () => current?.kind === 'passage' && current.id !== completedStandalone ? current : begin('passage', `段落 ${++passageNumber}`) as Extract<StoryNode, { kind: 'passage' }>;
+  // Dialogue rows may carry part-line effects: 〖词｜效果〗 and 〖停顿=秒〗.
+  const appendMarked = (line: StoryLine, row: string, separator = '', syntax: TextMarkupSyntax = 'legacy') => {
+    let read: ReturnType<typeof readMarkedRow>;
+    let valid = true;
+    try { read = readMarkedRow(project, row, Array.from(line.text + separator).length, syntax); }
+    // An unreadable mark stays as written, so prose that happens to use 〖〗 never blocks a project.
+    // Explicit quoted syntax is never silently reduced to a style-free line:
+    // keep its draft and report an error so saving/playing cannot accept loss.
+    catch (error) { valid = false; issues.push({ severity: syntax === 'quoted' ? 'error' : 'warning', message: `${error instanceof Error ? error.message : '文字效果标记无效。'} 这段文字按原样显示。`, sourceLine: sourceLineNumber, nodeId: current?.id }); read = { text: row, spans: [], pauses: [] }; }
+    line.text += separator + read.text;
+    if (read.spans.length || read.pauses.length) writeLineMarks(line, { spans: [...(line.textSpans ?? []), ...read.spans], pauses: [...(line.textPauses ?? []), ...read.pauses] }, line.text);
+    if (syntax === 'quoted' && valid && (row || separator === '\n')) quotedDialogueRows.set(line, sourceLineNumber); else quotedDialogueRows.delete(line);
+  };
   const addDialogue = (speaker: string, text: string, continuation = false, recordSource = true, silent = false) => {
+    const syntax: TextMarkupSyntax = pendingMarkupDeclaration ? 'quoted' : 'legacy';
+    if (pendingMarkupDeclaration) continuation = false;
+    pendingMarkupDeclaration = undefined;
     const node = passage();
     // Leading actions belong to the new passage too, including after a
     // standalone performance whose closing declaration starts a new boundary.
     const firstActionLine = pendingLocations[0]?.sourceLine;
     if (!node.lines.length && firstActionLine) nodeSourceLines.set(node.id, Math.min(nodeSourceLines.get(node.id)!, firstActionLine));
     declaredPassageId = undefined;
-    if (continuation && node.lines.length && !pendingActions.length && !pendingVoiceId && !pendingLineId) {
+    if (continuation && node.lines.length && !pendingActions.length && !pendingVoiceId && !pendingTextPresentation && !pendingLineId) {
       const line = node.lines[node.lines.length - 1];
-      line.text += text;
-      locations.push({ sourceLine: sourceLineNumber, nodeId: node.id, line });
+      appendMarked(line, text, '', quotedDialogueRows.get(line) === sourceLineNumber - 1 ? 'quoted' : syntax);
+      locations.push({ sourceLine: sourceLineNumber, nodeId: node.id, line, ...(quotedDialogueRows.has(line) ? { markupSyntax: 'quoted' as const } : {}) });
       return;
     }
     let speakerId: string | undefined;
@@ -567,33 +689,47 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
       if (!character) { character = { id: key('character', speaker), name: reference(speaker).name, color: palette[project.characters.length % palette.length], expressions: [] }; project.characters.push(character); }
       speakerId = character.id;
     }
-    const line: StoryLine = { id: pendingLineId && !usedLineIds.has(pendingLineId) ? pendingLineId : key('line', `${node.id}/${node.lines.length}`), ...(speakerId ? { speakerId } : {}), text, actions: pendingActions, ...(pendingVoiceId ? { voiceId: pendingVoiceId } : {}) };
+    const line: StoryLine = { id: pendingLineId && !usedLineIds.has(pendingLineId) ? pendingLineId : key('line', `${node.id}/${node.lines.length}`), ...(speakerId ? { speakerId } : {}), text: '', actions: pendingActions, ...(pendingVoiceId ? { voiceId: pendingVoiceId } : {}) };
+    appendMarked(line, text, '', syntax);
     if (silent) line.silent = true;
     if (pendingPlayback) line.playback = pendingPlayback;
+    if (pendingTextPresentation) line.textPresentation = pendingTextPresentation;
     if (pendingLineId && !usedLineIds.has(pendingLineId)) { pinnedLines.add(line); usedLineIds.add(pendingLineId); }
     node.lines.push(line);
     locations.push(...pendingLocations.map(location => ({ ...location, nodeId: node.id, line })));
-    if (recordSource) locations.push({ sourceLine: sourceLineNumber, nodeId: node.id, line });
+    if (recordSource) locations.push({ sourceLine: sourceLineNumber, nodeId: node.id, line, ...(syntax === 'quoted' ? { markupSyntax: syntax } : {}) });
     pendingLocations = [];
     pendingActions = [];
     pendingVoiceId = undefined;
+    pendingTextPresentation = undefined;
     pendingLineId = undefined;
     pendingPlayback = undefined;
   };
   for (const [index, raw] of lines.entries()) {
     sourceLineNumber = index + 1;
     const trimmed = raw.trim();
+    // Hidden dialogue identities may be reinserted between the visible
+    // declaration and its owner by textDocument edits. They are the sole
+    // structural row allowed between the declaration and dialogue.
+    if (pendingMarkupDeclaration && (!trimmed || /^(?:[@／/#]|;)/.test(trimmed) && !/^[@／/]\s*对白标记\s*[:：]/.test(trimmed) || /^[-—…\.·]{3,}$/.test(trimmed))) {
+      issue('局部文字语法声明必须紧接下一句台词；本次声明未应用。', pendingMarkupDeclaration.sourceLine, current?.id);
+      pendingMarkupDeclaration = undefined;
+    }
     if (!trimmed) { wasBlank = true; continue; }
     if (trimmed.startsWith('//')) continue;
     if (definitionOpen && !/^[@／/]?效果结束\s*$/.test(trimmed)) continue;
     const bare = trimmed.match(/^[@／/]\s*(开始|返回|选择|独立演出)\s*$/);
     const command = commandParts(trimmed) ?? (bare ? { name: bare[1], value: '' } : undefined);
+    if (pendingChoiceId && command?.name !== '选项') {
+      issue('选项标记需要紧接一条 @选项。', pendingChoiceId.sourceLine, pendingChoiceId.nodeId);
+      pendingChoiceId = undefined;
+    }
     if (command?.name === '效果定义') { definitionOpen = true; continue; }
     if (/^[@／/]?效果结束\s*$/.test(trimmed)) { definitionOpen = false; continue; }
     if (definitionOpen) continue;
     const heading = textHeading(trimmed);
     if (heading) {
-      if (pendingActions.length || pendingVoiceId || pendingLineId) addDialogue('旁白', '', false, false);
+      if (pendingActions.length || pendingVoiceId || pendingTextPresentation || pendingLineId) addDialogue('旁白', '', false, false);
       const { kind } = heading, name = trimmed.slice(heading.nameFrom!);
       const rawOptions = heading.parameters && trimmed.slice(heading.parameters.start, heading.parameters.end);
       let flowchart: StoryNode['flowchart'];
@@ -603,7 +739,7 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
         if (options['流程图'] !== undefined && typeof options['流程图'] !== 'boolean') throw new Error('流程图请填写“是”或“否”。');
         if (options['显示名称'] !== undefined && (typeof options['显示名称'] !== 'string' || options['显示名称'].length > 120)) throw new Error('显示名称需要不超过 120 个字的文字。');
         const style = options['样式'] === undefined ? undefined : typeof options['样式'] === 'string' ? named(project.ui.flowStyles ?? [], options['样式']) : undefined;
-        if (options['样式'] !== undefined && !style) throw new Error('流程图样式不存在，请在“界面 → 流程图 → 框样式”中创建后选择。');
+        if (options['样式'] !== undefined && !style) throw new Error('节点外观预设不存在，请选中“界面”中的玩家剧情图，在“节点样式 → 节点外观预设”中创建后选择。');
         if (Object.keys(options).length) flowchart = { visible: options['流程图'] as boolean | undefined, name: options['显示名称'] as string | undefined, ...(style ? { styleId: style.id } : {}) };
       } catch (error) { issue(error instanceof Error ? error.message : '目录参数无效。', index + 1); continue; }
       if (kind === '章节') startChapter(name);
@@ -620,10 +756,15 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
       continue;
     }
     if (trimmed.startsWith('#')) { issue('目录只支持 #章节：名称、#小章节：名称、#段落：名称；演出和流程操作请使用 @ 指令。', index + 1); continue; }
-    if (/^[-—…\.·]{3,}$/.test(trimmed)) { if (pendingActions.length || pendingVoiceId || pendingLineId) addDialogue('旁白', '', false, false); current = undefined; wasBlank = true; continue; }
+    if (/^[-—…\.·]{3,}$/.test(trimmed)) { if (pendingActions.length || pendingVoiceId || pendingTextPresentation || pendingLineId) addDialogue('旁白', '', false, false); current = undefined; wasBlank = true; continue; }
     if (command && (/^[@／/]/.test(trimmed) || command.name === '效果')) {
       const { name } = command;
       let value = command.value;
+      if (name === '连线过渡') {
+        try { flowTransitions.push({ ...parseFlowTransition(value), sourceLine: index + 1 }); }
+        catch (error) { issue(error instanceof Error ? error.message : '连线过渡无效。', index + 1, current?.id); }
+        continue;
+      }
       if (['入口', '调用', '配音'].includes(name)) {
         try { value = argumentText(bindArguments(value, commandSignature(name)!.parameters).values[0]); }
         catch (error) { issue(error instanceof Error ? error.message : '参数无效。', index + 1, current?.id); continue; }
@@ -635,7 +776,7 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
         // before a passage's first visible line may precede its marker; keep
         // it with that passage instead of manufacturing an empty dialogue.
         const original = input.nodes.find(node => node.id === ref.id);
-        if (original?.kind !== 'passage' && (pendingActions.length || pendingVoiceId || pendingLineId)) addDialogue('旁白', '', false, false);
+        if (original?.kind !== 'passage' && (pendingActions.length || pendingVoiceId || pendingTextPresentation || pendingLineId)) addDialogue('旁白', '', false, false);
         if (current?.kind === 'passage' && current.id === declaredPassageId && !current.lines.length) {
           const previousId = current.id, line = nodeSourceLines.get(previousId)!;
           usedIds.delete(previousId); nodeSourceLines.delete(previousId);
@@ -665,7 +806,7 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
         continue;
       }
       if (name === '开始' || name === '返回' || name === '选择' || name === '返回标题' || name === '返回标题界面') {
-        if (pendingActions.length || pendingVoiceId || pendingLineId) addDialogue('旁白', '', false, false);
+        if (pendingActions.length || pendingVoiceId || pendingTextPresentation || pendingLineId) addDialogue('旁白', '', false, false);
         const kind = ({ 开始: 'start', 返回: 'return', 选择: 'choice', 返回标题: 'end', 返回标题界面: 'end' } as const)[name];
         const node = beginOperation(kind, `${name} ${project.nodes.length + 1}`);
         if (node.kind === 'choice') node.prompt = value;
@@ -725,11 +866,28 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
         continue;
       }
       if (name === '入口') { entryReference = { value, sourceLine: index + 1 }; continue; }
+      if (name === '局部文字语法') {
+        if (value !== '带引号') issue('局部文字语法只支持“带引号”；声明未应用。', index + 1, current?.id);
+        else pendingMarkupDeclaration = { sourceLine: index + 1 };
+        continue;
+      }
       if (name === '对白标记') {
         const id = reference(value).id ?? (referenceId.test(value) ? value : undefined);
-        if (pendingLineId && pendingLineId !== id && (pendingActions.length || pendingVoiceId)) addDialogue('旁白', '', false, false);
+        if (pendingLineId && pendingLineId !== id && (pendingActions.length || pendingVoiceId || pendingTextPresentation)) addDialogue('旁白', '', false, false);
         if (id) pendingLineId = id;
-        else issue('对白标记需要有效的行引用。', index + 1, current?.id);
+        else { issue('对白标记需要有效的行引用。', index + 1, current?.id); pendingMarkupDeclaration = undefined; }
+        continue;
+      }
+      if (name === '选项标记') {
+        const id = reference(value).id ?? (referenceId.test(value) ? value : undefined);
+        if (current?.kind !== 'choice') issue('选项标记需要写在 @选择 后、@选项 前。', index + 1, current?.id);
+        else if (!id) issue('选项标记需要有效的选项引用。', index + 1, current.id);
+        else pendingChoiceId = { id, nodeId: current.id, sourceLine: index + 1 };
+        continue;
+      }
+      if (name === '文字演出' || name === '文字样式') {
+        try { pendingTextPresentation = parseTextPresentation(project, value); }
+        catch (error) { issue(error instanceof Error ? error.message : '文字演出设置无效。', index + 1, current?.id); }
         continue;
       }
       if (name === '配音') {
@@ -741,8 +899,8 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
       }
       if (name === '续行' && current?.kind === 'passage' && current.lines.length) {
         const line = current.lines[current.lines.length - 1];
-        line.text += `\n${value}`;
-        locations.push({ sourceLine: index + 1, nodeId: current.id, line });
+        appendMarked(line, value, '\n', quotedDialogueRows.get(line) === sourceLineNumber - 1 ? 'quoted' : 'legacy');
+        locations.push({ sourceLine: index + 1, nodeId: current.id, line, ...(quotedDialogueRows.has(line) ? { markupSyntax: 'quoted' as const } : {}) });
         continue;
       }
       if (name === '演出实例') {
@@ -752,18 +910,18 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
         const snapshotId = snapshotReference?.[2] ?? key('performance', ref.id ?? ref.name);
         let snapshot = project.effects.find(effect => effect.id === snapshotId);
         if (!snapshot && sourceLine) {
-          snapshot = { id: snapshotId, name: `${(ref.name || '对白').slice(0, 118)}演出`, commands: [], actions: structuredClone(sourceLine.actions) };
+          snapshot = { id: snapshotId, name: `${(ref.name || '对白').slice(0, 118)}演出`, commands: [], actions: cloneData(sourceLine.actions) };
           project.effects.push(snapshot);
         }
         if (!snapshot) { issue(`找不到演出实例：${ref.name}`, index + 1, current?.id); continue; }
-        pendingActions.push(...structuredClone(snapshot.actions ?? []), ...snapshot.commands.flatMap(text => { const action = textCommandAction(project, text); return action ? [action] : []; }));
+        pendingActions.push(...cloneData(snapshot.actions ?? []), ...snapshot.commands.flatMap(text => { const action = textCommandAction(project, text); return action ? [action] : []; }));
         pendingLocations.push({ sourceLine: index + 1, actionCount: pendingActions.length });
         if (sourceLine && !pendingLineId) pendingLineId = sourceLine.id;
         if (!snapshotReference && sourceLine?.voiceId) pendingVoiceId = sourceLine.voiceId;
         continue;
       }
       if (['实例', '复用节点', '节点实例', '互动实例', '小游戏实例'].includes(name)) {
-        if (pendingActions.length || pendingVoiceId || pendingLineId) addDialogue('旁白', '', false, false);
+        if (pendingActions.length || pendingVoiceId || pendingTextPresentation || pendingLineId) addDialogue('旁白', '', false, false);
         const ref = reference(value);
         const allowedKind = name === '互动实例' ? 'interaction' : name === '小游戏实例' ? 'minigame' : undefined;
         const candidates = input.nodes.filter(node => (ref.id ? node.id === ref.id : node.name === ref.name || node.id === ref.name) && (!allowedKind || node.kind === allowedKind));
@@ -771,13 +929,18 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
         const originals = local.length ? local : candidates;
         if (originals.length !== 1) { issue(originals.length ? `可复用节点名称有歧义：${value}` : `找不到可复用节点：${value}`, index + 1); continue; }
         const original = originals[0];
-        if (name === '实例') beginOperation(original.kind, original.name, original, true);
+        if (name === '实例') {
+          beginOperation(original.kind, original.name, original, true);
+          // Serialized instances carry editable transition declarations below.
+          // Removing a declaration must not restore its old hidden setting.
+          delete current!.transitions;
+        }
         else begin(original.kind, original.name, original, true, true);
         explicit.add(`${current!.id}/next`); instances.add(current!.id);
         continue;
       }
       if (name === '跳转' || name === '调用') {
-        if (pendingActions.length || pendingVoiceId || pendingLineId) addDialogue('旁白', '', false, false);
+        if (pendingActions.length || pendingVoiceId || pendingTextPresentation || pendingLineId) addDialogue('旁白', '', false, false);
         let transition: ReturnType<typeof parseJumpTransition>;
         try { if (name === '跳转') transition = parseJumpTransition(value); }
         catch (error) { issue(error instanceof Error ? error.message : '跳转转场格式无效。', index + 1); continue; }
@@ -796,13 +959,16 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
         continue;
       }
       if (name === '选项') {
-        if (current?.kind !== 'choice' && (pendingActions.length || pendingVoiceId || pendingLineId)) addDialogue('旁白', '', false, false);
+        if (current?.kind !== 'choice' && (pendingActions.length || pendingVoiceId || pendingTextPresentation || pendingLineId)) addDialogue('旁白', '', false, false);
         if (current?.kind !== 'choice') beginOperation('choice', `选择 ${project.nodes.length + 1}`);
         const choice = current as Extract<StoryNode, { kind: 'choice' }>;
         const parts = value.split(/\s*(?:->|→|前往)\s*/);
         const original = input.nodes.find(node => node.id === choice.id);
         const oldChoice = original?.kind === 'choice' ? original.choices.find(item => item.text === parts[0] && !choice.choices.some(option => option.id === item.id)) ?? original.choices[choice.choices.length] : undefined;
-        const optionId = oldChoice && !choice.choices.some(option => option.id === oldChoice.id) ? oldChoice.id : key('option', `${choice.id}/${choice.choices.length}`);
+        const marked = pendingChoiceId?.nodeId === choice.id ? pendingChoiceId.id : undefined;
+        pendingChoiceId = undefined;
+        if (marked && choice.choices.some(option => option.id === marked)) { issue(`选项标记重复：${marked}`, index + 1, choice.id); continue; }
+        const optionId = marked ?? (oldChoice && !choice.choices.some(option => option.id === oldChoice.id) ? oldChoice.id : key('option', `${choice.id}/${choice.choices.length}`));
         choice.choices.push({ id: optionId, text: parts[0] });
         if (parts[1] && parts[1] !== '无') links.push({ nodeId: choice.id, port: optionId, name: parts[1], sourceLine: index + 1 });
         else if (parts[1] === '无') continue;
@@ -810,7 +976,7 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
         continue;
       }
       if (name === '条件') {
-        if (pendingActions.length || pendingVoiceId || pendingLineId) addDialogue('旁白', '', false, false);
+        if (pendingActions.length || pendingVoiceId || pendingTextPresentation || pendingLineId) addDialogue('旁白', '', false, false);
         try {
           const condition = parseTextCondition(project, value);
           const node = beginOperation('condition', `条件 ${project.nodes.length + 1}`);
@@ -827,26 +993,35 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
         continue;
       }
       if (name === '设置' || name === '变量' || name === '如果') {
-        if (pendingActions.length || pendingVoiceId || pendingLineId) addDialogue('旁白', '', false, false);
+        if (pendingActions.length || pendingVoiceId || pendingTextPresentation || pendingLineId) addDialogue('旁白', '', false, false);
         let when: import('./model').Condition | undefined;
         if (name === '如果' || /^如果\s*/.test(value)) {
           try {
-            const conditional = value.replace(/^如果\s*/, '').match(/^(.+)\s*[，,]\s*([^，,]+(?:\+=|=|设为|增加).+)$/);
+            const conditional = parameterConditionalAssignment(value.replace(/^如果\s*/, ''));
             if (!conditional) throw new Error('条件赋值格式为：@设置：如果 章节进度 < 2，章节进度 = 2');
-            when = parseTextCondition(project, conditional[1]); value = conditional[2];
+            when = parseTextCondition(project, conditional.condition); value = conditional.assignment;
           } catch (error) { issue(error instanceof Error ? error.message : '条件赋值无效。', index + 1); continue; }
         }
-        const match = value.match(/^(.+?)\s*(\+=|=|设为|增加)\s*(.+)$/);
+        const match = value.match(parameterAssignmentPattern);
         if (!match) { issue('状态格式为：@设置：好感度 += 1', index + 1); continue; }
         beginOperation('set', `修改 ${match[1].trim()} ${project.nodes.length + 1}`);
         const node = current as Extract<StoryNode, { kind: 'set' }>;
         if (when) node.when = when;
         const valueText = stripQuotes(match[3]);
-        const parsedValue = /^(是|true)$/i.test(valueText) ? true : /^(否|false)$/i.test(valueText) ? false : valueText !== '' && Number.isFinite(Number(valueText)) ? Number(valueText) : valueText;
+        let parsedValue: VariableValue;
+        try { parsedValue = argumentValue(match[3]); }
+        catch { issue('赋值内容的引号或文字格式无效。', index + 1, node.id); continue; }
         const variableReference = reference(match[1].trim());
         let variable = named(project.variables, match[1].trim());
         if (!variable && (variableReference.id || project.variables.filter(item => item.name === variableReference.name).length > 1)) { issue(`状态引用不存在或名称有歧义：${match[1].trim()}`, index + 1, node.id); continue; }
-        if (!variable) { variable = { id: key('variable', match[1].trim()), name: match[1].trim(), type: typeof parsedValue as 'number' | 'boolean' | 'string', initial: typeof parsedValue === 'number' ? 0 : typeof parsedValue === 'boolean' ? false : '', persistent: false }; project.variables.push(variable); }
+        if (variable?.type === 'asset') {
+          // Asset parameters are written by asset name; keep unknown text so the author can fix it.
+          if (match[2] === '+=' || match[2] === '增加') { issue(`“${variable.name}”是${parameterTypeName(variable)}参数，只能用 = 设为某个素材。`, index + 1, node.id); continue; }
+          const assetId = parameterAssetFromText(project, variable, match[3]);
+          if (assetId === undefined) issue(`未找到${parameterTypeName(variable)}素材：${valueText}`, index + 1, node.id);
+          parsedValue = assetId ?? valueText;
+        }
+        if (!variable) { variable = { id: key('variable', match[1].trim()), name: match[1].trim(), type: typeof parsedValue as 'number' | 'boolean' | 'string', initial: typeof parsedValue === 'number' ? 0 : typeof parsedValue === 'boolean' ? false : '', persistent: false, resetWithSettings: false }; project.variables.push(variable); }
         node.variableId = variable.id; node.operation = match[2] === '+=' || match[2] === '增加' ? 'add' : 'set'; node.value = parsedValue;
         continue;
       }
@@ -864,12 +1039,17 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
     // Chapter-like titles in imported prose often contain a colon, for
     // example “琼.第一回：归（崇祯五年）”. Detect them before the dialogue
     // pattern so they do not become a character named after the title.
-    if (!project.nodes.length && /^[^:：]{0,100}第[零〇一二三四五六七八九十百千万两\d]+[回章节篇部卷]/.test(trimmed) && trimmed.length <= 200) { project.name = trimmed; continue; }
+    if (!project.nodes.length && /^[^:：]{0,100}第[零〇一二三四五六七八九十百千万两\d]+[回章节篇部卷]/.test(trimmed) && trimmed.length <= 200) {
+      if (pendingMarkupDeclaration) { issue('局部文字语法声明后需要台词，不能用于作品标题。', pendingMarkupDeclaration.sourceLine); pendingMarkupDeclaration = undefined; }
+      project.name = trimmed; continue;
+    }
     const dialogue = trimmed.match(/^([^:：]{1,40})\s*[:：]\s*(.*)$/);
     addDialogue(dialogue?.[1].trim() ?? '旁白', dialogue?.[2] ?? trimmed, !dialogue && !wasBlank);
     wasBlank = false;
   }
-  if (pendingActions.length || pendingVoiceId || pendingLineId || pendingPlayback) addDialogue('旁白', '', false, false);
+  if (pendingChoiceId) issue('选项标记后缺少 @选项。', pendingChoiceId.sourceLine, pendingChoiceId.nodeId);
+  if (pendingMarkupDeclaration) { issue('局部文字语法声明后缺少台词；声明未应用。', pendingMarkupDeclaration.sourceLine, current?.id); pendingMarkupDeclaration = undefined; }
+  if (pendingActions.length || pendingVoiceId || pendingTextPresentation || pendingLineId || pendingPlayback) addDialogue('旁白', '', false, false);
   if (!project.nodes.length) addDialogue('旁白', '', false, false);
   for (const link of sceneBases) {
     const allScenes = [...new Map([...oldScenes, ...project.scenes].map(item => [item.id, item])).values()];
@@ -882,9 +1062,9 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
     const seen = new Set<string>();
     while (current && !seen.has(current.id)) {
       seen.add(current.id);
-      if (!project.scenes.some(item => item.id === current!.id)) project.scenes.push(structuredClone(current));
+      if (!project.scenes.some(item => item.id === current!.id)) project.scenes.push(cloneData(current));
       const chapter = oldChapters.find(item => item.id === current!.chapterId);
-      if (chapter && !project.chapters.some(item => item.id === chapter.id)) project.chapters.push(structuredClone(chapter));
+      if (chapter && !project.chapters.some(item => item.id === chapter.id)) project.chapters.push(cloneData(chapter));
       current = allScenes.find(item => item.id === current?.baseSceneId);
     }
   }
@@ -895,7 +1075,7 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
   }
   if (!project.nodes.some(node => node.kind === 'start') && !entryReference) {
     const first = project.nodes[0];
-    project.nodes.unshift({ id: key('start', project.id), kind: 'start', name: '开始', sceneId: first.sceneId, x: 20, y: 80, next: first.id, textHeading: false });
+    project.nodes.unshift({ id: generatedNodeKey('start', project.id, 'start'), kind: 'start', name: '开始', sceneId: first.sceneId, x: 20, y: 80, next: first.id, textHeading: false });
   }
   // An explicit entry also marks the graph's authored structure. Generated
   // text must preserve a deliberately disconnected or return-only graph;
@@ -917,9 +1097,9 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
     const keepScene = (sceneId: string) => {
       const owner = input.scenes.find(item => item.id === sceneId);
       if (!owner) return;
-      if (!project.scenes.some(item => item.id === sceneId)) project.scenes.push(structuredClone(owner));
+      if (!project.scenes.some(item => item.id === sceneId)) project.scenes.push(cloneData(owner));
       const chapter = input.chapters.find(item => item.id === owner.chapterId);
-      if (chapter && !project.chapters.some(item => item.id === chapter.id)) project.chapters.push(structuredClone(chapter));
+      if (chapter && !project.chapters.some(item => item.id === chapter.id)) project.chapters.push(cloneData(chapter));
     };
     keepScene(targetScene.id);
     // Imported prose may explicitly call a scene that is authored visually.
@@ -933,7 +1113,7 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
       const original = originals.get(id);
       if (!original) continue;
       kept.add(id);
-      project.nodes.push(structuredClone(original));
+      project.nodes.push(cloneData(original));
       keepScene(original.sceneId);
       for (const edge of targets(original)) if (edge.target) pending.push(edge.target);
     }
@@ -1027,7 +1207,28 @@ export function applyTextScript(input: Project, source: string, sourceName?: str
       else if (/^\s*[@／/]\s*(?:章节(?:标题|动效|背景|题图|配乐)|独立演出)\s*(?:[:：]|$)/.test(lines[sourceLine - 1])) sourceMap.push({ ...converted, sourceLine, actionCount: 1 });
     }
   }
+  const appliedTransitions = new Set<string>();
+  for (const declaration of flowTransitions) {
+    const node = named(project.nodes, declaration.owner);
+    if (!node) { issue(`连线过渡的来源模块不存在或名称有歧义：${declaration.owner}`, declaration.sourceLine); continue; }
+    const ref = reference(declaration.port), markedPort = declaration.port.match(/【([a-z][a-z0-9_]{0,63})】$/)?.[1];
+    const aliases: Record<string, string> = { 继续: 'next', 下一步: 'next', 满足: 'yes', 不满足: 'no', 跳转: 'target', 调用: 'target', 返回后: 'next', 成功: 'success', 失败: 'failure', 取消: 'cancel', 超时: 'timeout' };
+    const branch = node.kind === 'choice' ? node.choices.filter(item => item.text === ref.name).map(item => item.id) : node.kind === 'interaction' ? node.hotspots.filter(item => item.name === ref.name).map(item => item.id) : [];
+    const port = markedPort ?? (storyTransitionPorts(node).some(item => item.port === ref.name) ? ref.name : branch.length === 1 ? branch[0] : branch.length > 1 ? undefined : Object.hasOwn(aliases, ref.name) ? aliases[ref.name] : referenceId.test(ref.name) ? ref.name : undefined);
+    if (!port) { issue(`连线过渡出口不存在或名称有歧义：${declaration.port}`, declaration.sourceLine, node.id); continue; }
+    const identity = `${node.id}/${port}`;
+    if (appliedTransitions.has(identity)) { issue('同一模块出口不能重复设置连线过渡。', declaration.sourceLine, node.id); continue; }
+    appliedTransitions.add(identity);
+    if (storyTransitionPorts(node, project).some(item => item.port === port)) setStoryTransition(project, node.id, port, declaration.transition);
+    else {
+      // Preserve explicitly saved but inactive ports so authors can locate and
+      // repair them; parsing must never silently discard a saved setting.
+      node.transitions = { ...node.transitions, [port]: declaration.transition };
+      issues.push({ severity: 'warning', message: `连线过渡的出口已不存在或当前不适用：${declaration.port}。设置已保留，可删除此指令恢复。`, sourceLine: declaration.sourceLine, nodeId: node.id });
+    }
+  }
   sourceMap.sort((a, b) => a.sourceLine - b.sourceLine);
+  pruneStoryGroups(project);
   return { project, issues, sourceMap, nodeLocations };
 }
 
@@ -1045,9 +1246,9 @@ export function actionText(project: Project, action: StageAction): string {
     case 'stopMusic': return `@停止音乐：${action.fade}`;
     case 'hideInterface': return '@隐藏界面';
     case 'showInterface': return '@显示界面';
-    case 'startDialogue': return '@播放台词演出';
+    case 'startDialogue': return '@开始台词演出';
     case 'pause': return `@等待：${action.seconds}`;
-    case 'hide': return `@隐藏角色：${character(action.characterId)}${action.transition !== 'dissolve' ? '，转场=' + ({ none: '无', fade: '淡入淡出', move: '移动', dissolve: '溶解' }[action.transition]) : ''}${action.duration !== undefined ? '，时长=' + action.duration : ''}${action.wait !== undefined ? '，等待完成=' + (action.wait ? '是' : '否') : ''}${action.instanceId ? '，实例ID=' + action.instanceId : ''}`;
+    case 'hide': return `@隐藏角色：${character(action.characterId)}${action.transition !== 'dissolve' ? '，转场=' + ({ none: '无', fade: '淡入淡出', move: '移动', dissolve: '溶解' }[action.transition]) : ''}${action.duration !== undefined ? '，时长=' + action.duration : ''}${action.wait !== undefined ? '，等待完成=' + (action.wait ? '是' : '否') : ''}${actorInstanceNumber(action.instanceId) === 1 ? '' : action.instanceId ? '，' + (actorInstanceNumber(action.instanceId) === undefined ? '实例ID=' : '第几个=') + action.instanceId : ''}`;
     case 'show': {
       const fields: string[] = [];
       const add = (name: string, value: string | number) => fields.push(name + '=' + serializeParameterValue(value));
@@ -1066,7 +1267,9 @@ export function actionText(project: Project, action: StageAction): string {
       if (action.presetId && (action.presetId !== 'default' || geometry)) add('站位预设', action.presetId === 'default' ? '角色默认' : textReference(characterDisplayPreset(project, action.characterId, action.presetId)?.name ?? '缺失预设', action.presetId));
       else if (!action.presetId && !geometry) add('站位预设', '手动');
       if (action.lifetime && (action.characterId || action.lifetime !== 'line')) add('显示范围', actorLifetimes[action.lifetime]);
-      if (action.instanceId) add('实例ID', action.instanceId);
+      const number = actorInstanceNumber(action.instanceId);
+      if (number !== undefined && number > 1) add('第几个', number);
+      else if (number === undefined && action.instanceId) add('实例ID', action.instanceId);
       for (const [phase, label] of [['enter', '入场'], ['exit', '离场'], ['expression', '表情切换']] as const) {
         const rule = action.actorTransitions?.[phase];
         if (rule) {
@@ -1083,6 +1286,9 @@ export function actionText(project: Project, action: StageAction): string {
       const graph = availablePerformanceBlueprints(project).find(item => item.id === action.blueprintId);
       const parameters = Object.entries(action.inputs ?? {}).map(([id, value]) => {
         const pin = graph?.exposedInputs.find(pin => pin.id === id);
+        if (typeof value === 'string' && graph && blueprintActorInstanceTargets(graph, id, { blueprints: availablePerformanceBlueprints(project) }).length) {
+          return `${textReference(pin?.name ?? id, id)}=${serializeParameterValue(value === '' ? '' : actorInstanceNumber(value) ?? value)}`;
+        }
         const resource = typeof value === 'string' ? (pin?.dataType === 'asset' ? project.assets : pin?.dataType === 'character' ? project.characters : pin?.dataType === 'scene' ? project.scenes : project.characters.flatMap(c => effectiveCharacter(project, c.id)?.expressions ?? [])).find(item => item.id === value) : undefined;
         return `${textReference(pin?.name ?? id, id)}=${serializeParameterValue(resource ? textReference(resource.name, resource.id) : value)}`;
       });
@@ -1109,12 +1315,13 @@ export function actionText(project: Project, action: StageAction): string {
         fields.push(...visualTransitionText(action));
         return '@显示图片：' + fields.join('，');
       }
-      const pose = action.keyframes[0], text = `@显示${{ image: '图片', video: '视频', text: '文字', solid: '', group: '', particles: '' }[action.content]}：${serializeParameterValue(action.content === 'text' ? action.text : asset(action.assetId!))}`;
+      const pose = action.keyframes[0], text = `@${action.content === 'text' ? '显示文字' : '显示视频'}：${serializeParameterValue(action.content === 'text' ? action.text : asset(action.assetId!))}`;
       const fields = [`对象ID=${action.instanceId}`, `横向位置=${pose.x}`, `纵向位置=${pose.y}`, `宽度=${action.width}`, `高度=${action.height}`, `时长=${action.duration}`, `图层=${action.layer}`, `等待完成=${action.wait ? '是' : '否'}`];
       if (action.content === 'text') fields.push(`字号=${action.fontSize}`, `颜色=${action.color}`);
       else fields.push(`适应方式=${{ contain: '容纳', cover: '填满', stretch: '拉伸' }[action.imageFit ?? 'stretch']}`);
       if (action.content === 'video') fields.push(`循环=${action.loop ? '是' : '否'}`, `音量=${action.volume ?? 1}`);
       fields.push(...visualTransitionText(action));
+      if (action.content === 'text') fields.push(...textPresentationText(project, { fontAssetId: action.fontAssetId, italic: action.textItalic, align: action.textAlign, textEffects: action.textEffects, ...action.textMotion }, '逐字时长').map(row => row.slice('@文字演出：'.length)));
       return text + '，' + fields.join('，');
     }
     case 'audioClip': case 'animate': return '';
@@ -1146,6 +1353,131 @@ export function chapterPerformanceText(project: Project, chapter: Pick<Extract<S
   return [actionText(project, { kind: 'blueprint', blueprintId: graph.id, inputs })];
 }
 
+const textAlignWords = { left: '左对齐', center: '居中', right: '右对齐' } as const;
+const textSpeedWords = { player: '跟随玩家设置', duration: '按时长', cps: '按速度', instant: '瞬间显示' } as const;
+const textPlacementWords = { dialogue: '对话框', screen: '画面' } as const;
+const textEntranceWords = { none: '普通', fade: '逐字淡入', zoom: '逐字放大', slam: '逐字砸入', flip: '逐字翻转', drop: '逐字落下', rise: '逐字升起' } as const;
+const textLoopWords = { none: '无', shake: '抖动', wave: '波浪', pulse: '呼吸' } as const;
+const textExitWords = { none: '无退场', fade: '逐字淡出', zoom: '逐字缩小', slam: '逐字放大消失', flip: '逐字翻转', drop: '逐字落下', rise: '逐字飘起' } as const;
+const textEasingWords = { linear: '匀速', easeOut: '先快后慢', easeIn: '先慢后快', easeInOut: '缓入缓出', back: '回弹', bounce: '弹跳', elastic: '弹簧' } as const;
+const textOrderWords = { forward: '从左到右', reverse: '从右到左', center: '从中间向两边', edges: '从两边向中间', random: '随机' } as const;
+const textEffectWords = [['outlineWidth', '描边宽度'], ['outlineColor', '描边颜色'], ['outlineOpacity', '描边不透明度'], ['shadowX', '阴影横向'], ['shadowY', '阴影纵向'], ['shadowBlur', '阴影柔化'], ['shadowColor', '阴影颜色'], ['shadowOpacity', '阴影不透明度']] as const;
+
+/** One `@文字演出` row listing only the fields the line sets. */
+export function textPresentationText(project: Project, look?: TextPresentation, durationParameter = '时长'): string[] {
+  if (!look) return [];
+  const values: string[] = [];
+  const add = (name: string, value: string | number | boolean | undefined) => { if (value !== undefined) values.push(`${name}=${serializeParameterValue(value)}`); };
+  if (look.presetId) add('预设', textReference(textPresets(project).find(item => item.id === look.presetId)?.name ?? '预设', look.presetId));
+  if (look.fontAssetId) add('字体', textReference(project.assets.find(asset => asset.id === look.fontAssetId)?.name ?? '字体', look.fontAssetId));
+  add('大小', look.sizeScale === undefined ? undefined : +(look.sizeScale * 100).toFixed(4));
+  add('颜色', look.color); add('粗体', look.bold); add('斜体', look.italic);
+  add('对齐', look.align && textAlignWords[look.align]);
+  for (const [key, name] of textEffectWords) add(name, look.textEffects?.[key]);
+  add('速度', look.speed && textSpeedWords[look.speed]); add(durationParameter, look.duration); add('每秒字数', look.cps);
+  add('位置', look.placement && textPlacementWords[look.placement]); add('横向位置', look.x); add('纵向位置', look.y); add('宽度', look.width);
+  const motion = (phase: string, animation?: TextAnimation) => {
+    add(phase + '横移', animation?.x); add(phase + '纵移', animation?.y); add(phase + '缩放', animation?.scale === undefined ? undefined : +(animation.scale * 100).toFixed(4)); add(phase + '翻转', animation?.flip); add(phase + '旋转', animation?.rotation);
+    add(phase + '透明度', animation?.opacity === undefined ? undefined : +(animation.opacity * 100).toFixed(4)); add(phase + '曲线', animation?.easing && textEasingWords[animation.easing]); add(phase + '顺序', animation?.order && textOrderWords[animation.order]);
+  };
+  add('入场', look.entrance && textEntranceWords[look.entrance]); add('入场时间', look.entranceTime); motion('入场', look.entranceAnimation);
+  add('持续效果', look.loop && textLoopWords[look.loop]); add('幅度', look.loopStrength); add('频率', look.loopSpeed);
+  add('退场', look.exit && textExitWords[look.exit]); add('退场总时长', look.exitTotal); add('退场时间', look.exitTime); motion('退场', look.exitAnimation);
+  if (look.typeSoundId) add('打字音', textReference(project.assets.find(asset => asset.id === look.typeSoundId)?.name ?? '打字音', look.typeSoundId));
+  add('打字音间隔', look.typeSoundEvery); add('打字音音量', look.typeSoundVolume);
+  return values.length ? [`@文字演出：${values.join('，')}`] : [];
+}
+
+function parseTextPresentation(project: Project, value: string): TextPresentation | undefined {
+  const parameters = commandSignature('文字演出')!.parameters;
+  const raw = bindArguments(value, parameters).values;
+  const field = (name: string) => { const text = raw[parameters.findIndex(item => item.name === name)]; return text === undefined ? undefined : argumentValue(text); };
+  const present = (name: string) => { const text = field(name); return text === undefined || text === '' ? undefined : text; };
+  const word = <T extends string>(name: string, words: Record<T, string>, aliases: Record<string, T> = {}): T | undefined => {
+    const text = present(name);
+    if (text === undefined) return undefined;
+    const found = (Object.entries(words) as [T, string][]).find(([, label]) => label === String(text))?.[0] ?? aliases[String(text)];
+    if (!found) throw new Error(`${name}只支持：${Object.values<string>(words).join('、')}。`);
+    return found;
+  };
+  const number = (name: string, check: (value: number) => boolean, rule: string) => {
+    const text = present(name);
+    if (text === undefined) return undefined;
+    const parsed = typeof text === 'number' ? text : Number(String(text).replace(/[%％]$/, ''));
+    if (!Number.isFinite(parsed) || !check(parsed)) throw new Error(`${name}${rule}`);
+    return parsed;
+  };
+  const colorValue = (name: string) => {
+    const text = present(name);
+    if (text === undefined) return undefined;
+    if (!/^#[0-9a-fA-F]{6}$/.test(String(text))) throw new Error(`${name}请填写六位颜色，例如 #ffffff。`);
+    return String(text);
+  };
+  const flag = (name: string) => {
+    const text = present(name);
+    if (text === undefined) return undefined;
+    if (typeof text !== 'boolean') throw new Error(`${name}请选择是或否。`);
+    return text;
+  };
+  const look: TextPresentation = {};
+  const presetText = present('预设');
+  if (presetText !== undefined) {
+    const id = named(textPresets(project), String(presetText))?.id ?? reference(String(presetText)).id;
+    if (!id) throw new Error(`找不到文字演出预设：${presetText}`);
+    look.presetId = id;
+  }
+  const fontText = present('字体');
+  if (fontText !== undefined && fontText !== '默认') {
+    const id = named(project.assets.filter(asset => asset.kind === 'font'), String(fontText))?.id ?? reference(String(fontText)).id;
+    if (!id) throw new Error(`找不到字体素材：${fontText}`);
+    look.fontAssetId = id;
+  }
+  const size = number('大小', value => value > 0, '需大于 0。');
+  if (size !== undefined) look.sizeScale = size / 100;
+  look.color = colorValue('颜色'); look.bold = flag('粗体'); look.italic = flag('斜体');
+  look.align = word('对齐', textAlignWords, { 左: 'left', 中: 'center', 右: 'right' });
+  const effects: Record<string, string | number> = {};
+  for (const [key, name] of textEffectWords) {
+    const offset = key === 'shadowX' || key === 'shadowY', opacity = key.endsWith('Opacity');
+    const result = key.endsWith('Color') ? colorValue(name) : number(name, value => offset || value >= 0 && (!opacity || value <= 1), opacity ? '需在 0～1 之间。' : offset ? '需为数字。' : '不能小于 0。');
+    if (result !== undefined) effects[key] = result;
+  }
+  if (Object.keys(effects).length) look.textEffects = effects;
+  look.duration = number('时长', value => value > 0, '需大于 0 秒。');
+  look.cps = number('每秒字数', value => value > 0, '需大于 0。');
+  look.speed = word('速度', textSpeedWords, { 跟随玩家: 'player', 时长: 'duration', 速度: 'cps', 瞬间: 'instant' }) ?? (look.duration !== undefined ? 'duration' : look.cps !== undefined ? 'cps' : undefined);
+  look.placement = word('位置', textPlacementWords, { 对话框内: 'dialogue', 画面上: 'screen', 屏幕: 'screen' });
+  look.x = number('横向位置', () => true, '需为数字。');
+  look.y = number('纵向位置', () => true, '需为数字。');
+  look.width = number('宽度', value => value > 0, '需大于 0。');
+  look.entrance = word('入场', textEntranceWords, { 无: 'none', 淡入: 'fade', 放大: 'zoom', 砸入: 'slam', 翻转: 'flip', 落下: 'drop', 升起: 'rise' });
+  look.entranceTime = number('入场时间', value => value >= 0, '不能小于 0。');
+  const motion = (phase: string): TextAnimation | undefined => {
+    const scale = number(phase + '缩放', () => true, '需为数字。'), opacity = number(phase + '透明度', value => value >= 0 && value <= 100, '需在 0～100 之间。');
+    const animation: TextAnimation = { x: number(phase + '横移', () => true, '需为数字。'), y: number(phase + '纵移', () => true, '需为数字。'), scale: scale === undefined ? undefined : scale / 100, flip: flag(phase + '翻转'), rotation: number(phase + '旋转', () => true, '需为数字。'), opacity: opacity === undefined ? undefined : opacity / 100, easing: word(phase + '曲线', textEasingWords), order: word(phase + '顺序', textOrderWords) };
+    for (const key of Object.keys(animation) as (keyof TextAnimation)[]) if (animation[key] === undefined) delete animation[key];
+    return Object.keys(animation).length ? animation : undefined;
+  };
+  look.entranceAnimation = motion('入场');
+  look.loop = word('持续效果', textLoopWords, { 普通: 'none' });
+  look.loopStrength = number('幅度', value => value >= 0, '不能小于 0。');
+  look.loopSpeed = number('频率', value => value > 0, '需大于 0。');
+  look.exit = word('退场', textExitWords, { 无: 'none', 淡出: 'fade', 缩小: 'zoom', 翻转: 'flip', 落下: 'drop', 飘起: 'rise' });
+  look.exitTotal = number('退场总时长', value => value > 0, '需大于 0 秒。');
+  look.exitTime = number('退场时间', value => value >= 0, '不能小于 0。');
+  look.exitAnimation = motion('退场');
+  const soundText = present('打字音');
+  if (soundText !== undefined && soundText !== '无') {
+    const id = named(project.assets.filter(asset => asset.kind === 'audio'), String(soundText))?.id ?? reference(String(soundText)).id;
+    if (!id) throw new Error(`找不到打字音素材：${soundText}`);
+    look.typeSoundId = id;
+  }
+  look.typeSoundEvery = number('打字音间隔', value => Number.isInteger(value) && value > 0, '需为大于 0 的整数。');
+  look.typeSoundVolume = number('打字音音量', value => value >= 0 && value <= 1, '需在 0～1 之间。');
+  for (const key of Object.keys(look) as (keyof TextPresentation)[]) if (look[key] === undefined) delete look[key];
+  return Object.keys(look).length ? textPresentationSchema.parse(look) : undefined;
+}
+
 export function playbackText(playback?: PerformancePlayback): string[] {
   if (!playback) return [];
   const lines: string[] = [];
@@ -1165,38 +1497,65 @@ export function standaloneText(name?: string, playback?: PerformancePlayback): s
   return '@独立演出' + (values.length ? '：' + values.join('，') : '');
 }
 
-function flowchartHeadingOptions(project: Project, options?: StoryNode['flowchart']): string {
-  const fields = [options?.visible === undefined ? '' : '流程图=' + (options.visible ? '是' : '否'), options?.name ? '显示名称=' + JSON.stringify(options.name) : '', options?.styleId ? '样式=' + JSON.stringify(textReference(project.ui.flowStyles?.find(s => s.id === options.styleId)?.name ?? '缺失样式', options.styleId)) : ''].filter(Boolean);
+function firstById<T extends { id: string }>(items: readonly T[] | undefined): Map<string, T> {
+  const result = new Map<string, T>();
+  for (const item of items ?? []) if (!result.has(item.id)) result.set(item.id, item);
+  return result;
+}
+
+function groupBy<T>(items: readonly T[], key: (item: T) => string): Map<string, T[]> {
+  const result = new Map<string, T[]>();
+  for (const item of items) {
+    const groupKey = key(item), group = result.get(groupKey);
+    if (group) group.push(item);
+    else result.set(groupKey, [item]);
+  }
+  return result;
+}
+
+function flowchartHeadingOptions(options: StoryNode['flowchart'], flowStylesById: ReadonlyMap<string, { name: string }>): string {
+  const fields = [options?.visible === undefined ? '' : '流程图=' + (options.visible ? '是' : '否'), options?.name ? '显示名称=' + JSON.stringify(options.name) : '', options?.styleId ? '样式=' + JSON.stringify(textReference(flowStylesById.get(options.styleId)?.name ?? '缺失样式', options.styleId)) : ''].filter(Boolean);
   return fields.length ? '(' + fields.join('，') + ')' : '';
 }
 export function projectToText(project: Project): string {
   const output: string[] = [];
-  const name = (id?: string) => id ? textReference(project.nodes.find(node => node.id === id)?.name ?? '缺失节点', id) : '无';
-  const ordered = project.chapters.flatMap(chapter => project.scenes.filter(scene => scene.chapterId === chapter.id).flatMap(scene => project.nodes.filter(node => node.sceneId === scene.id)));
+  const scenesByChapter = groupBy(project.scenes, scene => scene.chapterId);
+  const nodesByScene = groupBy(project.nodes, node => node.sceneId);
+  const nodesById = firstById(project.nodes);
+  const scenesById = firstById(project.scenes);
+  const charactersById = firstById(project.characters);
+  const assetsById = firstById(project.assets);
+  const variablesById = firstById(project.variables);
+  const instancesById = firstById(project.ui.instances);
+  const flowStylesById = firstById(project.ui.flowStyles);
+  const graphsById = firstById(projectGraphs(project));
+  const name = (id?: string) => id ? textReference(nodesById.get(id)?.name ?? '缺失节点', id) : '无';
+  const ordered = project.chapters.flatMap(chapter => (scenesByChapter.get(chapter.id) ?? []).flatMap(scene => nodesByScene.get(scene.id) ?? []));
   const following = new Map(ordered.map((node, index) => [node.id, ordered[index + 1]]));
   const nextLines = (node: StoryNode, target?: string) => target && following.get(node.id)?.id === target && following.get(node.id)?.textHeading === false ? [] : [`@跳转：${name(target)}`];
   output.push(`@入口：${name(project.entryId)}`, '');
-  if (project.ui.activeInstanceId) output.push(`@界面实例：${textReference(project.ui.instances?.find(instance => instance.id === project.ui.activeInstanceId)?.name ?? '界面实例', project.ui.activeInstanceId)}`, '');
+  if (project.ui.activeInstanceId) output.push(`@界面实例：${textReference(instancesById.get(project.ui.activeInstanceId)?.name ?? '界面实例', project.ui.activeInstanceId)}`, '');
   for (const effect of project.effects.filter(item => !item.id.startsWith('txt_performance_'))) output.push(`@效果定义：${textReference(effect.name, effect.id)}`, ...effect.commands.map(command => `@动作：${command}`), '@效果结束', '');
   for (const chapter of project.chapters) {
-    output.push(`# 章节${flowchartHeadingOptions(project, chapter.flowchart)}：${textReference(chapter.name, chapter.id)}`, '');
-    for (const scene of project.scenes.filter(item => item.chapterId === chapter.id)) {
-      output.push(`# 小章节${flowchartHeadingOptions(project, scene.flowchart)}：${textReference(scene.name, scene.id)}`, '');
-      if (scene.baseSceneId) output.push(`@场景基础：${textReference(project.scenes.find(item => item.id === scene.baseSceneId)?.name ?? '基础场景', scene.baseSceneId)}`);
+    output.push(`# 章节${flowchartHeadingOptions(chapter.flowchart, flowStylesById)}：${textReference(chapter.name, chapter.id)}`, '');
+    for (const scene of scenesByChapter.get(chapter.id) ?? []) {
+      output.push(`# 小章节${flowchartHeadingOptions(scene.flowchart, flowStylesById)}：${textReference(scene.name, scene.id)}`, '');
+      if (scene.baseSceneId) output.push(`@场景基础：${textReference(scenesById.get(scene.baseSceneId)?.name ?? '基础场景', scene.baseSceneId)}`);
       if (scene.parameters && Object.keys(scene.parameters).length) output.push(`@场景参数：${JSON.stringify(scene.parameters)}`);
-      if (scene.blueprintId) output.push(`@场景蓝图：${textReference(projectGraphs(project)?.find(graph => graph.id === scene.blueprintId)?.name ?? '场景蓝图', scene.blueprintId)}`);
+      if (scene.blueprintId) output.push(`@场景蓝图：${textReference(graphsById.get(scene.blueprintId)?.name ?? '场景蓝图', scene.blueprintId)}`);
       if (scene.baseSceneId || scene.blueprintId || (scene.parameters && Object.keys(scene.parameters).length)) output.push('');
-      for (const node of project.nodes.filter(node => node.sceneId === scene.id)) {
+      for (const node of nodesByScene.get(scene.id) ?? []) {
         const nodeReference = textReference(node.name, node.id);
-        output.push(node.textHeading === false || isStandaloneNode(node) ? `@节点标记：${nodeReference}` : `# 段落${flowchartHeadingOptions(project, node.flowchart)}：${nodeReference}`);
+        output.push(node.textHeading === false || isStandaloneNode(node) ? `@节点标记：${nodeReference}` : `# 段落${flowchartHeadingOptions(node.flowchart, flowStylesById)}：${nodeReference}`);
         if (node.kind === 'passage') {
           for (const line of node.lines) {
             output.push(`@对白标记：${line.id}`);
             output.push(...linePerformanceText(project, node, line));
             if (!line.silent) output.push(...playbackText(line.playback));
-            if (line.voiceId) output.push(`@配音：${textReference(project.assets.find(asset => asset.id === line.voiceId)?.name ?? '配音', line.voiceId)}`);
-            const speaker = project.characters.find(character => character.id === line.speakerId)?.name ?? '旁白';
-            if (!line.silent) output.push(...line.text.split('\n').map((text, lineIndex) => lineIndex === 0 ? `${speaker}：${text}` : `@续行：${text}`));
+            if (line.voiceId) output.push(`@配音：${textReference(assetsById.get(line.voiceId)?.name ?? '配音', line.voiceId)}`);
+            if (!line.silent) output.push(...textPresentationText(project, line.textPresentation));
+            const speaker = charactersById.get(line.speakerId ?? '')?.name ?? '旁白';
+            if (!line.silent) output.push(...dialogueMarkupRows(project, line, `${speaker}：`));
             else output.push(standaloneText(isStandaloneNode(node) ? node.name : undefined, line.playback));
           }
           output.push(...nextLines(node, node.next));
@@ -1206,9 +1565,9 @@ export function projectToText(project: Project): string {
           output.push(standaloneText(node.name, node.playback));
           output.push(...nextLines(node, node.next));
         }
-        else if (node.kind === 'choice' && !/[\r\n]/.test(node.prompt) && !node.choices.some(choice => choice.condition || /[\r\n]|->|→/.test(choice.text))) output.push(`@选择：${node.prompt}`, ...node.choices.map(choice => `@选项：${choice.text} -> ${name(choice.target)}`));
+        else if (node.kind === 'choice' && !/[\r\n]/.test(node.prompt) && !node.choices.some(choice => choice.condition || /[\r\n]|->|→/.test(choice.text))) output.push(`@选择：${node.prompt}`, ...node.choices.flatMap(choice => [...(node.transitions && Object.keys(node.transitions).length ? [`@选项标记：${choice.id}`] : []), `@选项：${choice.text} -> ${name(choice.target)}`]));
         else if (node.kind === 'condition') output.push(`@条件：${textCondition(project, node.condition)}`, `@满足：${name(node.yes)}`, `@不满足：${name(node.no)}`);
-        else if (node.kind === 'set') output.push(`@设置：${node.when ? '如果 ' + textCondition(project, node.when) + '，' : ''}${project.variables.find(variable => variable.id === node.variableId)?.name ?? node.variableId} ${node.operation === 'add' ? '+=' : '='} ${typeof node.value === 'string' ? JSON.stringify(node.value) : node.value}`, ...nextLines(node, node.next));
+        else if (node.kind === 'set') output.push(`@设置：${node.when ? '如果 ' + textCondition(project, node.when) + '，' : ''}${parameterReference(variablesById.get(node.variableId) ?? { id: node.variableId, name: '已删除参数' })} ${node.operation === 'add' ? '+=' : '='} ${(() => { const variable = variablesById.get(node.variableId); return variable?.type === 'asset' ? JSON.stringify(parameterAssetText(project, variable, node.value)) : typeof node.value === 'string' ? JSON.stringify(node.value) : node.value; })()}`, ...nextLines(node, node.next));
         else if (node.kind === 'jump' || node.kind === 'call') {
           if (node.kind === 'jump' && node.sceneTransition) {
             output.push(jumpCommandText(name(node.target), node.sceneTransition));
@@ -1218,6 +1577,7 @@ export function projectToText(project: Project): string {
         else if (node.kind === 'end') output.push('@返回标题界面');
         else if (node.kind === 'return') output.push('@返回');
         else output.push(`@实例：${nodeReference}`);
+        output.push(...nodeFlowTransitionText(node));
         output.push('');
       }
     }

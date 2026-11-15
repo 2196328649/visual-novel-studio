@@ -1,3 +1,4 @@
+import { immutableAuthoringIndex } from './authoring-index';
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useId } from 'react';
 import { AssetImportContext } from './AssetImportContext';
 import { createPortal } from 'react-dom';
@@ -13,6 +14,21 @@ function previewCategories(project: Project) {
   let result = categoryCache.get(project);
   if (!result) { result = assetCategories(project); categoryCache.set(project, result); }
   return result;
+}
+
+function assetAnchorIsVisible(anchor: HTMLElement) {
+  const bounds = anchor.getBoundingClientRect();
+  let left = Math.max(0, bounds.left), right = Math.min(innerWidth, bounds.right);
+  let top = Math.max(0, bounds.top), bottom = Math.min(innerHeight, bounds.bottom);
+  const clips = (value: string) => value === 'auto' || value === 'scroll' || value === 'hidden' || value === 'clip';
+  for (let ancestor = anchor.parentElement; ancestor && ancestor !== document.documentElement; ancestor = ancestor.parentElement) {
+    const style = getComputedStyle(ancestor);
+    const rect = ancestor.getBoundingClientRect();
+    if (clips(style.overflowX)) { left = Math.max(left, rect.left); right = Math.min(right, rect.right); }
+    if (clips(style.overflowY)) { top = Math.max(top, rect.top); bottom = Math.min(bottom, rect.bottom); }
+    if (right <= left || bottom <= top) return false;
+  }
+  return right > left && bottom > top;
 }
 
 export function ResourcePreviewDialog({ asset, assetUrl, onClose }: { asset: Asset; assetUrl: AssetUrl; onClose: () => void }) {
@@ -57,18 +73,30 @@ export function UiAssetSelect({ project, kind, value, onChange, assetUrl, label,
   const [group, setGroup] = useState('');
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
-  const field = useRef<HTMLSpanElement>(null), suggestions = useRef<HTMLDivElement>(null);
+  const field = useRef<HTMLSpanElement>(null), input = useRef<HTMLInputElement>(null), suggestions = useRef<HTMLDivElement>(null);
+  const composing = useRef(false);
   const listId = useId();
   const [inlineOpen, setInlineOpen] = useState(false), [inlineQuery, setInlineQuery] = useState(''), [optionIndex, setOptionIndex] = useState(0);
-  const [position, setPosition] = useState({ left: 0, top: 0, width: 200 });
-  const categories = useMemo(() => previewCategories(project), [project]);
-  const assets = project.assets.filter(asset => (kind === 'all' || asset.kind === kind) && (!allowedIds || allowedIds.includes(asset.id)));
-  const compact = assets.filter(asset => category === 'all' || categories.get(asset.id) === category || asset.id === value);
+  const [position, setPosition] = useState({ left: 0, top: 0, width: 200, maxHeight: 236, above: false });
+  const index = immutableAuthoringIndex.assets(project);
+  const allowed = useMemo(() => allowedIds ? new Set(allowedIds) : undefined, [allowedIds]);
+  const resolveAsset = (id?: string) => {
+    const asset = index.byId.get(id ?? '');
+    return asset && (kind === 'all' || asset.kind === kind) && (!allowed || allowed.has(asset.id)) ? asset : undefined;
+  };
+  // A closed field needs only its selected identity, not project-wide categorization/filtering.
+  const categories = useMemo(() => open || inlineOpen ? previewCategories(project) : undefined, [project, open, inlineOpen]);
+  const assets = useMemo(() => {
+    if (!open && !inlineOpen) return [];
+    const items = kind === 'all' ? index.all : index.byKind.get(kind) ?? [];
+    return allowed ? items.filter(asset => allowed.has(asset.id)) : items;
+  }, [index, kind, allowed, open, inlineOpen]);
+  const compact = inlineOpen ? assets.filter(asset => category === 'all' || categories?.get(asset.id) === category || asset.id === value) : [];
   const inlineChoices = inlineOpen ? compact.map(asset => ({ asset, score: completionScore(asset.name, inlineQuery, [asset.path, asset.sourcePath ?? '']) })).filter(item => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 60).map(item => item.asset) : [];
   const options = allowEmpty && !inlineQuery.trim() ? [undefined, ...inlineChoices] : inlineChoices;
-  const groups = open ? groupedAssets(project, assets.filter(asset => scopeCategory === 'all' || categories.get(asset.id) === scopeCategory)) : [];
-  const selected = assets.find(asset => asset.id === value);
-  const inspected = assets.find(asset => asset.id === candidate);
+  const groups = open ? groupedAssets(project, assets.filter(asset => scopeCategory === 'all' || categories?.get(asset.id) === scopeCategory)) : [];
+  const selected = resolveAsset(value);
+  const inspected = resolveAsset(candidate);
   const filteredGroups = groups.filter(item => !group || item.name === group).map(item => ({ ...item, assets: item.assets.filter(asset => completionScore(asset.name, query, [asset.path, asset.sourcePath ?? '', item.name]) > 0) })).filter(item => item.assets.length);
   const filtered = filteredGroups.flatMap(item => item.assets);
   useEffect(() => {
@@ -77,24 +105,60 @@ export function UiAssetSelect({ project, kind, value, onChange, assetUrl, label,
     return () => { if (!onBrowserOpenChange) trigger.current?.focus({ preventScroll: true }); };
   }, [open]);
   const close = () => { if (importing) return; dialog.current?.close(); setOpen(false); onBrowserOpenChange?.(false); };
-  const choose = (id?: string) => { if (!id && !allowEmpty) return; if (id && !assets.some(asset => asset.id === id)) { setImportError('素材类型不适用于当前选项。'); return; } onChange(id); close(); };
+  const choose = (id?: string) => { if (!id && !allowEmpty) return; if (id && !resolveAsset(id)) { setImportError('素材类型不适用于当前选项。'); return; } onChange(id); close(); };
   useEffect(() => {
-    if (!importing && importedSelection && project.assets.some(asset => asset.id === importedSelection)) {
+    if (!importing && importedSelection && index.byId.has(importedSelection)) {
       setImportedSelection(undefined); choose(importedSelection);
     }
   }, [project, importedSelection, importing]);
   const pickInline = (id?: string) => { setInlineOpen(false); setInlineQuery(''); onChange(id); };
   useLayoutEffect(() => {
     if (!inlineOpen) return;
-    const place = () => { const bounds = field.current?.getBoundingClientRect(); if (bounds) setPosition({ left: Math.max(4, Math.min(bounds.left, innerWidth - 240)), top: bounds.bottom + 240 > innerHeight ? Math.max(4, bounds.top - 240) : bounds.bottom + 3, width: Math.max(220, bounds.width) }); };
-    place(); window.addEventListener('resize', place);
+    let frame = 0;
+    const place = () => {
+      frame = 0;
+      const anchor = input.current;
+      if (!anchor?.isConnected || !assetAnchorIsVisible(anchor)) { setInlineOpen(false); return; }
+      const bounds = anchor.getBoundingClientRect();
+      const margin = 8, gap = 3, availableWidth = Math.max(0, innerWidth - margin * 2);
+      const width = Math.min(availableWidth, Math.max(220, bounds.width));
+      const left = Math.max(margin, Math.min(bounds.left, innerWidth - margin - width));
+      const aboveSpace = Math.max(0, bounds.top - margin - gap);
+      const belowSpace = Math.max(0, innerHeight - margin - bounds.bottom - gap);
+      const above = aboveSpace > belowSpace;
+      const maxHeight = Math.min(236, above ? aboveSpace : belowSpace);
+      const top = above ? bounds.top : bounds.bottom + gap;
+      setPosition(current => current.left === left && current.top === top && current.width === width && current.maxHeight === maxHeight && current.above === above
+        ? current
+        : { left, top, width, maxHeight, above });
+    };
+    const schedulePlace = () => { if (!frame) frame = requestAnimationFrame(place); };
+    place();
+    window.addEventListener('resize', schedulePlace);
+    document.addEventListener('scroll', schedulePlace, true);
+    window.visualViewport?.addEventListener('resize', schedulePlace);
+    window.visualViewport?.addEventListener('scroll', schedulePlace);
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(schedulePlace);
+    if (input.current) {
+      resizeObserver?.observe(input.current);
+      for (let ancestor = input.current.parentElement; ancestor && ancestor !== document.documentElement; ancestor = ancestor.parentElement) resizeObserver?.observe(ancestor);
+    }
     const dismiss = (event: PointerEvent) => { if (!field.current?.contains(event.target as Node) && !suggestions.current?.contains(event.target as Node)) setInlineOpen(false); };
     document.addEventListener('pointerdown', dismiss);
-    return () => { window.removeEventListener('resize', place); document.removeEventListener('pointerdown', dismiss); };
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', schedulePlace);
+      document.removeEventListener('scroll', schedulePlace, true);
+      window.visualViewport?.removeEventListener('resize', schedulePlace);
+      window.visualViewport?.removeEventListener('scroll', schedulePlace);
+      document.removeEventListener('pointerdown', dismiss);
+    };
   }, [inlineOpen]);
   useEffect(() => { suggestions.current?.querySelector('[aria-selected=true]')?.scrollIntoView({ block: 'nearest' }); }, [optionIndex]);
   return <span className={`ui-asset-field ${buttonOnly ? 'asset-browse-only' : ''}`} ref={field}>
-    {!buttonOnly && <><span className="ui-asset-mini" aria-hidden="true"><AssetPicture asset={selected} assetUrl={assetUrl} /></span><input role="combobox" aria-label={displayLabel} aria-autocomplete="list" aria-expanded={inlineOpen} aria-controls={inlineOpen ? listId : undefined} aria-activedescendant={inlineOpen && options.length ? `${listId}-${optionIndex}` : undefined} value={inlineOpen ? inlineQuery : selected?.name ?? (value ? '素材已丢失' : '')} placeholder={selected?.name ?? empty} onFocus={() => { setInlineQuery(''); setInlineOpen(true); setOptionIndex(0); }} onChange={event => { setInlineQuery(event.target.value); setInlineOpen(true); setOptionIndex(0); }} onBlur={() => setInlineOpen(false)} onKeyDown={event => {
+    {!buttonOnly && <><span className="ui-asset-mini" aria-hidden="true"><AssetPicture asset={selected} assetUrl={assetUrl} /></span><input ref={input} role="combobox" aria-label={displayLabel} aria-autocomplete="list" aria-expanded={inlineOpen} aria-controls={inlineOpen ? listId : undefined} aria-activedescendant={inlineOpen && options.length ? `${listId}-${optionIndex}` : undefined} value={inlineOpen ? inlineQuery : selected?.name ?? (value ? '素材已丢失' : '')} placeholder={selected?.name ?? empty} onFocus={() => { setInlineQuery(''); setInlineOpen(true); setOptionIndex(0); }} onChange={event => { setInlineQuery(event.target.value); setInlineOpen(true); setOptionIndex(0); }} onBlur={() => { composing.current = false; setInlineOpen(false); }} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onKeyDown={event => {
+      if ((event.key === 'Escape' || event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter') && (composing.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)) { event.stopPropagation(); return; }
       if (event.key === 'Escape') { event.stopPropagation(); setInlineOpen(false); }
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setInlineOpen(true); setOptionIndex(index => Math.max(0, Math.min(options.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)))); }
       if (event.key === 'Enter' && inlineOpen) { event.preventDefault(); event.stopPropagation(); if (optionIndex < options.length) pickInline(options[optionIndex]?.id); }
@@ -102,7 +166,7 @@ export function UiAssetSelect({ project, kind, value, onChange, assetUrl, label,
     <button type="button" ref={trigger} className="ui-asset-thumbnail" aria-label={`浏览${displayLabel}`} title={selected ? `${selected.name}\n${selected.sourcePath ?? selected.path}\n点击浏览${kindNames[kind]}` : `浏览${kindNames[kind]}`} onClick={() => { setInlineOpen(false); setCandidate(value); setQuery(''); setScopeCategory(category); setGroup(''); onBrowserOpenChange?.(true); setOpen(true); }}>
       <Folder size={15} />{buttonOnly && <span>{selected?.name ?? (value ? '素材已丢失' : '选择资源…')}</span>}
     </button>
-    {inlineOpen && createPortal(<div className="asset-combobox-options" ref={suggestions} id={listId} role="listbox" aria-label={`${displayLabel}搜索结果`} style={position} onMouseDown={event => event.preventDefault()} onWheel={event => event.stopPropagation()}>{options.map((asset, index) => <button type="button" role="option" key={asset?.id ?? 'empty'} id={`${listId}-${index}`} aria-selected={optionIndex === index} onClick={() => pickInline(asset?.id)}><span className="ui-asset-mini"><AssetPicture asset={asset} assetUrl={assetUrl} /></span><span>{asset?.name ?? empty}<small>{asset?.path}</small></span></button>)}{!options.length && <p>没有匹配的资源</p>}</div>, field.current?.closest('dialog') ?? document.body)}
+    {inlineOpen && createPortal(<div className="asset-combobox-options" ref={suggestions} id={listId} role="listbox" aria-label={`${displayLabel}搜索结果`} style={{ left: position.left, top: position.top, width: position.width, maxHeight: position.maxHeight, transform: position.above ? 'translateY(calc(-100% - 3px))' : undefined }} onMouseDown={event => event.preventDefault()} onWheel={event => event.stopPropagation()}>{options.map((asset, index) => <button type="button" role="option" key={asset?.id ?? 'empty'} id={`${listId}-${index}`} aria-selected={optionIndex === index} onClick={() => pickInline(asset?.id)}><span className="ui-asset-mini"><AssetPicture asset={asset} assetUrl={assetUrl} /></span><span>{asset?.name ?? empty}<small>{asset?.path}</small></span></button>)}{!options.length && <p>没有匹配的资源</p>}</div>, field.current?.closest('dialog') ?? document.body)}
     {open && createPortal(<dialog className="asset-picker-dialog" aria-label={`${displayLabel}资源浏览器`} ref={dialog} onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === event.currentTarget) { const r = event.currentTarget.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) close(); } }}>
       <header><div><strong>选择{kindNames[kind]}</strong><span>{displayLabel} · {assets.length} 项{kind === 'all' ? '资源' : '可用' + kindNames[kind]}</span></div><button type="button" className="icon-button" aria-label="关闭资源浏览器" onClick={close}><X size={18} /></button></header>
       <div className="asset-picker-search"><Search size={16} /><input autoFocus aria-label="搜索可选资源" placeholder="搜索名称、角色或文件夹…" value={query} onChange={event => setQuery(event.target.value)} /><select aria-label="可选素材分类" value={scopeCategory} onChange={event => { setScopeCategory(event.target.value as typeof scopeCategory); setGroup(''); }}><option value="all">全部{kindNames[kind]}</option>{(Object.entries(assetCategoryNames) as [AssetCategory, string][]).filter(([key]) => (kind === 'all' || categoryAcceptsKind(key, kind))).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select><span>{filtered.length} 项</span></div>
@@ -114,7 +178,7 @@ export function UiAssetSelect({ project, kind, value, onChange, assetUrl, label,
         {!filtered.length && <p className="asset-picker-empty">没有匹配的{kindNames[kind]}，请调整搜索词。</p>}
       </div><aside className="asset-picker-detail" aria-label="资源预览">
         <div className="asset-picker-large" key={candidate ?? 'empty'}><AssetPicture asset={inspected} assetUrl={assetUrl} detail /></div>
-        <strong>{inspected?.name ?? empty}</strong>{inspected && <><span>{assetCategoryNames[categories.get(inspected.id) ?? 'other']}{inspected.width && inspected.height ? ` · ${inspected.width} × ${inspected.height}` : ''}</span><code>{inspected.sourcePath ?? inspected.path}</code></>}
+        <strong>{inspected?.name ?? empty}</strong>{inspected && <><span>{assetCategoryNames[categories?.get(inspected.id) ?? 'other']}{inspected.width && inspected.height ? ` · ${inspected.width} × ${inspected.height}` : ''}</span><code>{inspected.sourcePath ?? inspected.path}</code></>}
         <small>单击查看预览，双击使用资源。</small>
       </aside></div>
       {importError && <p role="alert" className="export-errors">{importError}</p>}

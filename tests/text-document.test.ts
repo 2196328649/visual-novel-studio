@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createProject } from '../src/core/model';
+import { blueprintPin, createBlueprintGraph } from '../src/core/blueprint';
 import { applyTextScript, projectToText } from '../src/core/text-script';
-import { editTextDocument, patchTextDocument, textDocument, textEdit, visibleTextLine, visibleTextOffset, refreshTextReferenceNames } from '../src/core/text-document';
+import { editTextDocument, patchTextDocument, sourceTextOffset, textDocument, textEdit, visibleTextLine, visibleTextOffset, refreshTextReferenceNames } from '../src/core/text-document';
+import { textReferenceSpans } from '../src/core/text-references';
 import { performanceTextFolds } from '../src/core/text-performance';
 
 test('a shortened document tolerates a dialogue location from the previous render', () => {
@@ -94,6 +96,65 @@ test('重命名段落时保留隐藏编号与所有已有连接', () => {
   const refreshed = refreshTextReferenceNames(result.project, edited);
   assert.ok(textDocument(refreshed).text.includes('@跳转：改名后的段落'));
   assert.deepEqual(applyTextScript(result.project, refreshed).project.nodes, result.project.nodes);
+});
+
+test('含空格的蓝图直接调用只隐藏一次编号，编辑与刷新不重复名称', () => {
+  for (const name of ['夜宴 · 音乐淡入', '旧忆 · 换景与配乐', '城破 · 战火与急雨', 'Night Entry', '独立演出 1', '背景 夜宴']) {
+    const project = createProject(), graph = createBlueprintGraph('effect', name);
+    graph.id = 'spaced_call'; project.blueprints.push(graph);
+    for (const prefix of ['@', '/', '／']) {
+      const row = `  ${prefix} ${name}【${graph.id}】  `, source = row + '\n旁白：保留。';
+      const spans = textReferenceSpans(row), document = textDocument(source);
+      assert.equal(spans.length, 1, row);
+      assert.equal(row.slice(spans[0].nameFrom, spans[0].nameTo), name);
+      assert.equal(document.references.length, 1);
+      assert.equal(document.text, `  ${prefix} ${name}  \n旁白：保留。`);
+      const raw = source.indexOf('旁白'), visible = document.text.indexOf('旁白');
+      assert.equal(visibleTextOffset(document, raw), visible);
+      assert.equal(sourceTextOffset(document, visible), raw);
+      const edited = editTextDocument(document, { start: visible, end: visible, text: '旁白：新增。\n' });
+      assert.equal(edited, row + '\n旁白：新增。\n旁白：保留。');
+      assert.equal(refreshTextReferenceNames(project, edited), edited);
+      assert.equal(refreshTextReferenceNames(project, refreshTextReferenceNames(project, edited)), edited);
+      graph.callName = '别名 · 过场';
+      const renamed = refreshTextReferenceNames(project, edited);
+      assert.equal(renamed, edited.replace(name, graph.callName));
+      assert.equal(refreshTextReferenceNames(project, renamed), renamed);
+      graph.callName = undefined;
+    }
+  }
+});
+
+test('蓝图名含空格时冒号后的参数名称和值仍分别保留引用', () => {
+  const project = createProject(), graph = createBlueprintGraph('effect', '夜宴 · 音乐淡入');
+  graph.id = 'spaced_call'; graph.callName = '入场 · 配乐';
+  graph.exposedInputs = [blueprintPin('music_input', '配乐', 'input', 'asset'), blueprintPin('seconds_input', '时长', 'input', 'number', 1)];
+  project.blueprints.push(graph);
+  project.assets.push({ id: 'night_music', name: '夜宴配乐', kind: 'audio', path: 'assets/night.ogg' });
+  const source = '@旧名 · 配乐【spaced_call】：旧参数【music_input】=旧曲【night_music】，旧时长【seconds_input】=2';
+  const spans = textReferenceSpans(source);
+  assert.equal(spans.length, 4);
+  for (let index = 1; index < spans.length; index++) assert.ok(spans[index - 1].to <= spans[index].nameFrom);
+  const document = textDocument(source);
+  assert.equal(document.text, '@旧名 · 配乐：旧参数=旧曲，旧时长=2');
+  const edited = editTextDocument(document, { start: document.text.length - 1, end: document.text.length, text: '3' });
+  const refreshed = refreshTextReferenceNames(project, edited);
+  assert.equal(refreshed, '@入场 · 配乐【spaced_call】：配乐【music_input】=夜宴配乐【night_music】，时长【seconds_input】=3');
+  assert.equal(refreshTextReferenceNames(project, refreshed), refreshed);
+});
+
+test('基础指令的冒号引用和没有编号的空格简写保持正常', () => {
+  const project = createProject();
+  project.assets.push({ id: 'night_image', name: '夜宴庭院', kind: 'image', path: 'assets/night.png' });
+  const source = '@背景：旧名称【night_image】\n@等待 2\n旁白：继续。';
+  assert.equal(textDocument(source).text, '@背景：旧名称\n@等待 2\n旁白：继续。');
+  assert.equal(refreshTextReferenceNames(project, source), source.replace('旧名称', '夜宴庭院'));
+  assert.deepEqual(textReferenceSpans('@等待 2'), []);
+  const parsed = applyTextScript(project, source);
+  assert.deepEqual(parsed.issues.filter(issue => issue.severity === 'error'), []);
+  const passage = parsed.project.nodes.find(node => node.kind === 'passage')!;
+  assert.equal(passage.kind, 'passage');
+  assert.deepEqual(passage.lines[0].actions.map(action => action.kind), ['background', 'pause']);
 });
 
 test('清空章节名称后重新输入，仍保留章节身份与下属小章节', () => {

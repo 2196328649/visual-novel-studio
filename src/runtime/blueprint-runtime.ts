@@ -1,3 +1,4 @@
+import { uiPages } from '../core/ui-pages';
 import { effectiveCharacter, type Project } from '../core/model';
 import { blueprintScreens, sceneEntry } from '../core/blueprint';
 import { pythonLiteral } from './screens';
@@ -14,22 +15,37 @@ export function createBlueprintRuntime(project: Project): string {
   const scenes = Object.fromEntries(project.scenes.flatMap(scene => { const entry = sceneEntry(project, scene.id); return entry ? [[scene.id, `vn_node_${entry.id}`]] : []; }));
   return `default vn_actor_instances = {}
 default vn_bp_menu_active = False
+default vn_ui_native_page_close_result = None
 
 init python:
     vn_bp_assets = ${pythonLiteral(assets)}
     vn_bp_characters = ${pythonLiteral(characters)}
     vn_bp_scenes = ${pythonLiteral(scenes)}
     vn_bp_menus = ${pythonLiteral(Object.keys(blueprintScreens))}
+    vn_bp_page_menus = ${pythonLiteral(Object.fromEntries(uiPages(project).filter(page => page.menuScreen && !page.disabled).map(page => [page.id, page.menuScreen])))}
+    vn_bp_page_problems = ${pythonLiteral(Object.fromEntries(uiPages(project).filter(page => page.template).map(page => [page.id, page.disabled ? '该页面已停用。' : page.openProblem ?? ''])))}
 
     def vn_bp_clock():
         # The top-level game runtime stops in menus and UI callbacks. The
-        # current context's counter also advances there and survives saves.
-        return renpy.game.context().runtime
+        # current context's counter also advances there. A loaded timed wait
+        # restores its uncommitted interaction time separately in context.info.
+        return renpy.game.context().runtime + getattr(renpy.context(), "vn_stage_clock_offset", 0.0)
+
+    def vn_bp_boolean(value, name):
+        if not isinstance(value, bool):
+            raise Exception(name + "需要开关值（是或否），不能使用文字或数值代替。")
+        return value
 
     def vn_bp_number(value, minimum, maximum, name):
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not __import__("math").isfinite(value) or (minimum is not None and value < minimum) or (maximum is not None and value > maximum):
             raise Exception(name + "需要有效的数值（" + str(minimum) + "～" + str(maximum) + "）。")
         return value
+
+    def vn_bp_loop_bound(value, name):
+        value = vn_bp_number(value, -100000, 100000, name)
+        if int(value) != value:
+            raise Exception(name + "需要整数，不会截断小数。")
+        return int(value)
 
     def vn_bp_position(value, name):
         import math
@@ -44,9 +60,14 @@ init python:
         return asset["path"]
 
     def vn_actor_tag(character_id, instance_id=""):
-        if instance_id and not __import__("re").fullmatch("[a-z][a-z0-9_]{0,63}", str(instance_id)):
-            raise Exception("实例 ID 请使用小写字母开头的字母、数字或下划线，最多 64 位。")
-        return "vn_instance_" + instance_id if instance_id else "vn_actor_" + character_id
+        if instance_id is None or instance_id == "" or instance_id == "1":
+            return "vn_actor_" + character_id
+        if isinstance(instance_id, str):
+            if __import__("re").fullmatch("[1-9][0-9]{0,15}", instance_id) and int(instance_id) <= 9007199254740991:
+                return "vn_numbered_actor_" + instance_id + "_" + character_id
+            if __import__("re").fullmatch("[a-z][a-z0-9_]{0,63}", instance_id):
+                return "vn_instance_" + instance_id
+        raise Exception("第几个需要从 1 开始的整数；旧实例 ID 仍支持小写字母开头的字母、数字或下划线（最多 64 位）。")
 
     def vn_track_actor(character_id, expression_id, layer, instance_id="", lifetime=""):
         if lifetime not in ("", "line", "persistent"):
@@ -147,7 +168,18 @@ init python:
             self.after_duration = max([0.0] + [frame["at"] for frames in self.after_offsets.values() for frame in frames])
             self.existing = existing
             self.initial = None
+            self.flow_hold = vn_flow_transition_holding()
+            self.flow_offset = None
         def __call__(self, trans, st, at):
+            if self.flow_hold:
+                if vn_flow_transition_render_holding():
+                    st = 0.0
+                else:
+                    self.flow_hold = False
+                    self.flow_offset = st
+                    st = 0.0
+            elif self.flow_offset is not None:
+                st = max(0.0, st - self.flow_offset)
             def relative(value, extent):
                 if hasattr(value, "relative"):
                     return value.relative + value.absolute / float(extent)
@@ -163,7 +195,7 @@ init python:
                 if key == "opacity":
                     value = max(0.0, min(1.0, value))
                 setattr(trans, field, float(value))
-            return 0 if st < self.duration + self.after_duration else None
+            return 0 if self.flow_hold or st < self.duration + self.after_duration else None
 
     def vn_move_offsets(tag, x, y, scale, duration, offsets, after_offsets=None):
         return Transform(function=VNMoveOffsetMotion(x, y, scale, duration, offsets, renpy.showing(tag), after_offsets), xanchor=.5, yanchor=1.0, subpixel=True, rotate_pad=False, transform_anchor=True)
@@ -208,7 +240,6 @@ init python:
             signature = (character_id, expression_id, float(x), float(y), float(scale), int(layer)) if not (move_offsets or after_offsets) else None
             vn_actor_show(tag, "vn_actor_" + character_id + " " + expression_id, motion, signature, actor, rules, wait)
         else:
-            vn_actor_retire_pending(tag)
             vn_actor_pending_exit.pop(tag, None)
             renpy.show("vn_actor_" + character_id + " " + expression_id, tag=tag, at_list=[motion], zorder=int(layer))
         vn_unlock(character["expressions"][expression_id])
@@ -239,9 +270,29 @@ init python:
     def vn_bp_menu_label(screen):
         if screen in vn_custom_pages:
             return "vn_bp_page_" + screen
+        screen = vn_bp_page_menus.get(screen, screen)
         if screen not in vn_bp_menus:
-            raise Exception("蓝图收到的游戏界面不存在，请重新选择。")
+            raise Exception("蓝图收到的页面不存在或需要系统内容上下文，请重新选择。")
         return "vn_bp_menu_" + screen
+
+    def vn_bp_page_label(page_id, wait=True, modal=None, save_mode="load"):
+        if page_id in vn_custom_pages:
+            return "vn_bp_page_" + page_id
+        problem = vn_bp_page_problems.get(page_id)
+        if problem:
+            raise Exception(problem)
+        if page_id not in vn_bp_page_menus:
+            raise Exception("页面不存在，请重新选择。")
+        if not wait or modal is False:
+            raise Exception("此系统模板使用菜单宿主，需等待关闭并拦截底层输入。")
+        screen = vn_bp_page_menus[page_id]
+        if page_id == "ui:save":
+            if save_mode not in ("save", "load"):
+                raise Exception("请选择保存或读取作为页面用途。")
+            if save_mode == "save" and (main_menu or vn_flow_phase == "beforeTitle"):
+                raise Exception("标题宿主没有可保存的游戏进度；请选择读取存档。")
+            screen = save_mode
+        return "vn_bp_managed_menu_" + screen
 
     def vn_bp_camera_warper(easing):
         return {"linear": _warper.linear, "easein": _warper.easeout, "easeout": _warper.easein, "ease": _warper.ease}.get(easing, _warper.ease)
@@ -277,8 +328,9 @@ transform vn_blueprint_camera(px, py, pzoom, prot, pduration, peasing):
 
 label vn_bp_menu_context(screen):
     $ vn_ui_cancel_pointer()
-    $ renpy.context_dynamic("vn_bp_menu_active")
+    $ renpy.context_dynamic("vn_bp_menu_active", "vn_ui_native_open_request")
     $ vn_bp_menu_active = True
+    $ vn_ui_native_open_request = dict(owner=renpy.context(), parentTask=vn_bp_task)
     call _game_menu(_game_menu_screen=screen)
     return
 
@@ -288,5 +340,52 @@ label vn_bp_menu_return:
     return
 
 ${Object.keys(blueprintScreens).map(screen => `label vn_bp_menu_${screen}:\n    $ renpy.call_in_new_context("vn_bp_menu_context", screen="${screen}")\n    return\n`).join('\n')}
-${project.ui.customPages.map(page => `label vn_bp_page_${page.id}:\n    if ${pythonLiteral(page.id)} in vn_ui_open_pages:\n        return ""\n    $ vn_ui_page_begin(${pythonLiteral(page.id)}, True)\n    call screen vn_custom_page_${page.id}(_vn_waiting=True)\n    $ vn_ui_page_cleanup(${pythonLiteral(page.id)})\n    return _return\n`).join('\n')}`;
+label vn_bp_managed_menu_context(screen, page_id, inputs=None):
+    $ vn_ui_cancel_pointer()
+    $ renpy.context_dynamic("vn_bp_menu_active", "vn_ui_native_page_close_result", "vn_ui_native_open_request")
+    $ vn_bp_menu_active = True
+    $ vn_ui_native_page_close_result = None
+    $ vn_ui_native_open_request = dict(page=page_id, inputs=vn_ui_interface_inputs(page_id, inputs), used=False, owner=renpy.context(), parentTask=vn_bp_task)
+    $ vn_game_flow_transition_transfer()
+    call _game_menu(_game_menu_screen=screen)
+    return vn_ui_native_finish_context(page_id)
+
+${Object.keys(blueprintScreens).map(screen => {
+  const pageId = 'ui:' + (screen === 'save' || screen === 'load' ? 'save' : uiPages(project).find(page => page.menuScreen === screen)!.kind);
+  return `label vn_bp_managed_menu_${screen}(_vn_modal=None, _vn_inputs=None, _vn_opening=None):
+    if vn_ui_native_page_is_open(${pythonLiteral(pageId)}):
+        $ vn_ui_last_page_reason = "alreadyOpen"
+        $ vn_ui_last_page_completion = vn_ui_interface_completion(${pythonLiteral(pageId)}, "", "alreadyOpen")
+        return ""
+    $ renpy.dynamic("_vn_menu_completion")
+    $ _vn_menu_completion = renpy.call_in_new_context("vn_bp_managed_menu_context", screen="${screen}", page_id=${pythonLiteral(pageId)}, inputs=_vn_inputs)
+    $ vn_ui_last_page_completion = vn_ui_interface_result(${pythonLiteral(pageId)}, _vn_menu_completion)
+    $ vn_ui_last_page_reason = vn_ui_last_page_completion["reason"]
+    return vn_ui_last_page_completion["result"]
+`;
+}).join('\n')}
+
+${project.ui.customPages.map(page => `label vn_bp_page_${page.id}(_vn_modal=None, _vn_auto=0.0, _vn_confirm=False, _vn_allow_skip=False, _vn_inputs=None, _vn_opening=None):
+    if ${pythonLiteral(page.id)} in vn_ui_open_pages:
+        $ vn_ui_focus_page(${pythonLiteral(page.id)})
+        $ vn_ui_last_page_reason = "alreadyOpen"
+        $ vn_ui_last_page_completion = vn_ui_interface_completion(${pythonLiteral(page.id)}, "", "alreadyOpen")
+        return ""
+    $ vn_ui_page_begin(${pythonLiteral(page.id)}, True, _vn_modal, _vn_inputs, _vn_auto, _vn_confirm, _vn_allow_skip, _vn_opening)
+    $ renpy.retain_after_load()
+    if vn_game_flow_transition_holding():
+        $ renpy.checkpoint(hard=False)
+    $ vn_game_flow_transition_flush()
+    call screen vn_custom_page_${page.id}(_vn_waiting=True)
+    # A 0.8.0 save resumes at the call above, before these locals existed.
+    $ renpy.dynamic("_vn_page_token", "_vn_page_value", "_vn_page_reason", "_vn_page_completion")
+    $ _vn_page_completion = dict(_return)
+    $ _vn_page_token = _vn_page_completion.pop("token")
+    $ _vn_page_value = _vn_page_completion["result"]
+    $ _vn_page_reason = _vn_page_completion["reason"]
+    $ vn_ui_page_cleanup(${pythonLiteral(page.id)}, _vn_page_token)
+    $ vn_ui_last_page_reason = _vn_page_reason
+    $ vn_ui_last_page_completion = _vn_page_completion
+    return _vn_page_value
+`).join('\n')}`;
 }

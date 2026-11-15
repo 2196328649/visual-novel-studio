@@ -1,3 +1,4 @@
+import { cloneData } from "./project-mutation";
 import { projectGraphs, addProjectGraphs } from './project-resources';
 import type { BlueprintGraph, Project } from './model';
 import { blueprintInputValue, blueprintNodeDefaults, connectBlueprintPins, createBlueprintGraph } from './blueprint';
@@ -31,6 +32,13 @@ export function createEndingPerformance(): BlueprintGraph {
 }
 
 const chapterPresets = new WeakMap<Project['ui'], { assets: Project['assets']; graphs: BlueprintGraph[]; ending: BlueprintGraph }>();
+/** A copy of a project builds the same presets, so parsing a copy can reuse them. */
+export function sharePerformancePresets(source: Project, copy: Project) {
+  availablePerformanceBlueprints(source);
+  const chapters = chapterPresets.get(source.ui);
+  if (chapters) chapterPresets.set(copy.ui, { ...chapters, assets: copy.assets });
+}
+
 export function availablePerformanceBlueprints(project: Project) {
   let chapters = chapterPresets.get(project.ui);
   if (!chapters || chapters.assets !== project.assets) {
@@ -48,7 +56,7 @@ export function availablePerformanceBlueprints(project: Project) {
 export function installPerformanceBlueprint(project: Project, graph: BlueprintGraph) {
   if (projectGraphs(project).some(item => item.id === graph.id)) return;
   const available = availablePerformanceBlueprints(project);
-  addProjectGraphs(project, structuredClone(graph));
+  addProjectGraphs(project, cloneData(graph));
   for (const node of graph.nodes) if (node.type === 'callFunction') {
     const dependency = available.find(item => item.id === node.properties.graphId);
     if (dependency) installPerformanceBlueprint(project, dependency);

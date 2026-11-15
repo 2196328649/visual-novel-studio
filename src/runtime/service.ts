@@ -1,3 +1,4 @@
+import { requiresSpineRuntime, spineRuntimeProblem } from './spine-bundle';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -63,7 +64,7 @@ export async function buildProject(options: BuildOptions): Promise<RunResult> {
   const android = options.development === false && exportSettings(sourceProject).platform === 'android' ? androidAssets(sourceProject) : undefined;
   const project = android?.project ?? sourceProject;
   options.signal?.throwIfAborted();
-  const compiled = compileProject(project, { development: options.development, preview: options.preview });
+  const compiled = compileProject(project, { development: options.development, preview: options.preview, blueprintDebug: options.previewHost === true && options.preview?.blueprintDebug !== false });
   const diagnostics = [...compiled.diagnostics];
   if (diagnostics.some(d => d.severity === 'error')) return { ok: false, diagnostics, log: '' };
   for (const asset of sourceProject.assets) {
@@ -80,6 +81,12 @@ export async function buildProject(options: BuildOptions): Promise<RunResult> {
     } catch { diagnostics.push({ severity: 'error', message: `找不到素材：${asset.name}`, assetId: asset.id }); }
   }
   if (diagnostics.some(d => d.severity === 'error')) return { ok: false, diagnostics, log: '' };
+  const needsSpine = requiresSpineRuntime(project);
+  const spineRuntime = options.spineRuntimeDir ?? path.join(path.dirname(sdkRoot), 'spine');
+  if (needsSpine) {
+    const problem = await spineRuntimeProblem(spineRuntime, 'windows');
+    if (problem) return { ok: false, diagnostics: [...diagnostics, { severity: 'error', message: problem }], log: '' };
+  }
   await fs.mkdir(outputDir, { recursive: true });
   // A reused build directory must not retain assets removed from the project.
   const gameRoot = containedPath(outputDir, 'game');
@@ -87,6 +94,7 @@ export async function buildProject(options: BuildOptions): Promise<RunResult> {
   for (const [relative, content] of Object.entries(compiled.files)) await atomicWrite(containedPath(outputDir, relative), content);
   for (const file of ['00-vn-android-assets.rpy', '00-vn-android-assets.rpyc']) await fs.rm(containedPath(gameRoot, file), { force: true });
   if (android?.runtime) await atomicWrite(path.join(gameRoot, '00-vn-android-assets.rpy'), android.runtime);
+  if (!compiled.files['game/98-blueprint-debug.rpy']) for (const file of ['98-blueprint-debug.rpy', '98-blueprint-debug.rpyc']) await fs.rm(containedPath(gameRoot, file), { force: true });
   if (options.previewHost) await atomicWrite(path.join(gameRoot, '99-studio-preview.rpy'), createPreviewRuntime());
   else for (const file of ['99-studio-preview.rpy', '99-studio-preview.rpyc']) await fs.rm(containedPath(gameRoot, file), { force: true });
   const sourceAssets = new Map(sourceProject.assets.flatMap(asset => assetFiles(asset).map(file => [file, asset] as const)));
@@ -96,8 +104,7 @@ export async function buildProject(options: BuildOptions): Promise<RunResult> {
     await fs.mkdir(path.dirname(destination), { recursive: true });
     await fs.copyFile(assetSourcePath(projectDir!, sourceAssets.get(source)!, source), destination);
   }
-  if (project.assets.some(asset => asset.kind === 'spine')) {
-    const spineRuntime = options.spineRuntimeDir ?? path.join(path.dirname(sdkRoot), 'spine');
+  if (needsSpine) {
     const python = path.join(outputDir, 'game/python-packages');
     await fs.mkdir(python, { recursive: true });
     for (const name of ['vns_spine.py', 'vns_spine.dll']) await fs.copyFile(path.join(spineRuntime, name), path.join(python, name));

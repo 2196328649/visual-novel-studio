@@ -30,6 +30,18 @@ test('sample cleanup preserves story and nested blueprint image references, remo
   assert.deepEqual(simplifySample(project).removedAssets, []);
 });
 
+test('disabled pages leave no reference to a removed screen, so the game still starts', () => {
+  const project = createProject();
+  simplifySample(project);
+  assert.ok(project.ui.disabledPages?.includes('keyboard'));
+  const source = createScreens(project);
+  const defined = new Set([...source.matchAll(/^screen ([a-zA-Z0-9_]+)\(/gm)].map(match => match[1]));
+  const missing = [...source.matchAll(/^\s+use (vn_components_[a-zA-Z0-9_]+)/gm)].map(match => match[1]).filter(name => !defined.has(name));
+  assert.deepEqual([...new Set(missing)], []);
+  assert.match(source, /^screen input\(/m);
+  assert.doesNotMatch(source, /^screen vn_components_keyboard\(/m);
+});
+
 test('missing asset assignments follow current disk directories rather than old import paths', () => {
   const project = createProject();
   project.assets = [{id:'asset',kind:'image',name:'背景',path:'assets/场景/雨天/街道.png',sourcePath:'original/mess/街道.png'}];

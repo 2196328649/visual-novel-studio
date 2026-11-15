@@ -1,9 +1,10 @@
-import { useId, useLayoutEffect, useRef, useState } from 'react';
+import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, AlertTriangle, Check, ChevronDown, ChevronRight, CircleHelp } from 'lucide-react';
 import type { Diagnostic, Project } from '../core/model';
 import type { TextParseResult } from '../core/text-script';
-import { diagnosticKey, diagnosticLocation, diagnosticSourceLine } from '../core/diagnostic-location';
-import { visibleTextLine, type TextDocument } from '../core/text-document';
+import { diagnosticKey, diagnosticLocation, diagnosticSourceLine, diagnosticTextLine } from '../core/diagnostic-location';
+import type { TextDocument } from '../core/text-document';
+import { textChapters, type TextChapter } from '../core/text-chapters';
 import './diagnostics.css';
 
 interface DiagnosticListProps {
@@ -16,7 +17,7 @@ interface DiagnosticListProps {
   compact?: boolean;
 }
 
-function DiagnosticItem({ issue, project, parsed, document, mode, onLocate, compact }: Omit<DiagnosticListProps, 'issues'> & { issue: Diagnostic }) {
+function DiagnosticItem({ issue, project, parsed, document, chapters, mode, onLocate, compact }: Omit<DiagnosticListProps, 'issues'> & { issue: Diagnostic; chapters: TextChapter[] }) {
   const [expanded, setExpanded] = useState(false);
   const detailsId = useId();
   const row = useRef<HTMLElement>(null);
@@ -30,7 +31,7 @@ function DiagnosticItem({ issue, project, parsed, document, mode, onLocate, comp
   }, [expanded]);
   const { label, destination } = diagnosticLocation(project, issue, parsed);
   const sourceLine = diagnosticSourceLine(issue, parsed);
-  const visibleLine = sourceLine && document ? visibleTextLine(document, sourceLine) : undefined;
+  const visibleLine = sourceLine && document ? diagnosticTextLine(document, sourceLine, chapters) : undefined;
   const text = destination?.kind === 'text' || destination?.kind === 'story' && (mode === 'text' && !!sourceLine || !!issue.sourceLine);
   const action = !destination || !onLocate ? '查看说明' : text ? '定位文本' : destination.kind === 'story' ? '定位模块' : destination.kind === 'blueprint' ? '定位蓝图' : destination.kind === 'ui' ? '定位控件' : destination.kind === 'asset' ? '查看素材' : '设置入口';
   const guidance = issue.help ?? (destination?.kind === 'blueprint' ? '检查此蓝图节点的参数和连线。' : destination?.kind === 'story' || destination?.kind === 'text' ? '点击定位，在对应的段落或指令处检查提示中提到的内容。' : destination?.kind === 'asset' ? '打开对应素材，检查文件是否存在、类型是否正确。' : '根据这条提示检查作品设置、素材或界面配置。');
@@ -48,7 +49,8 @@ function DiagnosticItem({ issue, project, parsed, document, mode, onLocate, comp
 }
 
 export function DiagnosticList(props: DiagnosticListProps) {
-  return <>{props.issues.map(issue => <DiagnosticItem {...props} issue={issue} key={diagnosticKey(issue)} />)}</>;
+  const chapters = useMemo(() => props.document ? textChapters(props.document.source, props.project.chapters) : [], [props.document, props.project.chapters]);
+  return <>{props.issues.map(issue => <DiagnosticItem {...props} chapters={chapters} issue={issue} key={diagnosticKey(issue)} />)}</>;
 }
 
 export function TextDiagnostics(props: DiagnosticListProps) {

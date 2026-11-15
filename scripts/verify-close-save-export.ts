@@ -20,7 +20,7 @@ let app: ElectronApplication | undefined, page: Page | undefined, phase = 'clean
 const saved = async (file = projectFile) => projectSchema.parse(JSON.parse(await fs.readFile(file, 'utf8')));
 const dialogs = async () => (await fs.readFile(dialogLog, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
 async function launch(file = projectFile) {
-  app = await launchDesktopFixture({ root, projectFile: file, profile }); page = await app.firstWindow();
+  app = await launchDesktopFixture({ root, projectFile: file, profile, confirmClose: true }); page = await app.firstWindow();
   page.on('pageerror', error => errors.push(error.message));
   await expect(page.locator('.project-title strong')).toHaveText((await saved(file)).name, { timeout: 45000 });
   await app.evaluate(({ BrowserWindow, dialog, shell }, log) => {

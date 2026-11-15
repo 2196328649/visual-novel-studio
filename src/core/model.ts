@@ -1,10 +1,20 @@
+import { cloneData } from "./project-mutation";
 import { z } from 'zod';
 import { uiHierarchyProblems, uiSubtreeIds } from './ui-hierarchy';
 import { playerPreferenceKeys, playerPreferences, validPlayerPreference } from './preferences';
 import { exportSettingsSchema } from './export-settings';
+import { gameFlowSchema } from './game-flow-schema';
+import { storyGroupSchema, storyGroupProblems } from './story-groups-schema';
+import { uiPageOpeningSchema } from './ui-page-opening-schema';
+import { flowTransitionsSchema } from './flow-transition-schema';
+import { actorInstanceError, actorInstanceProblem, parseActorInstance } from './actor-instance-identity';
+import { playerFlowContentSchema } from './player-flow-content-schema';
+import { uiComponentPageProblems } from './ui-component-page';
 
 const id = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/);
+const actorInstanceId = z.string().refine(value => actorInstanceProblem(value) === undefined, actorInstanceError).transform(parseActorInstance).optional();
 const color = z.string().regex(/^#[0-9a-fA-F]{6}$/);
+const uiColor = z.string().regex(/^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/);
 const value = z.union([z.string(), z.number().finite(), z.boolean()]);
 export type VariableValue = z.infer<typeof value>;
 export type Condition =
@@ -20,7 +30,7 @@ export const conditionSchema: z.ZodType<Condition> = z.lazy(() => z.union([
 
 const transition = z.enum(['none', 'dissolve', 'fade', 'move']).default('none');
 const appearanceTiming = { duration: z.number().nonnegative().optional(), wait: z.boolean().optional() };
-export const actorTransitionRuleSchema = z.object({ mode: z.enum(['none', 'dissolve', 'fade', 'move']), duration: z.number().finite().min(0).max(60) });
+export const actorTransitionRuleSchema = z.object({ mode: z.enum(['none', 'dissolve', 'fade', 'move']), duration: z.number().finite().nonnegative() });
 export const actorTransitionsSchema = z.object({ enter: actorTransitionRuleSchema.optional(), exit: actorTransitionRuleSchema.optional(), expression: actorTransitionRuleSchema.optional() });
 export type ActorTransitions = z.infer<typeof actorTransitionsSchema>;
 export type ActorTransitionRule = z.infer<typeof actorTransitionRuleSchema>;
@@ -48,6 +58,7 @@ export const actorCurvesSchema = z.partialRecord(z.enum(['x', 'y', 'scale', 'rot
 export const moveOffsetsSchema = actorCurvesSchema.refine(curves => Object.values(curves).every(frames => frames?.every(frame => frame.at <= 1)), '移动偏移关键帧需位于 0～1 的进度内');
 export const cameraCurvesSchema = z.partialRecord(z.enum(['x', 'y', 'zoom', 'rotation']), z.array(visualCurveKeySchema).min(1).max(64));
 export const particleLifeCurvesSchema = z.partialRecord(z.enum(['size', 'opacity', 'forceX', 'forceY', 'speed', 'red', 'green', 'blue']), z.array(visualCurveKeySchema.extend({ at: z.number().min(0).max(1) })).min(1).max(64));
+export const textEffectsSchema = z.object({ outlineWidth: z.number().nonnegative().optional(), outlineColor: color.optional(), outlineOpacity: z.number().min(0).max(1).optional(), shadowX: z.number().finite().optional(), shadowY: z.number().finite().optional(), shadowBlur: z.number().nonnegative().optional(), shadowColor: color.optional(), shadowOpacity: z.number().min(0).max(1).optional() });
 export const visualObjectSchema = z.object({
   kind: z.literal('visual'), instanceId: id, name: z.string().max(120),
   content: z.enum(['image', 'text', 'particles', 'group', 'solid', 'video']), assetId: id.optional(),
@@ -63,10 +74,12 @@ export const visualObjectSchema = z.object({
   })).max(128).optional(),
   parameterValues: z.record(id, value).optional(),
   get children(): z.ZodOptional<z.ZodArray<typeof visualObjectSchema>> { return z.array(visualObjectSchema).max(128).optional(); },
-  width: z.number().positive().max(4), height: z.number().positive().max(4), layer: z.number().int(),
-  color: color.default('#ffffff'), fontSize: z.number().int().min(12).max(300).default(60), fontAssetId: id.optional(),
+  width: z.number().positive(), height: z.number().positive(), layer: z.number().int(),
+  color: color.default('#ffffff'), fontSize: z.number().int().positive().default(60), fontAssetId: id.optional(),
   textClip: z.object({ x: z.number().finite(), y: z.number().finite(), width: z.number().nonnegative(), height: z.number().nonnegative() }).optional(),
-  textEffects: z.object({ outlineWidth: z.number().nonnegative().optional(), outlineColor: color.optional(), outlineOpacity: z.number().min(0).max(1).optional(), shadowX: z.number().finite().optional(), shadowY: z.number().finite().optional(), shadowBlur: z.number().min(0).max(64).optional(), shadowColor: color.optional(), shadowOpacity: z.number().min(0).max(1).optional() }).optional(),
+  textEffects: textEffectsSchema.optional(),
+  /** Character-by-character reveal, animation and exit, shared with dialogue text. */
+  textMotion: z.lazy(() => textMotionSchema).optional(),
   textAlign: z.enum(['left', 'center', 'right']).optional(), textVerticalAlign: z.enum(['top', 'center', 'bottom']).optional(), textItalic: z.boolean().optional(),
   duration: z.number().nonnegative(), wait: z.boolean().default(false),
   persistent: z.boolean().optional(), loop: z.boolean().optional(),
@@ -84,7 +97,7 @@ export const visualObjectSchema = z.object({
   imageFit: z.enum(['stretch', 'contain', 'cover']).optional(),
   imageAlign: z.enum(['top', 'center', 'bottom']).optional(),
   glyphParticles: z.object({
-    source: z.enum(['image', 'text']).optional(), assetId: id.optional(), count: z.number().int().min(1).max(200),
+    source: z.enum(['image', 'text']).optional(), assetId: id.optional(), count: z.number().int().min(1),
     seed: z.number().int().min(0).max(1000000).optional(),
     lifeCurves: z.partialRecord(z.enum(['size', 'opacity', 'forceX', 'forceY', 'red', 'green', 'blue']), z.array(visualCurveKeySchema.extend({ at: z.number().min(0).max(1) })).min(1).max(64)).optional(),
     emissionStart: z.number().nonnegative(), timeScale: z.number().positive(), sizeScale: z.number().positive(), motionScale: z.number().nonnegative(),
@@ -93,15 +106,15 @@ export const visualObjectSchema = z.object({
   ripple: z.object({ strength: z.number().min(0).max(1), speed: z.number().finite() }).optional(),
   dissolve: z.object({ start: z.number().nonnegative(), end: z.number().nonnegative(), from: z.number().min(-1).max(1), to: z.number().min(-1).max(1) }).optional(),
   curves: z.partialRecord(z.enum(['x', 'y', 'scale', 'scaleX', 'scaleY', 'rotation', 'opacity', 'dissolveStrength', 'rippleStrength', 'rippleSpeed']), z.array(visualCurveKeySchema).min(1).max(64)).optional(),
-  particles: z.object({ count: z.number().int().min(1).max(500), seed: z.number().int().min(0).max(1000000), lifetime: z.number().positive(), speed: z.number().nonnegative(), direction: z.number().finite(), spread: z.number().min(0).max(360), size: z.number().positive(), endSize: z.number().nonnegative(), lifeCurves: particleLifeCurvesSchema.optional() }).optional(),
+  particles: z.object({ count: z.number().int().min(1), seed: z.number().int().min(0).max(1000000), lifetime: z.number().positive(), speed: z.number().nonnegative(), direction: z.number().finite(), spread: z.number().min(0).max(360), size: z.number().positive(), endSize: z.number().nonnegative(), lifeCurves: particleLifeCurvesSchema.optional() }).optional(),
 });
 export type VisualObject = z.infer<typeof visualObjectSchema>;
 export const actionSchema = z.discriminatedUnion('kind', [
   visualObjectSchema,
   z.object({ kind: z.literal('hideVisual'), instanceId: id, exitTransition: actorTransitionRuleSchema.optional(), wait: z.boolean().optional() }),
   z.object({ kind: z.literal('background'), assetId: id, transition, ...appearanceTiming }),
-  z.object({ kind: z.literal('show'), actorTransitions: actorTransitionsSchema.optional(), moveOffsets: moveOffsetsSchema.optional(), afterOffsets: actorCurvesSchema.optional(), characterId: z.union([id, z.literal('')]).default(''), expressionId: z.string().max(240).default(''), instanceId: id.optional(), lifetime: z.enum(['line', 'persistent']).optional(), presetId: id.optional(), x: z.number().finite(), y: z.number().finite(), scale: z.number().finite(), layer: z.number().int(), transition, ...appearanceTiming }),
-  z.object({ kind: z.literal('hide'), characterId: id, instanceId: id.optional(), transition, ...appearanceTiming }),
+  z.object({ kind: z.literal('show'), actorTransitions: actorTransitionsSchema.optional(), moveOffsets: moveOffsetsSchema.optional(), afterOffsets: actorCurvesSchema.optional(), characterId: z.union([id, z.literal('')]).default(''), expressionId: z.string().max(240).default(''), instanceId: actorInstanceId, lifetime: z.enum(['line', 'persistent']).optional(), presetId: id.optional(), x: z.number().finite(), y: z.number().finite(), scale: z.number().finite(), layer: z.number().int(), transition, ...appearanceTiming }),
+  z.object({ kind: z.literal('hide'), characterId: id, instanceId: actorInstanceId, transition, ...appearanceTiming }),
   z.object({ kind: z.literal('music'), assetId: id, loop: z.boolean().default(true), fade: z.number().nonnegative().default(0) }),
   z.object({ kind: z.literal('sound'), assetId: id }),
   z.object({ kind: z.literal('unlock'), assetId: id }),
@@ -111,7 +124,7 @@ export const actionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('hideInterface') }),
   z.object({ kind: z.literal('showInterface') }),
   z.object({ kind: z.literal('startDialogue') }),
-  z.object({ kind: z.literal('animate'), characterId: id, instanceId: id.optional(), keyframes: z.array(keyframeSchema).min(1).max(32), curves: actorCurvesSchema.optional(), wait: z.boolean().default(false), repeat: z.boolean().default(false) }),
+  z.object({ kind: z.literal('animate'), characterId: id, instanceId: actorInstanceId, keyframes: z.array(keyframeSchema).min(1).max(32), curves: actorCurvesSchema.optional(), wait: z.boolean().default(false), repeat: z.boolean().default(false) }),
   z.object({ kind: z.literal('camera'), x: z.number().finite(), y: z.number().finite(), zoom: z.number().finite(), rotation: z.number().finite(), duration: z.number().nonnegative(), easing, wait: z.boolean().default(false), curves: cameraCurvesSchema.optional() }),
   z.object({ kind: z.literal('shake'), direction: z.enum(['horizontal', 'vertical']), duration: z.number().nonnegative().optional(), amplitude: z.number().finite().optional(), wait: z.boolean().optional() }),
   z.object({ kind: z.literal('effect'), effectId: id }),
@@ -127,18 +140,68 @@ export const performancePlaybackSchema = z.object({
   onComplete: z.enum(['next', 'title']).optional(),
   transition: z.object({
     mode: z.enum(['none', 'dissolve', 'color']),
-    outDuration: z.number().finite().min(0).max(60).default(.5),
-    hold: z.number().finite().min(0).max(60).default(0),
-    inDuration: z.number().finite().min(0).max(60).default(.5),
+    outDuration: z.number().finite().nonnegative().default(.5),
+    hold: z.number().finite().nonnegative().default(0),
+    inDuration: z.number().finite().nonnegative().default(.5),
     color: color.default('#000000'),
   }).optional(),
 });
 export type PerformancePlayback = z.infer<typeof performancePlaybackSchema>;
-export const lineSchema = z.object({ id, speakerId: id.optional(), text: z.string(), silent: z.boolean().optional(), voiceId: id.optional(), actions: z.array(actionSchema).default([]), playback: performancePlaybackSchema.optional() });
+export const textEntranceEffects = ['none', 'fade', 'zoom', 'slam', 'flip', 'drop', 'rise'] as const;
+export const textLoopEffects = ['none', 'shake', 'wave', 'pulse'] as const;
+export const textEasings = ['linear', 'easeOut', 'easeIn', 'easeInOut', 'back', 'bounce', 'elastic'] as const;
+export const textOrders = ['forward', 'reverse', 'center', 'edges', 'random'] as const;
+/** Adjustments to a named entrance or exit: the state a character moves from or to, how it moves, and in what order. */
+export const textAnimationSchema = z.object({
+  x: z.number().finite().optional(), y: z.number().finite().optional(), scale: z.number().finite().optional(), flip: z.boolean().optional(), rotation: z.number().finite().optional(),
+  opacity: z.number().min(0).max(1).optional(), easing: z.enum(textEasings).optional(), order: z.enum(textOrders).optional(),
+});
+export type TextAnimation = z.infer<typeof textAnimationSchema>;
+/** How dialogue text looks and reveals. Every field is optional: an empty field
+ * inherits from the speaker's settings, then from the dialogue theme. Sizes are
+ * relative to the dialogue font so a look works with any theme or resolution. */
+export const textPresentationStyleSchema = z.object({
+  fontAssetId: id.optional(), sizeScale: z.number().finite().positive().optional(), color: color.optional(),
+  bold: z.boolean().optional(), italic: z.boolean().optional(), align: z.enum(['left', 'center', 'right']).optional(),
+  textEffects: textEffectsSchema.optional(),
+  // Reveal speed: the player's preference, a whole-line duration in seconds, characters per second, or all at once.
+  speed: z.enum(['player', 'duration', 'cps', 'instant']).optional(), duration: z.number().finite().positive().optional(), cps: z.number().finite().positive().optional(),
+  // Screen placement hides the dialogue window; x and y place the text centre as screen fractions.
+  placement: z.enum(['dialogue', 'screen']).optional(), x: z.number().finite().optional(), y: z.number().finite().optional(), width: z.number().finite().positive().optional(),
+  entrance: z.enum(textEntranceEffects).optional(), entranceTime: z.number().finite().nonnegative().optional(), entranceAnimation: textAnimationSchema.optional(),
+  loop: z.enum(textLoopEffects).optional(), loopStrength: z.number().finite().nonnegative().optional(), loopSpeed: z.number().finite().positive().optional(),
+  // Plays after the player advances: exitTotal seconds in all, exitTime for each character.
+  exit: z.enum(textEntranceEffects).optional(), exitTotal: z.number().finite().positive().optional(), exitTime: z.number().finite().nonnegative().optional(), exitAnimation: textAnimationSchema.optional(),
+  // A sound while the words reveal: every N sounding characters, at a share of the sound volume; zero silences one line.
+  typeSoundId: id.optional(), typeSoundEvery: z.number().int().positive().optional(), typeSoundVolume: z.number().min(0).max(1).optional(),
+});
+export type TextPresentationStyle = z.infer<typeof textPresentationStyleSchema>;
+export const textPresentationSchema = textPresentationStyleSchema.extend({ presetId: id.optional() });
+export type TextPresentation = z.infer<typeof textPresentationSchema>;
+export const textMotionSchema = textPresentationStyleSchema.pick({ speed: true, duration: true, cps: true, entrance: true, entranceTime: true, entranceAnimation: true, loop: true, loopStrength: true, loopSpeed: true, exit: true, exitTotal: true, exitTime: true, exitAnimation: true });
+export type TextMotion = z.infer<typeof textMotionSchema>;
+export const textPresetSchema = z.object({ id, name: z.string().trim().min(1).max(80), style: textPresentationStyleSchema });
+export type TextPreset = z.infer<typeof textPresetSchema>;
+/** A part of one line's words with its own look. Speed multiplies the line's reveal speed. */
+export const textSpanStyleSchema = z.object({
+  color: color.optional(), sizeScale: z.number().finite().positive().optional(), bold: z.literal(true).optional(), italic: z.literal(true).optional(), fontAssetId: id.optional(),
+  speed: z.number().finite().positive().optional(),
+  // Unset follows the whole line; 'none' turns the line's effect off for these words.
+  entrance: z.enum(textEntranceEffects).optional(), entranceTime: z.number().finite().nonnegative().optional(),
+  loop: z.enum(textLoopEffects).optional(), loopStrength: z.number().finite().nonnegative().optional(), loopSpeed: z.number().finite().positive().optional(),
+});
+export type TextSpanStyle = z.infer<typeof textSpanStyleSchema>;
+// Offsets count characters (code points) of the line's text, line breaks included.
+export const textSpanSchema = z.object({ start: z.number().int().nonnegative(), end: z.number().int().positive(), style: textSpanStyleSchema }).refine(span => span.end > span.start, '文字范围不能为空');
+export type TextSpan = z.infer<typeof textSpanSchema>;
+/** A wait before the character at `at`, during the line's reveal. */
+export const textPauseSchema = z.object({ at: z.number().int().nonnegative(), seconds: z.number().finite().positive() });
+export type TextPause = z.infer<typeof textPauseSchema>;
+export const lineSchema = z.object({ id, speakerId: id.optional(), text: z.string(), silent: z.boolean().optional(), voiceId: id.optional(), actions: z.array(actionSchema).default([]), playback: performancePlaybackSchema.optional(), textPresentation: textPresentationSchema.optional(), textSpans: z.array(textSpanSchema).max(512).optional(), textPauses: z.array(textPauseSchema).max(512).optional() });
 export type StoryLine = z.infer<typeof lineSchema>;
 
 const flowchartSchema = z.object({ visible: z.boolean().optional(), name: z.string().max(120).optional(), styleId: id.optional() });
-const base = { flowchart: flowchartSchema.optional(), id, name: z.string(), sceneId: id, x: z.number().finite(), y: z.number().finite(), textHeading: z.boolean().optional() };
+const base = { flowchart: flowchartSchema.optional(), transitions: flowTransitionsSchema.optional(), id, name: z.string(), sceneId: id, x: z.number().finite(), y: z.number().finite(), textHeading: z.boolean().optional() };
 const next = id.optional();
 export const hotspotSchema = z.object({
   id, name: z.string(), x: z.number().finite(), y: z.number().finite(),
@@ -179,7 +242,7 @@ export const nodeSchema = z.discriminatedUnion('kind', [
   z.object({ ...base, kind: z.literal('chapterTitle'), title: z.string(), subtitle: z.string().default(''), duration: z.number().nonnegative().default(2.5),
     effect: z.enum(['none', 'fade', 'ink']).optional(), backgroundId: id.optional(), titleImageId: id.optional(), soundId: id.optional(), playback: performancePlaybackSchema.optional(), next }),
   z.object({ ...base, kind: z.literal('interaction'), prompt: z.string(), showHints: z.boolean().default(true), hotspots: z.array(hotspotSchema).min(1).max(64), timeoutSeconds: z.number().nonnegative().default(0), timeout: next, cancel: next }),
-  z.object({ ...base, kind: z.literal('minigame'), template: z.enum(['password', 'timedClicks', 'custom']), title: z.string(), prompt: z.string(), password: z.string().max(128).default('1234'), caseSensitive: z.boolean().default(false), attempts: z.number().int().min(1).max(20).default(3), targetClicks: z.number().int().min(1).max(999).default(5), timeLimit: z.number().int().min(1).max(600).default(10), minigameId: id.optional(), success: next, failure: next, cancel: next }),
+  z.object({ ...base, kind: z.literal('minigame'), template: z.enum(['password', 'timedClicks', 'custom']), title: z.string(), prompt: z.string(), password: z.string().max(128).default('1234'), caseSensitive: z.boolean().default(false), attempts: z.number().int().min(1).default(3), targetClicks: z.number().int().min(1).default(5), timeLimit: z.number().int().min(1).default(10), minigameId: id.optional(), success: next, failure: next, cancel: next }),
 ]);
 export type StoryNode = z.infer<typeof nodeSchema>;
 export type NodeKind = StoryNode['kind'];
@@ -243,20 +306,52 @@ export const characterSchema = z.object({
   displayPresets: z.array(characterDisplayPresetSchema).max(64).optional(),
   defaultDisplayPresetId: id.optional(),
   blueprintId: id.optional(),
+  // Disable an old automatic blueprint call without erasing its local/inherited binding.
+  blueprintDisabled: z.literal(true).optional(),
   features: z.array(characterFeatureSchema).max(64).optional(),
+  textPresentation: textPresentationSchema.optional(),
 });
 export type Character = z.infer<typeof characterSchema>;
-export const parameterSetSchema = z.object({ id, name: z.string().min(1).max(120), description: z.string().max(1000).optional(), kind: z.enum(['story', 'settings']) });
+export const parameterDefaultsSchema = z.object({ persistent: z.boolean(), resetWithSettings: z.boolean() });
+export type ParameterDefaults = z.infer<typeof parameterDefaultsSchema>;
+export const parameterSetSchema = z.object({ id, name: z.string().min(1).max(120), description: z.string().max(1000).optional(),
+  // Legacy kind is retained only to resolve defaults in existing projects.
+  kind: z.enum(['story', 'settings']), defaults: parameterDefaultsSchema.optional(),
+});
 export type ParameterSet = z.infer<typeof parameterSetSchema>;
-export const variableSchema = z.object({ id, name: z.string(), type: z.enum(['number', 'boolean', 'string']), initial: value, persistent: z.boolean().default(false), parameterSetId: id.optional(),
-  setting: z.object({ visible: z.boolean().optional(), min: z.number().finite().optional(), max: z.number().finite().optional(), step: z.number().positive().optional(), options: z.array(z.string().max(200)).max(64).optional() }).optional(),
+/** Asset parameters hold an asset id (or '' for none) of one media kind. */
+export const parameterAssetKinds = ['image', 'audio', 'video'] as const;
+export type ParameterAssetKind = typeof parameterAssetKinds[number];
+/** How a number reads to authors and players: plain with an optional unit, or a 0–1 ratio shown as a percentage. */
+export const numberDisplayShape = { display: z.enum(['number', 'percent']).optional(), unit: z.string().max(12).optional() };
+export const variableSchema = z.object({ id, name: z.string(), type: z.enum(['number', 'boolean', 'string', 'asset']), assetKind: z.enum(parameterAssetKinds).optional(), initial: value, persistent: z.boolean().default(false), parameterSetId: id.optional(),
+  // Absence preserves the old group's reset rule without rewriting on load.
+  resetWithSettings: z.boolean().optional(),
+  setting: z.object({ visible: z.boolean().optional(), min: z.number().finite().optional(), max: z.number().finite().optional(), step: z.number().positive().optional(), options: z.array(z.string().max(200)).max(64).optional(), ...numberDisplayShape }).optional(),
 });
 export type Variable = z.infer<typeof variableSchema>;
+/** The runtime value type: asset parameters store asset ids as text. */
+export function variableValueType(variable: Pick<Variable, 'type'>): 'number' | 'boolean' | 'string' {
+  return variable.type === 'asset' ? 'string' : variable.type;
+}
+export function variableAssetKind(variable: Pick<Variable, 'type' | 'assetKind'>): ParameterAssetKind | undefined {
+  return variable.type === 'asset' ? variable.assetKind ?? 'image' : undefined;
+}
+
+/** Author-defined scalar state; scope is supplied by its graph or page owner. */
+export const blueprintVariableSchema = z.object({
+  id, name: z.string().trim().min(1).max(120), description: z.string().max(2000).optional(),
+  type: z.enum(['number', 'boolean', 'string']), initial: value,
+}).superRefine((variable, context) => {
+  if (typeof variable.initial !== variable.type) context.addIssue({ code: 'custom', path: ['initial'], message: '初始值与变量类型不匹配。' });
+});
+export type BlueprintVariable = z.infer<typeof blueprintVariableSchema>;
 
 // UE-style authoring graphs are kept separate from the story-flow graph. They
 // describe typed execution/data pins and can be used as reusable functions,
 // macros, effects, scene entry logic, or UI interactions.
 export const blueprintPinSchema = z.object({
+  description: z.string().max(2000).optional(),
   // Node-local pins also use property names (assetId, characterId). A call
   // signature adds a four-character prefix to a project interface id.
   id: z.string().regex(/^[a-z][a-zA-Z0-9_]{0,67}$/),
@@ -271,12 +366,13 @@ export const maxBlueprintInputs = 128;
 export const maxBlueprintOutputs = 32;
 export const blueprintNodeSchema = z.object({
   id,
-  type: z.enum(['event', 'eventClick', 'eventButton', 'eventValueChanged', 'eventTextCommitted', 'eventKey', 'eventTimer', 'showUiPage', 'closeUiPage', 'random', 'formatText', 'sequence', 'branch', 'compare', 'select', 'setVariable', 'getVariable', 'getInput', 'literal', 'math', 'delay', 'forLoop', 'callFunction', 'callMacro', 'sceneAction', 'switchScene', 'showBackground', 'showCharacter', 'startDialogue', 'showChapter', 'camera', 'shake', 'savedAction', 'hideCharacter', 'playMusic', 'playSound', 'stopMusic', 'uiAction', 'setUiProperty', 'getUiProperty', 'animateUiProperty', 'stopUiAnimation', 'playUiAnimation', 'stopUiAnimationPlayback', 'resetUiComponent', 'playSpine', 'pauseSpine', 'setSpineSpeed', 'setPlayerPreference', 'getPlayerPreference', 'setMinigameValue', 'getMinigameValue', 'finishMinigame', 'confirmMessage', 'effect', 'setOutput', 'return', 'comment']),
+  type: z.enum(['event', 'eventClick', 'eventButton', 'eventValueChanged', 'eventTextCommitted', 'eventImage', 'eventVideo', 'eventSpine', 'eventKey', 'eventTimer', 'eventPage', 'getPageInput', 'getPageOutput', 'setPageOutput', 'preventPageClose', 'showUiPage', 'closeUiPage', 'random', 'formatText', 'sequence', 'branch', 'doOnce', 'gate', 'throttle', 'debounce', 'startTask', 'cancelTask', 'waitTask', 'taskStatus', 'compare', 'select', 'switchValue', 'selectByKey', 'not', 'and', 'or', 'xor', 'clamp', 'abs', 'round', 'inRange', 'nearlyEqual', 'mapRange', 'lerp', 'setVariable', 'getVariable', 'getInput', 'literal', 'math', 'delay', 'forLoop', 'callFunction', 'callMacro', 'sceneAction', 'switchScene', 'showBackground', 'showCharacter', 'startDialogue', 'showChapter', 'camera', 'shake', 'savedAction', 'hideCharacter', 'playMusic', 'playSound', 'stopMusic', 'uiAction', 'editUiControlOptions', 'getUiControlOption', 'focusUiComponent', 'setUiControlRange', 'resetUiControlRange', 'setUiProperty', 'getUiProperty', 'getUiDefault', 'resetUiProperty', 'animateUiProperty', 'stopUiAnimation', 'playUiAnimation', 'stopUiAnimationPlayback', 'resetUiComponent', 'playUiVideo', 'pauseUiVideo', 'stopUiVideo', 'playSpine', 'pauseSpine', 'setSpineSpeed', 'setPlayerPreference', 'getPlayerPreference', 'setMinigameValue', 'getMinigameValue', 'finishMinigame', 'confirmMessage', 'effect', 'setOutput', 'return', 'comment']),
   name: z.string().min(1).max(120),
   x: z.number().finite(),
   y: z.number().finite(),
   pins: z.array(blueprintPinSchema).max(4096).default([]),
   properties: z.record(z.string(), value).default({}),
+  pageOpening: uiPageOpeningSchema.optional(),
   collapsed: z.boolean().default(false),
 });
 export type BlueprintNode = z.infer<typeof blueprintNodeSchema>;
@@ -289,6 +385,8 @@ export const blueprintLinkSchema = z.object({
 });
 export type BlueprintLink = z.infer<typeof blueprintLinkSchema>;
 export const blueprintGraphSchema = z.object({
+  localVariables: z.array(blueprintVariableSchema).max(128).optional(),
+  description: z.string().max(4000).optional(),
   id,
   name: z.string().min(1).max(120),
   callName: z.string().min(1).max(120).optional(),
@@ -301,6 +399,7 @@ export const blueprintGraphSchema = z.object({
   chapterPresetRevision: z.number().int().min(1).optional(),
   uiPageId: z.union([id, z.string().regex(/^ui:[a-zA-Z]+$/)]).optional(),
   uiInstanceId: id.optional(),
+  requiredCapabilities: z.array(z.enum(['page', 'stage', 'dialogue', 'minigame'])).max(4).optional(),
   kind: z.enum(['function', 'macro', 'effect', 'scene', 'character', 'ui', 'minigame']),
   nodes: z.array(blueprintNodeSchema).max(512).default([]),
   links: z.array(blueprintLinkSchema).max(2048).default([]),
@@ -315,13 +414,22 @@ export const uiComponentLimit = 4096;
 export const uiSkinSchema = z.object({
   idle: id.optional(), hover: id.optional(), pressed: id.optional(), selected: id.optional(), disabled: id.optional(),
   fit: z.enum(['stretch', 'contain', 'cover', 'nineSlice']).optional(),
-  borders: z.object({ left: z.number().min(0).max(2048), top: z.number().min(0).max(2048), right: z.number().min(0).max(2048), bottom: z.number().min(0).max(2048) }).optional(),
+  borders: z.object({ left: z.number().nonnegative(), top: z.number().nonnegative(), right: z.number().nonnegative(), bottom: z.number().nonnegative() }).optional(),
   hideText: z.boolean().optional(),
   brightness: z.object({ idle: z.number().min(0).max(1).optional(), hover: z.number().min(0).max(1).optional(), pressed: z.number().min(0).max(1).optional(), selected: z.number().min(0).max(1).optional(), disabled: z.number().min(0).max(1).optional() }).optional(),
 });
 export type UiSkin = z.infer<typeof uiSkinSchema>;
 export type UiButtonState = 'idle' | 'hover' | 'pressed' | 'selected' | 'disabled';
+export const uiPageAppearanceSchema = z.object({
+  accent: color.optional(), textColor: color.optional(),
+  fontSize: z.number().int().positive().optional(),
+  fontAssetId: z.union([id, z.literal('')]).optional(),
+  hoverSoundId: z.union([id, z.literal('')]).optional(),
+  clickSoundId: z.union([id, z.literal('')]).optional(),
+});
+export type UiPageAppearance = z.infer<typeof uiPageAppearanceSchema>;
 export const uiPageSettingsSchema = z.object({
+  appearance: uiPageAppearanceSchema.optional(),
   layout: z.enum(['native', 'custom']).optional(),
   backgroundId: id.optional(), background: color.optional(),
   backgroundOpacity: z.number().min(0).max(1).optional(),
@@ -343,6 +451,31 @@ export const galleryGroupSchema = z.object({
   variantUnlockWhen: z.record(id, conditionSchema).optional(),
 });
 export type GalleryGroup = z.infer<typeof galleryGroupSchema>;
+export const uiImageEffectsSchema = z.object({
+  cropX: z.number().finite().min(0).max(1).optional(), cropY: z.number().finite().min(0).max(1).optional(),
+  cropWidth: z.number().finite().min(0).max(1).optional(), cropHeight: z.number().finite().min(0).max(1).optional(),
+  flipX: z.boolean().optional(), flipY: z.boolean().optional(), tint: uiColor.optional(),
+});
+export type UiImageEffects = z.infer<typeof uiImageEffectsSchema>;
+/** Optional versioned layout. Missing data is the historical identity layout. */
+export const uiLayoutSchema = z.object({
+  version: z.number().int().min(1).default(1),
+  anchorX: z.number().finite().min(0).max(1).optional(), anchorY: z.number().finite().min(0).max(1).optional(),
+  pivotX: z.number().finite().min(0).max(1).optional(), pivotY: z.number().finite().min(0).max(1).optional(),
+  rotation: z.number().finite().optional(),
+  scaleX: z.number().finite().optional(), scaleY: z.number().finite().optional(),
+  flow: z.enum(['absolute', 'horizontal', 'vertical']).optional(), order: z.number().finite().optional(),
+  gap: z.number().finite().nonnegative().optional(),
+  paddingLeft: z.number().finite().nonnegative().optional(), paddingTop: z.number().finite().nonnegative().optional(),
+  paddingRight: z.number().finite().nonnegative().optional(), paddingBottom: z.number().finite().nonnegative().optional(),
+  clip: z.boolean().optional(), scroll: z.enum(['none', 'horizontal', 'vertical', 'both']).optional(),
+  scrollX: z.number().finite().optional(), scrollY: z.number().finite().optional(),
+  recovery: z.string().optional(),
+}).passthrough();
+export type UiLayout = z.infer<typeof uiLayoutSchema>;
+/** The original design value stays on the component when its live value comes from a parameter. */
+export const uiPropertyControlSchema = z.object({ mode: z.enum(['follow', 'sync']), parameterId: id });
+export type UiPropertyControl = z.infer<typeof uiPropertyControlSchema>;
 export const uiComponentSchema = z.object({
   id, page: uiPageSchema,
   parentId: id.optional(),
@@ -354,24 +487,32 @@ export const uiComponentSchema = z.object({
   text: z.string().default(''), assetId: id.optional(), posterId: id.optional(), loop: z.boolean().optional(), value: z.number().min(0).max(1).optional(),
   tooltip: z.string().max(200).optional(), shortcut: z.string().max(64).optional(),
   skin: uiSkinSchema.optional(),
+  imageEffects: uiImageEffectsSchema.optional(),
+  layout: uiLayoutSchema.optional(),
+  // String keys deliberately preserve unavailable property IDs for diagnostics and repair.
+  propertyControls: z.record(z.string().min(1).max(120), uiPropertyControlSchema).optional(),
   disabled: z.boolean().optional(), visibleWhen: conditionSchema.optional(), enabledWhen: conditionSchema.optional(), selectedWhen: conditionSchema.optional(), saveMode: z.enum(['save', 'load']).optional(),
   spine: spinePlaybackSchema.optional(),
   layer: z.number().finite().optional(),
   list: z.object({
-    layout: z.enum(['grid', 'staggered', 'flow']).optional(), staggerX: z.number().min(0).max(1920).optional(),
-    columns: z.number().int().min(1).max(12).optional(), rows: z.number().int().min(1).max(12).optional(),
-    gapX: z.number().min(0).max(256).optional(), gapY: z.number().min(0).max(256).optional(),
-    itemWidth: z.number().min(16).max(1920).optional(), itemHeight: z.number().min(16).max(1080).optional(),
+    layout: z.enum(['grid', 'staggered', 'flow']).optional(), staggerX: z.number().nonnegative().optional(),
+    columns: z.number().int().min(1).optional(), rows: z.number().int().min(1).optional(),
+    gapX: z.number().nonnegative().optional(), gapY: z.number().nonnegative().optional(),
+    itemWidth: z.number().positive().optional(), itemHeight: z.number().positive().optional(),
     navigation: z.enum(['top', 'bottom']).optional(),
     thumbnail: uiRelativeRectSchema.optional(), caption: uiRelativeRectSchema.optional(), number: uiRelativeRectSchema.optional(),
     thumbnailFit: z.enum(['contain', 'cover', 'stretch']).optional(), lockedRect: uiRelativeRectSchema.optional(), navigationRect: uiRelativeRectSchema.optional(), pageSkin: uiSkinSchema.optional(),
     thumbnailBrightness: uiSkinSchema.shape.brightness,
     pageTextColor: color.optional(), pageSelectedTextColor: color.optional(),
     captionMode: z.enum(['time', 'story']).optional(),
-    fixedAutoSlot: z.boolean().optional(), pageCount: z.number().int().min(1).max(99).optional(),
+    fixedAutoSlot: z.boolean().optional(), pageCount: z.number().int().min(1).optional(),
     chapter: uiRelativeRectSchema.optional(), slotAction: uiRelativeRectSchema.optional(),
     slotActionSkin: uiSkinSchema.optional(), slotSaveSkin: uiSkinSchema.optional(), autoSlotSkin: uiSkinSchema.optional(), numberSkin: uiSkinSchema.optional(), numberTextColor: color.optional(),
-    summaryFontSize: z.number().int().min(12).max(96).optional(),
+    summaryFontSize: z.number().int().positive().optional(),
+    textStyles: z.partialRecord(z.enum(['chapter', 'caption', 'number', 'navigation', 'historyName', 'historyText']), z.object({
+      fontAssetId: id.optional(), fontSize: z.number().int().positive().optional(), textColor: uiColor.optional(),
+      align: z.enum(['left', 'center', 'right']).optional(),
+    })).optional(),
     thumbnailFrame: uiRelativeRectSchema.extend({ assetId: id }).optional(),
     emptyAssetId: id.optional(), hoverOverlayId: id.optional(),
     showLabels: z.boolean().optional(), showDelete: z.boolean().optional(),
@@ -380,25 +521,32 @@ export const uiComponentSchema = z.object({
     galleryUnlockWhen: z.record(id, conditionSchema).optional(),
     galleryFit: z.enum(['contain', 'cover', 'stretch']).optional(),
     galleryEndAction: z.enum(['close', 'loop']).optional(), galleryShowControls: z.boolean().optional(),
-    galleryPageButtonLimit: z.number().int().min(1).max(99).optional(),
-    pageButtonWidth: z.number().min(16).max(256).optional(), pageButtonHeight: z.number().min(16).max(256).optional(), pageGap: z.number().min(0).max(128).optional(),
-    pageFontSize: z.number().int().min(12).max(96).optional(), pageFontAssetId: id.optional(), pageBold: z.boolean().optional(),
+    galleryPageButtonLimit: z.number().int().min(1).optional(),
+    pageButtonWidth: z.number().positive().optional(), pageButtonHeight: z.number().positive().optional(), pageGap: z.number().nonnegative().optional(),
+    pageFontSize: z.number().int().positive().optional(), pageFontAssetId: id.optional(), pageBold: z.boolean().optional(),
     lockUnread: z.boolean().optional(), showProgress: z.boolean().optional(), confirmJump: z.boolean().optional(),
-    flowLineAssetId: id.optional(), flowVerticalLineAssetId: id.optional(), flowLineWidth: z.number().min(1).max(32).optional(), flowLineColor: color.optional(), flowEndSkin: uiSkinSchema.optional(), flowChapterSkin: uiSkinSchema.optional(),
+    flowLineAssetId: id.optional(), flowVerticalLineAssetId: id.optional(), flowLineWidth: z.number().positive().optional(), flowLineColor: color.optional(), flowEndSkin: uiSkinSchema.optional(), flowChapterSkin: uiSkinSchema.optional(),
     flowCurrentMarker: z.object({ assetId: id, rect: uiRelativeRectSchema }).optional(),
+    // Author layout of the branch map; nodes without a saved position keep the automatic one.
+    flowDirection: z.enum(['horizontal', 'vertical']).optional(), flowPositions: z.record(z.string(), z.object({ x: z.number().finite(), y: z.number().finite() })).optional(),
+    flowContent: playerFlowContentSchema.optional(),
+    flowLineStyle: z.enum(['elbow', 'straight', 'curve']).optional(), flowLockedLine: z.enum(['show', 'dim', 'hide']).optional(), flowLockedNode: z.enum(['show', 'hide']).optional(), flowLockedCaption: z.string().max(40).optional(),
     flowViewport: uiRelativeRectSchema.optional(), flowShowControls: z.boolean().optional(), flowShowVerticalScrollbar: z.boolean().optional(),
-    flowScrollbar: z.object({ rect: uiRelativeRectSchema, trackId: id.optional(), thumb: uiSkinSchema.optional(), trackHeight: z.number().min(1).max(128).optional(), thumbHeight: z.number().min(4).max(128).optional() }).optional(),
+    // Position is independent from appearance; omitted rect keeps the rail in the automatic layout.
+    flowScrollbar: z.object({ rect: uiRelativeRectSchema.optional(), trackId: id.optional(), thumb: uiSkinSchema.optional(), trackHeight: z.number().positive().optional(), thumbHeight: z.number().positive().optional() }).optional(),
+    // Absent on older projects: a custom navigationRect meant numeric page buttons.
+    flowPaginationStyle: z.enum(['numbers', 'previousNext']).optional(),
     favoritesOnly: z.boolean().optional(),
     voiceOrder: z.enum(['source', 'favorites']).optional(),
     voiceRemoveConfirm: z.boolean().optional(), voiceRemoveMessage: z.string().min(1).max(2000).optional(),
     showVoiceControls: z.boolean().optional(), voiceSingleLine: z.boolean().optional(),
     voiceCaptionMode: z.enum(['speaker', 'text']).optional(), voiceFavoriteRect: uiRelativeRectSchema.optional(),
-    historyLayout: z.enum(['stacked', 'columns']).optional(), historyNameWidth: z.number().min(40).max(400).optional(),
-    historyNameFontSize: z.number().min(12).max(96).optional(), historyRowHeight: z.number().min(0).max(400).optional(),
-    historyPaddingY: z.number().min(0).max(100).optional(),
-    historyBold: z.boolean().optional(), historyLetterSpacing: z.number().min(-4).max(30).optional(),
-    historyScrollbar: z.object({ rect: uiRelativeRectSchema, trackId: id.optional(), trackWidth: z.number().min(1).max(64).optional(), thumb: uiSkinSchema.optional() }).optional(),
-    voiceButtonSize: z.number().min(16).max(128).optional(), voiceReplaySkin: uiSkinSchema.optional(), voiceFavoriteSkin: uiSkinSchema.optional(),
+    historyLayout: z.enum(['stacked', 'columns']).optional(), historyNameWidth: z.number().positive().optional(),
+    historyNameFontSize: z.number().positive().optional(), historyRowHeight: z.number().nonnegative().optional(),
+    historyPaddingY: z.number().nonnegative().optional(),
+    historyBold: z.boolean().optional(), historyLetterSpacing: z.number().optional(),
+    historyScrollbar: z.object({ rect: uiRelativeRectSchema, trackId: id.optional(), trackWidth: z.number().positive().optional(), thumb: uiSkinSchema.optional() }).optional(),
+    voiceButtonSize: z.number().positive().optional(), voiceReplaySkin: uiSkinSchema.optional(), voiceFavoriteSkin: uiSkinSchema.optional(),
   }).optional(),
   action: z.enum(['start', 'load', 'preferences', 'gallery', 'music', 'quit', 'save', 'history', 'auto', 'skip',
     'return', 'mainMenu', 'rollback', 'window', 'fullscreen', 'mute', 'skipSeen', 'skipAll', 'transitions',
@@ -406,22 +554,34 @@ export const uiComponentSchema = z.object({
     'musicPrevious', 'musicNext', 'musicPlayPause', 'musicStop', 'musicLoop', 'musicShuffle', 'setPlayerPreference', 'resetPreferences', 'voiceSettings', 'confirmYes', 'confirmNo', 'minigameSuccess', 'minigameFailure', 'minigameCancel']).optional(),
   blueprintId: id.optional(),
   binding: z.enum(['title', 'speaker', 'dialogue', 'tooltip', 'confirmation', 'minigameTitle', 'minigamePrompt', 'minigameStatus']).optional(),
+  clickMode: z.enum(['append', 'replace']).optional(),
+  flowEvent: z.object({ visible: z.boolean().optional(), name: z.string().max(120).optional() }).optional(),
+  /** Stable origin of an authored replacement; changing its action must not restore the native button. */
+  nativeSlot: z.string().max(120).optional(),
   parameterId: id.optional(),
-  events: z.object({ onClick: id.optional(), onShow: id.optional() }).optional(),
-  hoverSoundId: id.nullable().optional(),
+  /** Image/video components: show the asset held by this image or video parameter. */
+  assetParameterId: id.optional(),
+  readOnly: z.boolean().optional(),
+  input: z.object({ placeholder: z.string().max(2000).optional(), maxLength: z.number().int().nonnegative().optional() }).optional(),
+  controlRange: z.object({ min: z.number().finite(), max: z.number().finite(), step: z.number().finite().positive() }).optional(),
+  events: z.object({ beforeClick: id.optional(), onClick: id.optional(), onShow: id.optional() }).optional(),
+  hoverSoundId: id.nullable().optional(), clickSoundId: id.nullable().optional(),
   preference: z.enum(playerPreferenceKeys).optional(), preferenceValue: value.optional(), preferenceCharacterId: id.optional(),
-  slider: z.object({ trackId: id.optional(), fillId: id.optional(), thumb: uiSkinSchema.optional(), trackHeight: z.number().min(1).max(128).optional(), thumbWidth: z.number().min(4).max(128).optional(), thumbHeight: z.number().min(4).max(128).optional(), showLabel: z.boolean().optional(), reverse: z.boolean().optional() }).optional(),
-  selector: z.object({ options: z.array(z.object({ label: z.string().min(1), value })).min(1).max(64), popupBackgroundId: id.optional(), arrowId: id.optional(), itemSkin: uiSkinSchema.optional(), itemHeight: z.number().min(16).max(128).optional() }).optional(),
+  slider: z.object({ trackColor: uiColor.optional(), fillColor: uiColor.optional(), thumbColor: uiColor.optional(), trackId: id.optional(), fillId: id.optional(), thumb: uiSkinSchema.optional(), trackHeight: z.number().positive().optional(), thumbWidth: z.number().positive().optional(), thumbHeight: z.number().positive().optional(), showLabel: z.boolean().optional(), reverse: z.boolean().optional() }).optional(),
+  selector: z.object({ options: z.array(z.object({ label: z.string().min(1), value })).min(1).max(64), popupBackgroundId: id.optional(), arrowId: id.optional(), itemSkin: uiSkinSchema.optional(), itemHeight: z.number().positive().optional() }).optional(),
   style: z.object({
-    fontSize: z.number().int().min(12).max(96).optional(), fontAssetId: id.optional(), textColor: color.optional(),
-    hoverTextColor: color.optional(), selectedTextColor: color.optional(), disabledTextColor: color.optional(),
-    background: color.optional(), hoverBackground: color.optional(), pressedBackground: color.optional(), selectedBackground: color.optional(), disabledBackground: color.optional(),
+    fontSize: z.number().int().positive().optional(), fontAssetId: id.optional(), textColor: uiColor.optional(), letterSpacing: z.number().finite().optional(),
+    hoverTextColor: uiColor.optional(), selectedTextColor: uiColor.optional(), disabledTextColor: uiColor.optional(),
+    background: uiColor.optional(), hoverBackground: uiColor.optional(), pressedBackground: uiColor.optional(), selectedBackground: uiColor.optional(), disabledBackground: uiColor.optional(),
     imageFit: z.enum(['contain', 'cover', 'stretch', 'nineSlice']).optional(),
-    borderColor: color.optional(), borderWidth: z.number().min(0).max(32).optional(), radius: z.number().min(0).max(64).optional(),
+    borderColor: uiColor.optional(), borderWidth: z.number().nonnegative().optional(), radius: z.number().nonnegative().optional(),
     opacity: z.number().min(0).max(1).optional(),
     playerOpacity: z.boolean().optional(),
-    outlineWidth: z.number().nonnegative().optional(), outlineColor: color.optional(), outlineOpacity: z.number().min(0).max(1).optional(),
-    shadowX: z.number().optional(), shadowY: z.number().optional(), shadowBlur: z.number().min(0).max(64).optional(), shadowColor: color.optional(), shadowOpacity: z.number().min(0).max(1).optional(),
+    outlineWidth: z.number().nonnegative().optional(), outlineColor: uiColor.optional(), outlineOpacity: z.number().min(0).max(1).optional(),
+    shadowX: z.number().optional(), shadowY: z.number().optional(), shadowBlur: z.number().nonnegative().optional(), shadowSpread: z.number().nonnegative().optional(),
+    // A flow node's text split by ｜ takes these in order, so one caption can mix fonts and sizes.
+    captionParts: z.array(z.object({ fontAssetId: id.optional(), fontSize: z.number().positive().optional(), color: uiColor.optional(), gap: z.number().nonnegative().optional(), letterSpacing: z.number().finite().optional() })).max(8).optional(),
+    shadowColor: uiColor.optional(), shadowOpacity: z.number().min(0).max(1).optional(),
     align: z.enum(['left', 'center', 'right']).optional(),
   }).optional(),
   x: z.number().finite(), y: z.number().finite(),
@@ -433,15 +593,8 @@ export const uiComponentSchema = z.object({
     groupIds.add(group.id);
     if (new Set(group.assetIds).size !== group.assetIds.length) context.addIssue({ code: 'custom', path: ['list', 'galleryGroups', index, 'assetIds'], message: '同组分镜不能重复。' });
   }
-  const requiredPage = component.kind === 'choiceList' ? 'choice' : component.kind === 'saveSlots' ? 'save'
-    : component.kind === 'pauseMenu' ? 'pause' : component.kind === 'historyList' ? 'history' : component.kind === 'galleryGrid' ? 'gallery'
-    : component.kind === 'musicTrackList' ? 'musicRoom' : component.kind === 'voiceCollection' ? 'voiceCollection' : component.kind === 'chapterList' ? 'chapterSelect'
-    : component.kind === 'chapterTitle' ? 'chapterTitle' : component.kind === 'messageBox' ? 'messageBox' : component.kind === 'staffRoll' ? 'staff'
-    : component.kind === 'keyboard' ? 'keyboard' : component.kind === 'flowchart' ? 'flowchart'
-    : component.kind === 'gameOver' ? 'gameOver' : undefined;
-  if (requiredPage && component.page !== requiredPage) context.addIssue({ code: 'custom', path: ['page'], message: '该组件不能放在当前页面。' });
+  for (const problem of uiComponentPageProblems(component)) context.addIssue({ code: 'custom', path: [problem.path], message: problem.message });
   if (component.kind === 'preference' || component.kind === 'preferenceChoice') {
-    if (!component.parameterId && !['preferences', 'voiceSettings'].includes(component.page)) context.addIssue({ code: 'custom', path: ['page'], message: '设置控件应放在设置或角色音量页。' });
     if (!component.preference && !component.parameterId) context.addIssue({ code: 'custom', path: ['preference'], message: '请选择玩家设置或参数。' });
     else if (!component.parameterId && component.kind === 'preference' && playerPreferences[component.preference!].type !== 'number') context.addIssue({ code: 'custom', path: ['preference'], message: '滑条只能控制数值设置。' });
     else if (!component.parameterId && component.kind === 'preferenceChoice') for (const [index, option] of (component.selector?.options ?? []).entries()) {
@@ -449,14 +602,7 @@ export const uiComponentSchema = z.object({
     }
   }
   if (component.action === 'setPlayerPreference' && (!component.preference || !validPlayerPreference(component.preference, component.preferenceValue))) context.addIssue({ code: 'custom', path: ['preferenceValue'], message: '请选择玩家设置并填写有效的值。' });
-  if (['confirmYes', 'confirmNo'].includes(component.action ?? '') && component.page !== 'messageBox') context.addIssue({ code: 'custom', path: ['action'], message: '确认和取消按钮应放在消息框页。' });
   if (component.action === 'blueprint' && !component.blueprintId) context.addIssue({ code: 'custom', path: ['blueprintId'], message: '界面按钮调用的蓝图不存在。' });
-  if (component.binding) {
-    const customBinding = component.kind === 'text' && component.page === 'custom' && ['minigameTitle', 'minigamePrompt', 'minigameStatus'].includes(component.binding);
-    const bindingPages = { title: 'main', confirmation: 'messageBox', speaker: 'say', dialogue: 'say' } as const;
-    const standardBinding = component.kind === 'text' && component.binding in bindingPages && component.page === bindingPages[component.binding as keyof typeof bindingPages];
-    if (!customBinding && !standardBinding && !(component.kind === 'text' && component.binding === 'tooltip')) context.addIssue({ code: 'custom', path: ['binding'], message: '文字绑定必须匹配所属页面。' });
-  }
 });
 export type UiComponent = z.infer<typeof uiComponentSchema>;
 export const flowStyleSchema = z.object({
@@ -465,14 +611,16 @@ export const flowStyleSchema = z.object({
 });
 export type FlowStyle = z.infer<typeof flowStyleSchema>;
 /**
- * A UMG-like reusable interaction surface. Components retain the same
- * authoring fields as ordinary pages, but are isolated from menu pages and
- * can be selected by a custom minigame or a future generic screen node.
+ * Creator-added pages use the same component, event and instance-state
+ * contracts as built-in page templates. This separate storage key is retained
+ * for project compatibility; it is not a separate kind of author logic.
  */
 export const customUiPageSchema = z.object({
   id, name: z.string().min(1).max(120),
+  opening: uiPageOpeningSchema.optional(),
+  appearance: uiPageAppearanceSchema.optional(),
   components: z.array(uiComponentSchema).max(uiComponentLimit).default([]),
-  backgroundId: id.optional(), background: color.optional(), modal: z.boolean().default(true),
+  backgroundId: id.optional(), background: uiColor.optional(), modal: z.boolean().default(true),
   onShowBlueprintId: id.optional(),
 });
 export type CustomUiPage = z.infer<typeof customUiPageSchema>;
@@ -485,7 +633,7 @@ export const uiInstanceSchema = z.object({
 });
 export type UiInstance = z.infer<typeof uiInstanceSchema>;
 export const uiAnimationKeySchema = z.object({
-  id, time: z.number().min(0).max(3600), value: z.number(),
+  id, time: z.number().nonnegative(), value: z.number(),
   easing: z.enum(['linear', 'ease', 'easein', 'easeout']).default('linear'),
 });
 export const uiAnimationTrackSchema = z.object({
@@ -494,21 +642,38 @@ export const uiAnimationTrackSchema = z.object({
 });
 export const uiAnimationClipSchema = z.object({
   id, name: z.string().trim().min(1).max(120), pageId: z.string().min(1).max(80), uiInstanceId: id.optional(),
-  duration: z.number().min(0).max(3600), tracks: z.array(uiAnimationTrackSchema).max(128),
+  duration: z.number().nonnegative(), tracks: z.array(uiAnimationTrackSchema).max(128),
 });
 export type UiAnimationKey = z.infer<typeof uiAnimationKeySchema>;
 export type UiAnimationTrack = z.infer<typeof uiAnimationTrackSchema>;
 export type UiAnimationClip = z.infer<typeof uiAnimationClipSchema>;
+/** One typed contract for every page address, including engine-backed templates. */
+export const uiPageParameterSchema = blueprintPinSchema.extend({
+  id,
+  dataType: z.enum(['boolean', 'number', 'string', 'asset', 'scene', 'character', 'ui', 'component']),
+});
+export type UiPageParameter = z.infer<typeof uiPageParameterSchema>;
+export const uiPageInterfaceSchema = z.object({
+  // Unknown versions are retained, diagnosed, and recovered only by explicit author action.
+  version: z.number().int().min(1),
+  inputs: z.array(uiPageParameterSchema).max(maxBlueprintInputs).default([]),
+  outputs: z.array(uiPageParameterSchema).max(maxBlueprintOutputs).default([]),
+  recovery: z.string().optional(),
+});
+export type UiPageInterface = z.infer<typeof uiPageInterfaceSchema>;
 export const themeSchema = z.object({
+  pageInterfaces: z.record(z.string().min(1).max(80), uiPageInterfaceSchema).optional(),
+  /** Definitions are shared by UI schemes; values belong to a live page instance. */
+  pageVariables: z.record(z.string().min(1).max(80), z.array(blueprintVariableSchema).max(128)).optional(),
   flowStyles: z.array(flowStyleSchema).max(128).optional(),
   disabledPages: z.array(uiPageSchema).optional(),
-  accent: color, background: color, textColor: color, fontSize: z.number().int().min(16).max(64),
-  dialogueHeight: z.number().min(0.15).max(0.6), dialogueOpacity: z.number().min(0).max(1),
-  menuMusicId: id.optional(), menuMusicFade: z.number().min(0).max(10).optional(),
-  hoverSoundId: id.optional(),
+  accent: color, background: color, textColor: color, fontSize: z.number().int().positive(),
+  dialogueHeight: z.number().gt(0).max(1), dialogueOpacity: z.number().min(0).max(1),
+  menuMusicId: id.optional(), menuMusicFade: z.number().nonnegative().optional(),
+  hoverSoundId: id.optional(), clickSoundId: id.optional(),
   menuShortcutPage: z.enum(['save', 'load', 'preferences', 'pause']).optional(),
-  chapterTransition: z.object({ effect: z.enum(['none', 'fade', 'ink']).optional(), overlayId: id.optional(), maskId: id.optional(), dissolveId: id.optional(), backgroundOffsetX: z.number().min(-1).max(1).optional(), backgroundOffsetY: z.number().min(-1).max(1).optional(), particles: z.boolean().optional(), particleColor: color.optional(), ripple: z.boolean().optional(), rippleStrength: z.number().min(0).max(0.2).optional(), rippleSpeed: z.number().min(0).max(1).optional() }).optional(),
-  menuBackgroundId: id.optional(), fontAssetId: id.optional(), continueIndicatorId: id.optional(), continueIndicatorWidth: z.number().min(8).max(256).optional(), pages: uiPagesSchema.optional(), components: z.array(uiComponentSchema).max(uiComponentLimit).default([]),
+  chapterTransition: z.object({ effect: z.enum(['none', 'fade', 'ink']).optional(), overlayId: id.optional(), maskId: id.optional(), dissolveId: id.optional(), backgroundOffsetX: z.number().min(-1).max(1).optional(), backgroundOffsetY: z.number().min(-1).max(1).optional(), particles: z.boolean().optional(), particleColor: color.optional(), ripple: z.boolean().optional(), rippleStrength: z.number().nonnegative().optional(), rippleSpeed: z.number().min(0).max(1).optional() }).optional(),
+  menuBackgroundId: id.optional(), fontAssetId: id.optional(), continueIndicatorId: id.optional(), continueIndicatorWidth: z.number().positive().optional(), pages: uiPagesSchema.optional(), components: z.array(uiComponentSchema).max(uiComponentLimit).default([]),
   instances: z.array(uiInstanceSchema).max(64).optional(), activeInstanceId: id.optional(),
   customPages: z.array(customUiPageSchema).max(64).default([]),
   animations: z.array(uiAnimationClipSchema).max(256).optional(),
@@ -518,13 +683,18 @@ export type UiTheme = z.infer<typeof themeSchema>;
 export const projectSchema = z.object({
   schemaVersion: z.literal(1), id, name: z.string().min(1).max(200), version: z.string().regex(/^\d+\.\d+\.\d+$/),
   playerDefaults: z.partialRecord(z.enum(playerPreferenceKeys), value).optional(),
+  /** Author adjustments to the built-in player settings: menu name, slider range, visibility and display. */
+  playerPreferenceSettings: z.partialRecord(z.enum(playerPreferenceKeys), z.object({ name: z.string().trim().min(1).max(40).optional(), min: z.number().finite().optional(), max: z.number().finite().optional(), step: z.number().finite().positive().optional(), visible: z.boolean().optional(), ...numberDisplayShape })).optional(),
   parameterSets: z.array(parameterSetSchema).max(128).optional(),
   exportSettings: exportSettingsSchema.optional(),
+  gameFlow: gameFlowSchema.optional(),
+  storyGroups: z.array(storyGroupSchema).optional(),
   resourceSettings: z.object({ importMode: z.enum(['copy', 'reference']).default('copy'), syncFolders: z.boolean().optional(), directory: z.string().trim().min(1).max(120).refine(directory => !/^[\\/]|^[a-z]:|[:\x00]/i.test(directory) && directory.replaceAll('\\', '/').split('/').every(part => part && part !== '.' && part !== '..'), '资源文件夹必须是项目内的相对目录').default('assets') }).optional(),
-  width: z.number().int().min(640).max(3840), height: z.number().int().min(360).max(2160),
+  width: z.number().int().positive(), height: z.number().int().positive(),
   assets: z.array(assetSchema), characters: z.array(characterSchema), variables: z.array(variableSchema), effects: z.array(effectDefinitionSchema).default([]),
   blueprints: z.array(blueprintGraphSchema).max(256).default([]),
   timelinePresets: z.array(blueprintGraphSchema).max(256).optional(),
+  textPresets: z.array(textPresetSchema).max(128).optional(),
   minigames: z.array(minigameDefinitionSchema).max(128).default([]),
   contentBrowser: z.object({
     folders: z.array(z.object({ id, name: z.string().trim().min(1).max(80), parentId: id.optional(), category: assetCategorySchema.optional() })).max(512).default([]),
@@ -536,6 +706,7 @@ export const projectSchema = z.object({
   scenes: z.array(sceneSchema),
   nodes: z.array(nodeSchema), entryId: id, ui: themeSchema,
 }).superRefine((project, context) => {
+  for (const problem of storyGroupProblems(project)) context.addIssue({ code: 'custom', path: ['storyGroups', project.storyGroups!.findIndex(group => group.id === problem.groupId)], message: problem.message });
   const check = (components: UiComponent[], path: (string | number)[]) => {
     for (const problem of uiHierarchyProblems(components)) context.addIssue({ code: 'custom', path: [...path, components.findIndex(c => c.id === problem.id), 'parentId'], message: problem.message });
   };
@@ -553,22 +724,24 @@ export interface Diagnostic {
   severity: 'error' | 'warning'; message: string;
   nodeId?: string; lineId?: string; assetId?: string; sourceLine?: number;
   code?: string; help?: string; setting?: 'entry';
+  gameFlow?: { phase: 'beforeTitle' | 'beforeNewGame'; stepId?: string };
   ui?: { page: UiComponent['page']; componentId?: string; instanceId?: string; customPageId?: string };
 }
 
 /** Resolve inherited character data without mutating authored project data. */
 export function effectiveCharacter(project: Project, characterId: string, seen = new Set<string>()): Character | undefined {
   const character = project.characters.find(item => item.id === characterId);
-  if (!character || seen.has(character.id)) return character;
-  if (!character.baseCharacterId) return character;
+  if (!character) return undefined;
+  const local = () => character.blueprintDisabled ? { ...character, blueprintId: undefined } : character;
+  if (seen.has(character.id) || !character.baseCharacterId) return local();
   const base = effectiveCharacter(project, character.baseCharacterId, new Set(seen).add(character.id));
-  if (!base) return character;
+  if (!base) return local();
   const expressions = [...base.expressions, ...character.expressions];
   const expressionMap = new Map(expressions.map(item => [item.id, item]));
   const features = [...(base.features ?? []), ...(character.features ?? [])];
   const featureMap = new Map(features.map(item => [item.id, item]));
   const displayPresets = [...new Map([...(base.displayPresets ?? []), ...(character.displayPresets ?? [])].map(item => [item.id, item])).values()];
-  return { ...base, ...character, ...(base.actorTransitions || character.actorTransitions ? { actorTransitions: { ...base.actorTransitions, ...character.actorTransitions } } : {}), blueprintId: character.blueprintId ?? base.blueprintId, expressions: [...expressionMap.values()], features: [...featureMap.values()], displayPresets };
+  return { ...base, ...character, ...(base.actorTransitions || character.actorTransitions ? { actorTransitions: { ...base.actorTransitions, ...character.actorTransitions } } : {}), blueprintId: character.blueprintDisabled ? undefined : character.blueprintId ?? base.blueprintId, blueprintDisabled: character.blueprintDisabled ?? (character.blueprintId ? undefined : base.blueprintDisabled), expressions: [...expressionMap.values()], features: [...featureMap.values()], displayPresets, ...(base.textPresentation || character.textPresentation ? { textPresentation: { ...base.textPresentation, ...character.textPresentation, ...(base.textPresentation?.textEffects || character.textPresentation?.textEffects ? { textEffects: { ...base.textPresentation?.textEffects, ...character.textPresentation?.textEffects } } : {}) } } : {}) };
 }
 
 export function characterFeatureActions(project: Project, characterId: string, featureId: string): StageAction[] {
@@ -671,14 +844,17 @@ export function effectiveUiTheme(theme: UiTheme): UiTheme {
   for (const instance of chain) {
     for (const [page, settings] of Object.entries(instance.pages ?? {})) {
       const key = page as keyof NonNullable<UiTheme['pages']>;
-      resolved.pages[key] = { ...resolved.pages[key], ...settings };
+      const inherited = resolved.pages[key];
+      resolved.pages[key] = { ...inherited, ...settings,
+        ...(inherited?.appearance || settings.appearance ? { appearance: { ...inherited?.appearance, ...settings.appearance } } : {}),
+      };
     }
   }
   if (typeof parameters.accent === 'string' && /^#[0-9a-fA-F]{6}$/.test(parameters.accent)) resolved.accent = parameters.accent;
   if (typeof parameters.background === 'string' && /^#[0-9a-fA-F]{6}$/.test(parameters.background)) resolved.background = parameters.background;
   if (typeof parameters.textColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(parameters.textColor)) resolved.textColor = parameters.textColor;
-  if (typeof parameters.fontSize === 'number') resolved.fontSize = Math.max(16, Math.min(64, Math.round(parameters.fontSize)));
-  if (typeof parameters.dialogueHeight === 'number') resolved.dialogueHeight = Math.max(0.15, Math.min(0.6, parameters.dialogueHeight));
+  if (typeof parameters.fontSize === 'number') resolved.fontSize = Math.max(1, Math.round(parameters.fontSize));
+  if (typeof parameters.dialogueHeight === 'number') resolved.dialogueHeight = Math.max(0.01, Math.min(1, parameters.dialogueHeight));
   if (typeof parameters.dialogueOpacity === 'number') resolved.dialogueOpacity = Math.max(0, Math.min(1, parameters.dialogueOpacity));
   if (typeof parameters.menuBackgroundId === 'string') resolved.menuBackgroundId = parameters.menuBackgroundId;
   if (typeof parameters.menuMusicId === 'string') resolved.menuMusicId = parameters.menuMusicId;
@@ -697,7 +873,7 @@ export function editableUiComponent(theme: UiTheme, id: string): UiComponent | u
   if (existing) return existing;
   const inherited = effectiveUiComponents(theme).find(component => component.id === id);
   if (!inherited || local.length >= uiComponentLimit) return;
-  const override = structuredClone(inherited);
+  const override = cloneData(inherited);
   local.push(override);
   return override;
 }

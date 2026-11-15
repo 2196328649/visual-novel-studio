@@ -2,11 +2,62 @@
 import { createSpatialUiWidgets } from './spatial-ui-widgets';
 import { defaultVoiceRemoveMessage } from '../core/voice-preview';
 import { pythonLiteral } from './literals';
-export function createUiWidgets(): string {
+import type { UiTheme } from '../core/model';
+import { uiPauseWidgetButtons } from '../core/ui-page-catalog';
+import { uiActionAvailable } from '../core/ui-availability';
+import { componentActions } from './ui-actions';
+export function createUiWidgets(theme: UiTheme): string {
+  const pauseButtons = uiPauseWidgetButtons.filter(([action]) => uiActionAvailable(theme, action));
   // Ren'Py interprets float sizes and spacing as proportions. Imported pixel
   // measurements can be fractional, so round them before using style properties.
   return createSpatialUiWidgets() + `
 init python:
+    def vn_ui_collection_text(options, part, font, size, color, align):
+        # A part overrides only its own fields; callers supply the legacy defaults.
+        style = ((options or {}).get("textStyles") or {}).get(part) or {}
+        return {
+            "font": style.get("fontPath") or font,
+            "size": max(1, int(style["fontSize"] if style.get("fontSize") is not None else size)),
+            "color": style.get("textColor") or color,
+            "align": {"left": 0.0, "center": 0.5, "right": 1.0}.get(style.get("align"), align),
+        }
+
+    class VnBrowseHint(renpy.Displayable):
+        # Draw the affordance directly: project fonts need not contain arrow glyphs.
+        def __init__(self, size, **properties):
+            super(VnBrowseHint, self).__init__(**properties)
+            self.size = max(1, int(size))
+            self.line_width = max(1, self.size // 10)
+            extent = self.size - 1
+            self.points = tuple((int(x * extent + 0.5), int(y * extent + 0.5)) for x, y in ((0.3, 0.2), (0.65, 0.5), (0.3, 0.8)))
+
+        def render(self, width, height, st, at):
+            drawing = renpy.Render(self.size, self.size)
+            drawing.canvas().lines(self.style.color, False, self.points, self.line_width)
+            return drawing
+
+    class VnHistoryThumb(renpy.Displayable):
+        # Bar provides the current page/extent height after measuring the viewport.
+        def __init__(self, skin, state, width, maximum, fallback):
+            super(VnHistoryThumb, self).__init__()
+            self.skin, self.state, self.fallback = skin or {}, state, fallback
+            self.width, self.maximum = max(1, int(width)), max(1, int(maximum))
+            self.child, self.child_size = None, None
+
+        def render(self, width, height, st, at):
+            from math import ceil
+            borders = self.skin.get("borders") or {}
+            minimum = borders.get("top", 12) + borders.get("bottom", 12) + 1 if self.skin.get("fit") == "nineSlice" else 16
+            width = max(1, min(self.width, int(width)))
+            height = min(self.maximum, max(1, int(ceil(minimum)), int(height)))
+            if self.child_size != (width, height):
+                self.child = vn_ui_surface(self.skin, self.state, width, height, self.fallback)
+                self.child_size = (width, height)
+            return renpy.render(self.child, width, height, st, at)
+
+        def visit(self):
+            return [self.child] if self.child is not None else []
+
     def vn_voice_button_font(size, width, height):
         # Four-character controls need at most two lines inside a small button.
         return max(1, min(size, 18, int(width / 2), int(height / 2.8)))
@@ -78,7 +129,9 @@ label vn_confirm_prompt(message):
     call screen confirm(message=message, yes_action=Return(True), no_action=Return(False))
     return _return
 
-screen vn_preference_slider(key, character_id, caption, width, height, font_size, text_color, font, options, identity, parameter_id=None, component_id=None):
+screen vn_preference_slider(key, character_id, caption, width, height, font_size, text_color, font, options, identity, parameter_id=None, component_id=None, layout_rows=None):
+    $ screen_available = vn_ui_control_available(component_id, layout_rows)
+    $ options = vn_ui_slider_options(component_id, options)
     $ title_height = min(int(height * 0.45), 32) if options.get("showLabel", True) else 0
     $ thumb_width = max(1, min(width, int(options.get("thumbWidth", 26))))
     $ thumb_height = max(1, min(height - title_height, int(options.get("thumbHeight", 26))))
@@ -86,7 +139,7 @@ screen vn_preference_slider(key, character_id, caption, width, height, font_size
     $ track_y = title_height + int((height - title_height - track_height) / 2)
     $ bar_y = title_height + int((height - title_height - thumb_height) / 2)
     $ thumb = options.get("thumb") or {}
-    $ ratio = vn_parameter_ratio(parameter_id) if parameter_id else vn_preference_ratio(key, character_id)
+    $ ratio = vn_ui_control_ratio(component_id) if component_id else vn_parameter_ratio(parameter_id) if parameter_id else vn_preference_ratio(key, character_id)
     $ ratio = 1.0 - ratio if options.get("reverse", False) else ratio
     $ fill_width = max(1, min(width, int(thumb_width / 2 + (width - thumb_width) * ratio)))
     fixed:
@@ -96,37 +149,38 @@ screen vn_preference_slider(key, character_id, caption, width, height, font_size
         if options.get("trackPath"):
             add Transform(options["trackPath"], xysize=(width, track_height)) ypos track_y
         else:
-            add Solid("#515c60", xysize=(width, track_height)) ypos track_y
+            add Solid(options.get("trackColor", "#515c60"), xysize=(width, track_height)) ypos track_y
         if options.get("fillPath"):
             add Transform(Transform(options["fillPath"], xysize=(width, track_height)), crop=(0, 0, fill_width, track_height)) ypos track_y
-        elif not options.get("trackPath"):
-            add Solid("#78bbaa", xysize=(fill_width, track_height)) ypos track_y
+        elif options.get("fillColor") or not options.get("trackPath"):
+            add Solid(options.get("fillColor", "#78bbaa"), xysize=(fill_width, track_height)) ypos track_y
         vn_ui_bar:
             id (identity + "_control")
             alt caption
-            value (VnParameterValue(parameter_id, reverse=options.get("reverse", False), component_id=component_id) if parameter_id else VnPreferenceValue(key, character_id, reverse=options.get("reverse", False), component_id=component_id))
+            value (VnParameterValue(parameter_id, reverse=options.get("reverse", False), component_id=component_id, screen_available=screen_available) if parameter_id else VnPreferenceValue(key, character_id, reverse=options.get("reverse", False), component_id=component_id, screen_available=screen_available))
             xysize (width, thumb_height)
             ypos bar_y
             left_bar Null()
             right_bar Null()
-            thumb vn_ui_surface(thumb, "idle", thumb_width, thumb_height, "#eef1ef")
-            hover_thumb vn_ui_surface(thumb, "hover", thumb_width, thumb_height, "#ffffff")
-            selected_idle_thumb vn_ui_surface(thumb, "pressed", thumb_width, thumb_height, "#c9e2d9")
-            selected_hover_thumb vn_ui_surface(thumb, "pressed", thumb_width, thumb_height, "#c9e2d9")
-            insensitive_thumb vn_ui_surface(thumb, "disabled", thumb_width, thumb_height, "#626b68")
+            thumb vn_ui_surface(thumb, "idle", thumb_width, thumb_height, options.get("thumbColor", "#eef1ef"))
+            hover_thumb vn_ui_surface(thumb, "hover", thumb_width, thumb_height, options.get("thumbColor", "#ffffff"))
+            selected_idle_thumb vn_ui_surface(thumb, "pressed", thumb_width, thumb_height, options.get("thumbColor", "#c9e2d9"))
+            selected_hover_thumb vn_ui_surface(thumb, "pressed", thumb_width, thumb_height, options.get("thumbColor", "#c9e2d9"))
+            insensitive_thumb vn_ui_surface(thumb, "disabled", thumb_width, thumb_height, options.get("thumbColor", "#626b68"))
             thumb_shadow None
             thumb_offset 0
             left_gutter 0
             right_gutter 0
             bar_vertical False
 
-screen vn_preference_choice(key, character_id, options, skin, x, y, width, height, font_size, text_color, surface, font, identity, component_id=None):
-    $ caption = vn_preference_caption(key, character_id, options["options"])
+screen vn_preference_choice(key, character_id, options, skin, x, y, width, height, font_size, text_color, surface, font, identity, component_id=None, layout_rows=None):
+    $ screen_available = vn_ui_control_available(component_id, layout_rows)
+    $ caption = vn_ui_control_property(component_id, "optionLabel") or str(vn_ui_control_get(component_id)) if component_id else vn_preference_caption(key, character_id, options["options"])
     vn_skin_button:
         id (identity + "_choice")
         alt caption
-        action Show("vn_preference_popup", key=key, character_id=character_id, options=options, x=x, y=y, width=width, button_height=height, font_size=font_size, text_color=text_color, surface=surface, font=font, component_id=component_id)
-        sensitive ((not _preferences.fullscreen and renpy.get_renderer_info().get("resizable", False)) if key == "windowSize" else VnSetPreference(key, vn_preference_get(key, character_id), character_id, component_id).get_sensitive())
+        action Function(vn_ui_control_show_popup, key=key, character_id=character_id, options=options, x=x, y=y, width=width, button_height=height, font_size=font_size, text_color=text_color, surface=surface, font=font, component_id=component_id)
+        sensitive ((not component_id or bool(vn_ui_control_options(component_id))) and screen_available and (True if component_id and vn_ui_property_control(component_id, vn_ui_controls[component_id]["primary"]) is not None else (not _preferences.fullscreen and renpy.get_renderer_info().get("resizable", False)) if key == "windowSize" else VnSetPreference(key, vn_preference_get(key, character_id), character_id, component_id).get_sensitive(screen_available)))
         xysize (width, height)
         padding (8, 2)
         background vn_ui_surface(skin, "idle", width, height, surface)
@@ -141,12 +195,19 @@ screen vn_preference_choice(key, character_id, options, skin, x, y, width, heigh
             else:
                 text "v" font font size font_size color text_color xalign 1.0 yalign 0.5
 
-screen vn_preference_popup(key, character_id, options, x, y, width, button_height, font_size, text_color, surface, font, component_id=None):
+screen vn_preference_popup(key, character_id, options, x, y, width, button_height, font_size, text_color, surface, font, component_id=None, source_task=None):
     modal True
     zorder 180
-    $ item_height = options.get("itemHeight", 40)
-    $ popup_width = min(max(width, font_size * 17) if key == "windowSize" else width, config.screen_width - 16)
-    $ popup_height = min(item_height * len(options["options"]) + 8, config.screen_height - 16)
+    $ source_available = not component_id or (component_id in vn_ui_controls and vn_ui_controls[component_id].get("choice") and source_task is not None and vn_bp_task_alive(source_task) and vn_ui_control_available(component_id))
+    # Re-anchor the standard popup to the current transformed screen bounds,
+    # including a source moved by a background layout animation while it is open.
+    if component_id and source_available:
+        $ x, y, width, button_height = tuple(int(round(value)) for value in vn_ui_layout_row(component_id)["bounds"])
+    $ choice_options = (vn_ui_control_options(component_id) if source_available else []) if component_id else options["options"]
+    $ options_key = vn_ui_control_options_key(component_id) if component_id and source_available else None
+    $ item_height = max(5, int(options.get("itemHeight", 40)))
+    $ popup_width = max(9, int(min(max(width, font_size * 17) if key == "windowSize" else width, config.screen_width - 16)))
+    $ popup_height = min(item_height * len(choice_options) + 8, config.screen_height - 16)
     $ popup_x = max(8, min(x, config.screen_width - popup_width - 8))
     $ popup_y = max(8, min(y + button_height if y + button_height + popup_height < config.screen_height - 8 else y - popup_height, config.screen_height - popup_height - 8))
     button:
@@ -156,6 +217,7 @@ screen vn_preference_popup(key, character_id, options, x, y, width, button_heigh
         hover_background None
         action Hide("vn_preference_popup")
     frame:
+        id "vn_ui_preference_popup_frame"
         pos (popup_x, popup_y)
         xysize (popup_width, popup_height)
         padding (4, 4)
@@ -166,18 +228,23 @@ screen vn_preference_popup(key, character_id, options, x, y, width, button_heigh
             pagekeys True
             draggable True
             vbox:
-                for index, option in enumerate(options["options"]):
-                    $ option_action = VnSetPreference(key, option["value"], character_id, component_id)
-                    $ option_caption = (("当前 · " if option_action.get_selected() else "") + ("%d × %d" % vn_window_dimensions(option["value"])) + ("（超出屏幕）" if not option_action.get_sensitive() else "")) if key == "windowSize" else option["label"]
-                    use vn_styled_button(vn_ui_literal(option_caption), [Hide("vn_preference_popup"), option_action], "vn_preference_option_%d" % index, popup_width - 8, item_height, min(font_size, item_height - 4), ("#ffffff" if key == "windowSize" else text_color), ("#262b30" if key == "windowSize" else surface), ({} if key == "windowSize" else options.get("itemSkin") or {}), font)
+                for index, option in enumerate(choice_options):
+                    $ option_action = VnSelectControlOption(component_id, index, options_key, source_task, source_available) if component_id else VnSetPreference(key, option["value"], character_id)
+                    $ option_caption = (("当前 · " if option_action.get_selected() else "") + ("%d × %d" % vn_window_dimensions(option["value"])) + ("（超出屏幕）" if not option_action.get_sensitive() else "")) if key == "windowSize" and not component_id else option["label"]
+                    use vn_styled_button(vn_ui_literal(option_caption), [Hide("vn_preference_popup"), option_action], "vn_preference_option_%d" % index, popup_width - 8, item_height, max(1, min(font_size, item_height - 4)), ("#ffffff" if key == "windowSize" else text_color), ("#262b30" if key == "windowSize" else surface), ({} if key == "windowSize" else options.get("itemSkin") or {}), font)
     key "game_menu" action Hide("vn_preference_popup")
 
-screen vn_styled_button(caption, action, identity, width, height, font_size, text_color, surface, skin, font, selected_text_color=None, hover_text_color=None, text_outlines=None, text_bold=False, button_padding=(8, 4), appearance=None):
+screen vn_styled_button(caption, action, identity, width, height, font_size, text_color, surface, skin, font, selected_text_color=None, hover_text_color=None, text_outlines=None, text_bold=False, button_padding=(8, 4), appearance=None, sounds=None, caption_align=0.5, browse_hint=False):
     $ appearance = appearance or {}
+    $ sounds = sounds or {}
+    $ browse_hint = browse_hint and not skin.get("hideText", False) and renpy.display.behavior.is_sensitive(action)
     vn_skin_button:
         id identity
         action action
-        alt caption
+        vn_hover_sound sounds.get("hoverSoundPath", False)
+        vn_click_sound sounds.get("clickSoundPath", False)
+        alt (caption + "，双击查看子剧情，或按 Enter 进入" if browse_hint else caption)
+        tooltip ("双击查看子剧情，或按 Enter 进入" if browse_hint else None)
         xysize (width, height)
         padding button_padding
         at Transform(alpha=appearance.get("opacity", 1.0))
@@ -192,9 +259,16 @@ screen vn_styled_button(caption, action, identity, width, height, font_size, tex
         if not skin.get("hideText", False):
             fixed:
                 xysize (max(1, width - button_padding[0] * 2), max(1, height - button_padding[1] * 2))
-                if appearance.get("shadowBlur", 0) > 0 and appearance.get("shadowOpacity", 0.4) > 0:
-                    add vn_ui_text_shadow(caption, font, font_size, text_bold, max(1, width - button_padding[0] * 2), max(1, height - button_padding[1] * 2), appearance) id (identity + "_shadow")
-                text caption id (identity + "_label") substitute False font font bold text_bold size font_size color (selected_text_color if selected_text_color and renpy.display.behavior.is_selected(action) else text_color) hover_color (hover_text_color or text_color) activate_color (hover_text_color or text_color) selected_activate_color (hover_text_color or text_color) insensitive_color appearance.get("disabledTextColor", text_color) xalign 0.5 yalign 0.5 text_align 0.5 xmaximum max(1, width - button_padding[0] * 2) outlines (text_outlines or [])
+                if appearance.get("shadowBlur", 0) > 0 and appearance.get("shadowOpacity", 0.7) > 0:
+                    add vn_ui_text_shadow(caption, font, font_size, text_bold, max(1, width - button_padding[0] * 2), max(1, height - button_padding[1] * 2), appearance, caption_align) id (identity + "_shadow")
+                text caption id (identity + "_label") substitute False font font bold text_bold size font_size color (selected_text_color if selected_text_color and renpy.display.behavior.is_selected(action) else text_color) hover_color (hover_text_color or text_color) activate_color (hover_text_color or text_color) selected_activate_color (hover_text_color or text_color) insensitive_color appearance.get("disabledTextColor", text_color) xalign caption_align yalign 0.5 text_align caption_align xmaximum max(1, width - button_padding[0] * 2) outlines (text_outlines or [])
+                if browse_hint and button_padding[0] > 0:
+                    # Use the existing right padding, leaving the caption's bounds unchanged.
+                    fixed:
+                        xpos max(1, width - button_padding[0] * 2)
+                        xysize (button_padding[0], max(1, height - button_padding[1] * 2))
+                        clipping True
+                        add VnBrowseHint(max(1, min(22, font_size, button_padding[0], height - button_padding[1] * 2)), color=(selected_text_color if selected_text_color and renpy.display.behavior.is_selected(action) else text_color), hover_color=(hover_text_color or text_color), activate_color=(hover_text_color or text_color), selected_activate_color=(hover_text_color or text_color), align=(0.5, 0.5)) id (identity + "_browse_hint")
 
 screen vn_skin_slots(area_width, area_height, font_size, text_color, surface, skin, options, font):
     $ columns = options.get("columns", 3)
@@ -211,6 +285,7 @@ screen vn_skin_slots(area_width, area_height, font_size, text_color, surface, sk
     $ nav_gap = max(2, min(8, int(nav[2] / 150)))
     $ nav_width = max(1, int((nav[2] - (len(pages) - 1) * nav_gap) / len(pages)))
     $ nav_font = min(44, nav[3] - 2, nav_width - 12) if fixed_auto else max(8, min(font_size, 20, int((nav_width - 16) / 3)))
+    $ navigation_text = vn_ui_collection_text(options, "navigation", font, nav_font, options.get("pageTextColor", text_color), 0.5)
     $ grid_top = 0 if options.get("navigation") == "bottom" else nav[1] + nav[3] + gap_y
     $ grid_height = max(1, nav[1] - gap_y if options.get("navigation") == "bottom" else area_height - grid_top)
     $ cell_width = max(1, min(int(options.get("itemWidth", area_width)), int((area_width - (columns - 1) * gap_x) / columns)))
@@ -218,13 +293,17 @@ screen vn_skin_slots(area_width, area_height, font_size, text_color, surface, sk
     $ caption_height = max(18, min(32, int(cell_height * 0.2))) if options.get("showDelete", True) or (not options.get("caption") and options.get("showLabels", True)) else 0
     $ body_height = max(1, cell_height - caption_height)
     $ thumbnail = vn_ui_rect(options["thumbnail"], cell_width, body_height) if options.get("thumbnail") else (10, 10, max(1, cell_width - 20), max(1, body_height - 20))
+    $ chapter_text = vn_ui_collection_text(options, "chapter", font, font_size, text_color, 0.0)
+    $ caption_text = vn_ui_collection_text(options, "caption", font, options.get("summaryFontSize", font_size), text_color, 0.0 if options.get("chapter") else 0.5)
+    $ footer_text = vn_ui_collection_text(options, "caption", font, max(8, min(font_size, 20, int(cell_width / 15))), text_color, 0.0)
+    $ footer_width = max(1, cell_width - (60 if options.get("showDelete", True) else 0))
     fixed:
         xysize (area_width, area_height)
         hbox:
             pos (nav[0], nav[1])
             spacing nav_gap
             for caption, page_action, page_id in pages:
-                use vn_styled_button(caption, page_action, "vn_file_page_" + page_id, nav_width, nav[3], nav_font, options.get("pageTextColor", text_color), surface, options.get("pageSkin") or {}, font, selected_text_color=options.get("pageSelectedTextColor"))
+                use vn_styled_button(caption, page_action, "vn_file_page_" + page_id, nav_width, nav[3], navigation_text["size"], navigation_text["color"], surface, options.get("pageSkin") or {}, navigation_text["font"], selected_text_color=options.get("pageSelectedTextColor"), hover_text_color=options.get("pageSelectedTextColor") if renpy.display.behavior.is_selected(page_action) else None, caption_align=navigation_text["align"])
         grid columns rows:
             xpos int((area_width - (columns * cell_width + (columns - 1) * gap_x)) / 2)
             ypos grid_top
@@ -263,7 +342,7 @@ screen vn_skin_slots(area_width, area_height, font_size, text_color, surface, sk
                                 add FileScreenshot(slot, page=page) xysize (thumbnail[2], thumbnail[3]) pos (thumbnail[0], thumbnail[1])
                                 if options.get("chapter") and options.get("showLabels", True):
                                     $ chapter = vn_ui_rect(options["chapter"], cell_width, body_height)
-                                    text vn_ui_literal(vn_ui_slot_heading(slot, page)) substitute False pos (chapter[0], chapter[1]) xsize chapter[2] ysize chapter[3] font font size font_size color text_color
+                                    text vn_ui_literal(vn_ui_slot_heading(slot, page)) substitute False pos (chapter[0], chapter[1]) xsize chapter[2] min_width chapter[2] ysize chapter[3] font chapter_text["font"] size chapter_text["size"] color chapter_text["color"] text_align chapter_text["align"]
                                 if options.get("caption") and options.get("showLabels", True):
                                     $ caption = vn_ui_rect(options["caption"], cell_width, body_height)
                                     viewport:
@@ -271,16 +350,17 @@ screen vn_skin_slots(area_width, area_height, font_size, text_color, surface, sk
                                         xysize (caption[2], caption[3])
                                         mousewheel True
                                         draggable False
-                                        text vn_ui_literal(vn_ui_slot_caption(slot, options.get("captionMode", "time"), page, bool(options.get("chapter")))) substitute False xsize caption[2] font font size options.get("summaryFontSize", font_size) color text_color text_align (0.0 if options.get("chapter") else 0.5)
+                                        text vn_ui_literal(vn_ui_slot_caption(slot, options.get("captionMode", "time"), page, bool(options.get("chapter")))) substitute False xsize caption[2] min_width caption[2] font caption_text["font"] size caption_text["size"] color caption_text["color"] text_align caption_text["align"]
                             else:
                                 add Transform(options["emptyPath"], xysize=(cell_width, body_height))
                             if options.get("number"):
                                 $ number = vn_ui_rect(options["number"], cell_width, body_height)
+                                $ number_text = vn_ui_collection_text(options, "number", font, min(font_size, number[3] - 4), options.get("numberTextColor", text_color), 0.5)
                                 add vn_ui_surface(options.get("numberSkin") or {}, "idle", number[2], number[3], "#00000000") pos (number[0], number[1])
                                 fixed:
                                     pos (number[0], number[1])
                                     xysize (number[2], number[3])
-                                    text slot_number xalign 0.5 yalign 0.5 font font size min(font_size, number[3] - 4) color options.get("numberTextColor", text_color) text_align 0.5
+                                    text slot_number xsize number[2] min_width number[2] yalign 0.5 font number_text["font"] size number_text["size"] color number_text["color"] text_align number_text["align"]
                     if options.get("slotAction") and (loadable or (renpy.get_screen("save") and not auto_slot)):
                         $ control = vn_ui_rect(options["slotAction"], cell_width, body_height)
                         fixed:
@@ -291,7 +371,7 @@ screen vn_skin_slots(area_width, area_height, font_size, text_color, surface, sk
                         yalign 1.0
                         xysize (cell_width, caption_height)
                         if options.get("showLabels", True) and not options.get("caption"):
-                            text FileTime(slot, page=page, format="%Y-%m-%d %H:%M", empty="空存档") font font size max(8, min(font_size, 20, int(cell_width / 15))) color text_color yalign 0.5 xsize max(1, cell_width - (60 if options.get("showDelete", True) else 0))
+                            text FileTime(slot, page=page, format="%Y-%m-%d %H:%M", empty="空存档") font footer_text["font"] size footer_text["size"] color footer_text["color"] yalign 0.5 xsize footer_width min_width footer_width text_align footer_text["align"]
                         if options.get("showDelete", True) and not auto_slot:
                             textbutton "删除" action FileDelete(slot, page=page, confirm=True) xysize (min(60, cell_width), caption_height) padding (2, 2) text_font font text_size min(18, font_size) text_color text_color
 
@@ -299,8 +379,8 @@ screen vn_history_voice_controls(filename, identity, size, font_size, text_color
     hbox:
         spacing gap
         if filename:
-            use vn_styled_button("重播语音", VnReplayVoice(filename, voice_record), identity + "_replay", size, size, vn_voice_button_font(font_size, size, size), text_color, "#00000000", options.get("voiceReplaySkin") or {}, font, button_padding=(0, 0))
-            use vn_styled_button("取消收藏" if VnFavoriteVoice(filename, voice_record).get_selected() else "收藏语音", VnFavoriteVoice(filename, voice_record), identity + "_favorite", size, size, vn_voice_button_font(font_size, size, size), text_color, "#00000000", options.get("voiceFavoriteSkin") or {}, font, button_padding=(0, 0))
+            use vn_styled_button("重播语音", VnReplayVoice(filename, voice_record), identity + "_replay", size, size, vn_voice_button_font(font_size, size, size), text_color, "#00000000", options.get("voiceReplaySkin") or {}, font, button_padding=(0, 0), sounds=options)
+            use vn_styled_button("取消收藏" if VnFavoriteVoice(filename, voice_record).get_selected() else "收藏语音", VnFavoriteVoice(filename, voice_record), identity + "_favorite", size, size, vn_voice_button_font(font_size, size, size), text_color, "#00000000", options.get("voiceFavoriteSkin") or {}, font, button_padding=(0, 0), sounds=options)
         else:
             null width (size * 2 + gap) height size
 
@@ -342,20 +422,31 @@ screen vn_voice_collection_item(entry_id, caption, entry_path, width, height, fo
 screen vn_collection(kind, area_width, area_height, font_size, text_color, surface, skin, options, component_id, font, heading=""):
     default collection_page = 0
     default collection_favorites = options.get("favoritesOnly", False)
+    default flow_group = None
+    default flow_trail = []
+    default flow_gesture = {}
+    $ active_group = (vn_flow_view(options, flow_trail) if options.get("flowViews") and flow_trail else options.get("flowGroups", {}).get(flow_group, {})) if kind == "flowchart" else {}
+    $ flow_graph = active_group.get("graph", options.get("flowGraph", {}))
+    $ flow_locations = vn_flow_context(options, flow_graph, flow_trail) if options.get("flowViews") else flow_graph.get("locations", {}) if active_group else options.get("flowLocations", options.get("flowGraph", {}).get("locations", {}))
+    $ group_header_height = min(44, max(32, int(area_height * 0.1))) if active_group else 0
     $ columns = options.get("columns", 3 if kind == "galleryGrid" else 1)
     $ rows = options.get("rows", 0)
     $ gap_x = min(int(options.get("gapX", 12) + 0.5), max(0, int(area_width / (columns * 2))))
     $ gap_y = int(options.get("gapY", 12) + 0.5)
     $ cell_width = max(1, min(int(options.get("itemWidth", area_width)), int((area_width - (columns - 1) * gap_x - (0 if rows else 16)) / columns)))
     $ nav_height = min(40, max(24, int(area_height * 0.1))) if rows and not options.get("navigationRect") else 0
+    $ numeric_pages = (options.get("flowPaginationStyle", "numbers" if options.get("navigationRect") else "previousNext") == "numbers") if kind == "flowchart" else bool(options.get("navigationRect"))
     $ controls_height = min(42, int(area_height * 0.12)) if kind == "voiceCollection" and options.get("showVoiceControls", True) else 0
     $ controls_width = max(1, min(180, int((area_width - 20) / 2)))
-    $ view_height = max(1, area_height - nav_height - (gap_y if nav_height else 0) - (controls_height + gap_y if controls_height else 0))
+    $ view_height = max(1, area_height - nav_height - (gap_y if nav_height else 0) - (controls_height + gap_y if controls_height else 0) - (group_header_height + gap_y if group_header_height else 0))
     $ cell_height = max(1, int(options.get("itemHeight", max(32, int((view_height - (rows - 1) * gap_y) / rows)) if rows else max(48, font_size + 28)) + 0.5))
     $ allowed = options.get("assetPaths")
     if kind == "historyList":
-        $ history_bar = options.get("historyScrollbar")
+        $ history_bar = options.get("historyScrollbar") if (options.get("historyScrollbar") or {}).get("rect") else None
         $ history_width = area_width if history_bar else area_width - 20
+        $ history_columns = options.get("historyLayout") == "columns"
+        $ history_name_text = vn_ui_collection_text(options, "historyName", font, options.get("historyNameFontSize", font_size), text_color, 1.0 if history_columns else 0.0)
+        $ history_text = vn_ui_collection_text(options, "historyText", font, font_size, text_color, 0.0)
         viewport:
             id (component_id + "_viewport")
             xysize (area_width, area_height)
@@ -372,41 +463,48 @@ screen vn_collection(kind, area_width, area_height, font_size, text_color, surfa
                     $ filename = getattr(getattr(entry, "voice", None), "filename", None)
                     $ voice_size = int(options.get("voiceButtonSize", 49))
                     $ name_width = min(int(options.get("historyNameWidth", 165)), max(40, int(area_width * 0.25)))
+                    $ history_text_width = max(1, history_width - name_width - voice_size * 2 - 36 - gap_x * 3) if history_columns else max(1, area_width - 60)
                     frame:
                         xfill True
                         padding (18, int(options.get("historyPaddingY", 12)))
                         background vn_ui_surface(skin, "idle", max(1, area_width - 20), max(64, font_size + 34), surface)
-                        if options.get("historyLayout") == "columns":
+                        if history_columns:
                             hbox:
                                 spacing gap_x
                                 yminimum int(options.get("historyRowHeight", voice_size))
                                 fixed:
                                     xysize (name_width, voice_size)
-                                    text (entry.who or "") substitute False font font bold options.get("historyBold", False) kerning options.get("historyLetterSpacing", 0) size int(options.get("historyNameFontSize", font_size)) color text_color xmaximum name_width text_align 1.0 xalign 1.0 yalign 0.5
+                                    text (entry.who or "") substitute False font history_name_text["font"] bold options.get("historyBold", False) kerning options.get("historyLetterSpacing", 0) size history_name_text["size"] color history_name_text["color"] xsize name_width min_width name_width text_align history_name_text["align"] yalign 0.5
                                 use vn_history_voice_controls(filename, component_id + "_%d" % entry_index, voice_size, font_size, text_color, options, font, gap_x, vn_capture_history_voice(entry))
-                                text entry.what substitute False font font bold options.get("historyBold", False) kerning options.get("historyLetterSpacing", 0) size font_size color text_color xsize max(1, history_width - name_width - voice_size * 2 - 36 - gap_x * 3) yoffset max(0, int((voice_size - font_size) / 2)) line_spacing int(font_size * 0.2)
+                                text entry.what substitute False font history_text["font"] bold options.get("historyBold", False) kerning options.get("historyLetterSpacing", 0) size history_text["size"] color history_text["color"] xsize history_text_width min_width history_text_width text_align history_text["align"] yoffset max(0, int((voice_size - history_text["size"]) / 2)) line_spacing int(history_text["size"] * 0.2)
                         else:
                             vbox:
+                                xfill True
                                 spacing 6
                                 if entry.who:
-                                    text entry.who substitute False font font bold options.get("historyBold", False) kerning options.get("historyLetterSpacing", 0) size font_size color text_color
-                                text entry.what substitute False font font bold options.get("historyBold", False) kerning options.get("historyLetterSpacing", 0) size font_size color text_color xmaximum max(1, area_width - 60)
+                                    text entry.who substitute False font history_name_text["font"] bold options.get("historyBold", False) kerning options.get("historyLetterSpacing", 0) size history_name_text["size"] color history_name_text["color"] xsize max(1, history_width - 36) min_width max(1, history_width - 36) text_align history_name_text["align"]
+                                text entry.what substitute False font history_text["font"] bold options.get("historyBold", False) kerning options.get("historyLetterSpacing", 0) size history_text["size"] color history_text["color"] xsize history_text_width min_width history_text_width text_align history_text["align"]
                                 if filename:
-                                    use vn_history_voice_controls(filename, component_id + "_%d" % entry_index, voice_size, font_size, text_color, options, font, voice_record=vn_capture_history_voice(entry))
+                                    use vn_history_voice_controls(filename, component_id + "_%d" % entry_index, voice_size, font_size, text_color, options, font, gap_x, voice_record=vn_capture_history_voice(entry))
         if history_bar:
-            $ bar_rect = tuple(int(history_bar["rect"][key] * dimension + 0.5) for key, dimension in [("x", area_width), ("y", area_height), ("width", area_width), ("height", area_height)])
+            $ bar_rect = vn_ui_rect(history_bar["rect"], area_width, area_height)
             $ bar_skin = history_bar.get("thumb") or {}
+            $ bar_track_width = max(1, int(history_bar.get("trackWidth", 5)))
             fixed:
                 pos (bar_rect[0], bar_rect[1])
                 xysize (bar_rect[2], bar_rect[3])
-                add (Transform(history_bar["trackPath"], xysize=(int(history_bar.get("trackWidth", 5)), bar_rect[3])) if history_bar.get("trackPath") else Solid("#777777", xsize=int(history_bar.get("trackWidth", 5)), ysize=bar_rect[3])) xalign 0.5
+                add (Transform(history_bar["trackPath"], xysize=(bar_track_width, bar_rect[3])) if history_bar.get("trackPath") else Solid("#777777", xsize=bar_track_width, ysize=bar_rect[3])) xalign 0.5
                 vbar:
                     id (component_id + "_scrollbar")
                     value YScrollValue(component_id + "_viewport")
                     xysize (bar_rect[2], bar_rect[3])
                     base_bar Null()
-                    thumb (Frame(bar_skin["idle"], 0, 16, 0, 16) if bar_skin.get("idle") else Solid("#dddddd"))
-                    hover_thumb (Frame(bar_skin.get("hover", bar_skin.get("idle")), 0, 16, 0, 16) if bar_skin.get("idle") else Solid("#ffffff"))
+                    thumb VnHistoryThumb(bar_skin, "idle", bar_rect[2], bar_rect[3], "#dddddd")
+                    hover_thumb VnHistoryThumb(bar_skin, "hover", bar_rect[2], bar_rect[3], "#ffffff")
+                    selected_idle_thumb VnHistoryThumb(bar_skin, "pressed", bar_rect[2], bar_rect[3], "#c9c0aa")
+                    selected_hover_thumb VnHistoryThumb(bar_skin, "pressed", bar_rect[2], bar_rect[3], "#c9c0aa")
+                    insensitive_thumb VnHistoryThumb(bar_skin, "disabled", bar_rect[2], bar_rect[3], "#626b68")
+                    selected_insensitive_thumb VnHistoryThumb(bar_skin, "disabled", bar_rect[2], bar_rect[3], "#626b68")
                     thumb_shadow None
                     thumb_offset 0
                     top_gutter 0
@@ -422,8 +520,8 @@ screen vn_collection(kind, area_width, area_height, font_size, text_color, surfa
             mousewheel True
             vbox:
                 spacing gap_y
-                for index, (caption, action) in enumerate([("继续游戏", Return()), ("保存进度", ShowMenu("save")), ("读取存档", ShowMenu("load")), ("设置", ShowMenu("preferences")), ("返回标题", MainMenu())]):
-                    use vn_styled_button(caption, action, component_id + "_%d" % index, area_width, min(cell_height, max(24, int((area_height - 4 * gap_y) / 5))), font_size, text_color, surface, skin, font)
+                for index, (caption, action) in enumerate([${pauseButtons.map(([action, text]) => `(${pythonLiteral(text)}, ${componentActions[action]})`).join(', ')}]):
+                    use vn_styled_button(caption, action, component_id + "_%d" % index, area_width, min(cell_height, max(24, int((area_height - ${pauseButtons.length - 1} * gap_y) / ${pauseButtons.length}))), font_size, text_color, surface, skin, font)
     elif kind == "staffRoll":
         viewport:
             xysize (area_width, area_height)
@@ -442,7 +540,7 @@ screen vn_collection(kind, area_width, area_height, font_size, text_color, surfa
         elif kind == "chapterList":
             $ entries = vn_chapter_entries
         else:
-            $ entries = vn_flow_entries
+            $ entries = [entry for entry in active_group.get("entries", options.get("flowEntries", vn_flow_entries)) if vn_flow_node_shown({"id": entry[0]}, options)]
         $ page_size = max(1, rows * columns) if rows else max(1, len(entries))
         $ page_count = max(1, int((len(entries) + page_size - 1) / page_size))
         $ collection_page = min(collection_page, page_count - 1)
@@ -451,6 +549,12 @@ screen vn_collection(kind, area_width, area_height, font_size, text_color, surfa
         vbox:
             xysize (area_width, area_height)
             spacing gap_y
+            if active_group:
+                hbox:
+                    ysize group_header_height
+                    spacing 12
+                    textbutton ("返回上一级" if options.get("flowViews") else "返回总览") id (component_id + "_group_back") action [SetLocalVariable("flow_trail", flow_trail[:-1]), SetLocalVariable("flow_group", None), Function(flow_gesture.clear), SetLocalVariable("collection_page", 0)] text_font font text_size min(font_size, 22) text_color text_color
+                    text vn_ui_literal(active_group["name"]) substitute False font font size min(font_size, 22) color text_color yalign 0.5 xmaximum max(1, area_width - 160)
             if controls_height:
                 hbox:
                     xalign 1.0
@@ -495,7 +599,7 @@ screen vn_collection(kind, area_width, area_height, font_size, text_color, surfa
                                     if unlocked and options.get("showLabels", True):
                                         text caption substitute False font font size min(font_size, 24) color text_color xalign 0.5 yalign 0.98 xmaximum max(1, cell_width - 16)
                         elif kind == "musicTrackList":
-                            use vn_styled_button(caption if vn_music_room.is_unlocked(entry_path) else "未解锁", vn_music_room.Play(entry_path), component_id + "_" + entry_id, cell_width, cell_height, font_size, text_color, surface, skin, font)
+                            use vn_styled_button(caption if vn_music_room.is_unlocked(entry_path) else "未解锁", vn_music_room.Play(entry_path), component_id + "_" + entry_id, cell_width, cell_height, font_size, text_color, surface, skin, font, sounds=options)
                         elif kind == "voiceCollection":
                             if options.get("caption") or options.get("voiceFavoriteRect") or options.get("voiceSingleLine") or options.get("voiceCaptionMode") == "text":
                                 use vn_voice_collection_item(entry_id, caption, entry_path, cell_width, cell_height, font_size, text_color, surface, skin, options, component_id, font, collection_favorites)
@@ -504,7 +608,7 @@ screen vn_collection(kind, area_width, area_height, font_size, text_color, surfa
                                 hbox:
                                     xysize (cell_width, cell_height)
                                     spacing 8
-                                    use vn_styled_button(vn_voice_caption(entry_path, caption, entry_id) if VnReplayVoice(entry_path, entry_id).get_sensitive() else "未解锁", VnReplayVoice(entry_path, entry_id), component_id + "_" + entry_id, cell_width - favorite_size - 8, cell_height, font_size, text_color, surface, skin, font)
+                                    use vn_styled_button(vn_voice_caption(entry_path, caption, entry_id) if VnReplayVoice(entry_path, entry_id).get_sensitive() else "未解锁", VnReplayVoice(entry_path, entry_id), component_id + "_" + entry_id, cell_width - favorite_size - 8, cell_height, font_size, text_color, surface, skin, font, sounds=options)
                                     vbox:
                                         yalign 0.5
                                         use vn_styled_button("取消收藏" if VnFavoriteVoice(entry_path, entry_id).get_selected() else "收藏", VnRemoveFavoriteVoice(entry_path, options.get("voiceRemoveConfirm", False), options.get("voiceRemoveMessage", ${pythonLiteral(defaultVoiceRemoveMessage)}), entry_id) if collection_favorites else VnFavoriteVoice(entry_path, entry_id), component_id + "_favorite_" + entry_id, favorite_size, favorite_size, vn_voice_button_font(font_size, favorite_size, favorite_size), text_color, "#00000000", options.get("voiceFavoriteSkin") or {}, font, button_padding=(0, 0))
@@ -512,9 +616,22 @@ screen vn_collection(kind, area_width, area_height, font_size, text_color, surfa
                             $ entry_look = options.get("flowLooks", {}).get(entry_id, {})
                             $ entry_style = entry_look.get("style") or {}
                             $ entry_skin = entry_look.get("skin") or skin
-                            $ entry_skin = dict(entry_skin, hideText=True) if kind == "flowchart" and not vn_story_unlocked(kind, entry_id, options.get("lockUnread", False)) and entry_skin.get("disabled") else entry_skin
-                            use vn_styled_button(vn_story_caption(kind, entry_id, caption, options), VnStoryStart(kind, entry_id, entry_path, caption, options.get("lockUnread", False), options.get("confirmJump", True)), component_id + "_" + entry_id, cell_width, cell_height, entry_style.get("fontSize", font_size), entry_style.get("textColor", text_color), surface, entry_skin, entry_look.get("font") or font, selected_text_color=entry_style.get("selectedTextColor"), hover_text_color=entry_style.get("hoverTextColor"), text_outlines=entry_look.get("textOutlines"), appearance=entry_style)
-            if rows and not options.get("navigationRect"):
+                            $ entry_skin = dict(entry_skin, hideText=True) if kind == "flowchart" and vn_flow_locked(entry_id, options) and entry_skin.get("disabled") else entry_skin
+                            $ entry_font = entry_look.get("font") or font
+                            $ entry_size = entry_style.get("fontSize", font_size)
+                            $ entry_caption = vn_ui_literal(vn_story_caption(kind, entry_id, caption, options))
+                            if kind == "flowchart":
+                                $ entry_node = entry_look.get("node") or {"name": caption}
+                                $ entry_caption = vn_flow_caption(entry_id, entry_node["name"], options, flow_locations)
+                                $ entry_parts = vn_flow_parts(entry_node, entry_caption, vn_flow_locked(entry_id, options))
+                                $ entry_base_size = entry_size
+                                $ entry_spacing = entry_style.get("letterSpacing", 0)
+                                $ entry_size = vn_flow_font_size(vn_flow_markup(entry_parts, entry_look.get("captionParts"), entry_font, entry_base_size, letter_spacing=entry_spacing), entry_font, entry_base_size, cell_width, cell_height)
+                                $ entry_caption = vn_flow_markup(entry_parts, entry_look.get("captionParts"), entry_font, entry_base_size, float(entry_size) / entry_base_size, entry_spacing)
+                            $ enter_actions = [SetLocalVariable("flow_trail", vn_flow_enter_trail(options, flow_trail, entry_id)), Function(flow_gesture.clear), SetLocalVariable("collection_page", 0)] if options.get("flowViews") else [SetLocalVariable("flow_group", entry_node.get("groupId")), SetLocalVariable("collection_page", 0)] if kind == "flowchart" else None
+                            $ entry_action = VnFlowEntry(entry_id, options, enter_actions, flow_locations, flow_trail, flow_gesture) if kind == "flowchart" else VnStoryStart(kind, entry_id, entry_path, caption, options.get("lockUnread", False), options.get("confirmJump", True))
+                            use vn_styled_button(entry_caption, entry_action, component_id + "_" + entry_id, cell_width, cell_height, entry_size, entry_style.get("textColor", text_color), surface, entry_skin, entry_font, selected_text_color=entry_style.get("selectedTextColor"), hover_text_color=entry_style.get("hoverTextColor"), text_outlines=entry_look.get("textOutlines"), appearance=entry_style, sounds=options, button_padding=(min(36, max(0, cell_width - 1) // 2), min(8, max(0, cell_height - 1) // 2)) if kind == "flowchart" else (8, 4), caption_align={"left": 0.0, "center": 0.5, "right": 1.0}.get(entry_style.get("align"), 0.5) if kind == "flowchart" else 0.5, browse_hint=kind == "flowchart" and bool(entry_node.get("callId")))
+            if rows and not options.get("navigationRect") and not numeric_pages:
                 hbox:
                     xalign 0.5
                     spacing 12
@@ -522,18 +639,29 @@ screen vn_collection(kind, area_width, area_height, font_size, text_color, surfa
                     text ("%d / %d" % (active_page + 1, page_count)) font font size min(font_size, 22) color text_color yalign 0.5
                     textbutton "下一页" action SetLocalVariable("collection_page", min(page_count - 1, active_page + 1)) sensitive active_page < page_count - 1 text_font font text_size min(font_size, 22) text_color text_color ysize nav_height
 
-        if rows and options.get("navigationRect"):
-            $ nav_rect = options["navigationRect"]
-            $ nav = (int(nav_rect["x"] * area_width), int(nav_rect["y"] * area_height), max(1, int(nav_rect["width"] * area_width)), max(1, int(nav_rect["height"] * area_height)))
-            hbox:
-                xpos nav[0]
-                ypos nav[1]
+        if rows and (options.get("navigationRect") or numeric_pages):
+            $ nav_rect = options.get("navigationRect")
+            $ nav = (int(nav_rect["x"] * area_width), int(nav_rect["y"] * area_height), max(1, int(nav_rect["width"] * area_width)), max(1, int(nav_rect["height"] * area_height))) if nav_rect else (0, area_height - nav_height, area_width, nav_height)
+            fixed:
+                pos (nav[0], nav[1])
                 xysize (nav[2], nav[3])
-                spacing 8
-                for number in range(page_count):
-                    use vn_styled_button(str(number + 1), SetLocalVariable("collection_page", number), component_id + "_page_%d" % number, min(64, max(20, int(nav[2] / page_count) - 8)), nav[3], font_size, options.get("pageTextColor", text_color), "#00000000", options.get("pageSkin") or {}, font, selected_text_color=options.get("pageSelectedTextColor"))
+                if numeric_pages:
+                    hbox:
+                        xalign (0.0 if options.get("navigationRect") else 0.5)
+                        spacing 8
+                        for number in range(page_count):
+                            use vn_styled_button(str(number + 1), SetLocalVariable("collection_page", number), component_id + "_page_%d" % number, min(64, max(20, int(nav[2] / page_count) - 8)), nav[3], font_size, options.get("pageTextColor", text_color), "#00000000", options.get("pageSkin") or {}, font, selected_text_color=options.get("pageSelectedTextColor"))
+                else:
+                    hbox:
+                        xalign 0.5
+                        spacing 12
+                        textbutton "上一页" action SetLocalVariable("collection_page", max(0, active_page - 1)) sensitive active_page > 0 text_font font text_size min(font_size, 22) text_color text_color ysize nav[3]
+                        text ("%d / %d" % (active_page + 1, page_count)) font font size min(font_size, 22) color text_color yalign 0.5
+                        textbutton "下一页" action SetLocalVariable("collection_page", min(page_count - 1, active_page + 1)) sensitive active_page < page_count - 1 text_font font text_size min(font_size, 22) text_color text_color ysize nav[3]
+    if kind == "flowchart" and options.get("flowViews") and flow_trail:
+        key "K_ESCAPE" action [SetLocalVariable("flow_trail", flow_trail[:-1]), Function(flow_gesture.clear), SetLocalVariable("collection_page", 0)]
 
-screen vn_context_component(kind, area_width, area_height, font_size, text_color, caption, title="", subtitle="", font="fonts/SourceHanSansLite.ttf", title_image=None, align=0.5, text_outlines=[]):
+screen vn_context_component(kind, area_width, area_height, font_size, text_color, caption, title="", subtitle="", font="fonts/SourceHanSansLite.ttf", title_image=None, align=0.5, text_outlines=[], native_input=False):
     viewport:
         xysize (area_width, area_height)
         mousewheel True
@@ -551,13 +679,14 @@ screen vn_context_component(kind, area_width, area_height, font_size, text_color
                 if subtitle and not title_image:
                     text subtitle substitute False font font size min(font_size, 32) color text_color xsize area_width min_width area_width text_align align outlines text_outlines slow_cps 0
             elif kind == "keyboard":
-                input value VariableInputValue("vn_minigame_answer") length 128 id "vn_minigame_input" size font_size color text_color
+                if not native_input:
+                    input value VariableInputValue("vn_minigame_answer") length 128 id "vn_minigame_input" size font_size color text_color
                 for row in ("1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm"):
                     hbox:
                         spacing 3
                         for key in row:
-                            textbutton key action SetVariable("vn_minigame_answer", vn_minigame_answer + key) xsize max(20, int(area_width / 11)) text_size min(font_size, 24)
-                textbutton "退格" action SetVariable("vn_minigame_answer", vn_minigame_answer[:-1])
+                            textbutton key action (Function(vn_ui_input_key, key) if native_input else SetVariable("vn_minigame_answer", vn_minigame_answer + key)) xsize max(20, int(area_width / 11)) text_size min(font_size, 24)
+                textbutton "退格" action (Function(vn_ui_input_key, None) if native_input else SetVariable("vn_minigame_answer", vn_minigame_answer[:-1]))
             elif kind == "gameOver":
                 textbutton "重新开始" action Start()
                 textbutton "返回标题" action MainMenu()

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createProject, type Project } from '../src/core/model';
 import { applyTextScript, projectToText } from '../src/core/text-script';
 import { validateProject } from '../src/core/validate';
-import { saveProject } from '../src/desktop/project-store';
+import { parseProject, saveProject } from '../src/desktop/project-store';
 import { openStoryMode } from './lib/story-workspace';
 
 const root = path.resolve('.'), require = createRequire(import.meta.url);
@@ -19,7 +19,8 @@ base.playerDefaults = { masterVolume: 0 };
 base.ui.chapterTransition = structuredClone(template.ui.chapterTransition);
 const names = ['章节进场 · 夜宴庭院', '章节题字 · 记第一回 醉梦', '花街柳巷'];
 const masks = Object.values(base.ui.chapterTransition ?? {}).filter(value => typeof value === 'string');
-for (const asset of template.assets.filter(asset => names.includes(asset.name) || masks.includes(asset.id))) {
+// The template has two audio assets named 花街柳巷; keep one so name references stay unambiguous.
+for (const asset of template.assets.filter(asset => (names.includes(asset.name) && asset.id !== 'ai_music_room_7') || masks.includes(asset.id))) {
   const file = path.join(path.dirname(projectFile), asset.path);
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.copyFile(path.join(templateRoot, asset.path), file);
@@ -38,7 +39,7 @@ const source = `@入口：章节入场【opening】
 @章节标题：第一章 · 城破｜夜宴｜1.2
 @章节背景：章节进场 · 夜宴庭院
 @章节题图：章节题字 · 记第一回 醉梦
-@章节配乐：花街柳巷
+@章节音效：花街柳巷
 @章节动效：笔触消散
 @跳转：正文【passage】
 # 段落：正文【passage】
@@ -54,9 +55,12 @@ const source = `@入口：章节入场【opening】
 @镜头：0.1，0.2，1.2，0.2，15，匀速，否
 旁白：最后一句。
 ${Array.from({ length: 35 }, (_, index) => `@对白标记：extra_${index}\n旁白：用于检查滚动位置的第 ${index + 1} 句。`).join('\n')}\n@跳转：结束【ending】\n# 段落：结束【ending】\n@返回标题界面`;
-const parsed = applyTextScript(base, source);
+// Retired @章节… lines migrate on load into a chapter-intro preset call, as in an older project.
+const legacy = structuredClone(base); legacy.scriptText = { format: 'vns-text-1', content: source };
+const migrated = parseProject(legacy).project, migratedSource = migrated.scriptText!.content;
+const parsed = applyTextScript(migrated, migratedSource);
 expect(parsed.issues).toEqual([]);
-parsed.project.scriptText = { format: 'vns-text-1', content: source };
+parsed.project.scriptText = { format: 'vns-text-1', content: migratedSource };
 expect(validateProject(parsed.project).filter(issue => issue.severity === 'error')).toEqual([]);
 await saveProject(projectFile, parsed.project);
 const originalFile = await fs.readFile(projectFile, 'utf8');
@@ -68,7 +72,7 @@ let app: ElectronApplication | undefined, page: Page | undefined;
 const checks: string[] = [], errors: string[] = [];
 let phase = 'launch';
 try {
-  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env, timeout: 60000 });
+  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env: { ...env, VNS_TEST_DISCARD_ON_CLOSE: '1' }, timeout: 60000 });
   page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message));
   await expect(page.locator('.project-title strong')).toHaveText(parsed.project.name, { timeout: 30000 });
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1520, 980));
@@ -98,7 +102,7 @@ try {
   await page.getByRole('button', { name: '隐藏演出', exact: true }).click();
   const hidden = await input.inputValue();
   expect(hidden).not.toMatch(/@背景|@等待|@震动|@镜头|@章节背景/);
-  expect(hidden).toContain('@章节标题'); expect(hidden).toContain('@跳转');
+  expect(hidden).toContain('@独立演出'); expect(hidden).toContain('@跳转');
   await expect(page.locator('.text-issue-list, .text-parse-status')).toHaveCount(0);
   await expect(page.getByRole('region', { name: '所选段落演出', exact: true })).toBeVisible();
   await expect(page.locator('.passage-performance-line[data-line-id="first_line"] .line-effect-chip')).toHaveCount(3);
@@ -149,7 +153,8 @@ try {
   expect(await input.inputValue()).toContain('@等待：旁白：最后一句。');
   await input.press('Control+z'); await expect(input).toHaveValue(hidden);
   await caret('旁白：最后一句。');
-  await page.getByRole('button', { name: '插入指令', exact: true }).click();
+  // The command palette opens by typing “/” at the caret.
+  await page.keyboard.insertText('/');
   const palette = page.getByRole('dialog', { name: '中文指令面板' });
   await palette.getByLabel('筛选中文指令').fill('等待');
   await palette.getByRole('button').filter({ hasText: /^等待/ }).click();
@@ -158,7 +163,8 @@ try {
   expect((await save()).scriptText!.content).toContain('@等待');
   const selectedRow = await input.evaluate(element => { const input = element as HTMLTextAreaElement; return input.value.slice(0, input.selectionStart).split('\n').length; });
   expect(selectedRow).toBeLessThan(hidden.split('\n').length - 20);
-  await input.press('Control+z'); await expect(input).toHaveValue(hidden);
+  // Undo the inserted command, then the “/” that opened the palette.
+  await input.press('Control+z'); await input.press('Control+z'); await expect(input).toHaveValue(hidden);
   checks.push('隐藏模式仍支持插入指令与未完成输入，保留编辑位置和撤销。');
 
   phase = 'diagnostic locations';
@@ -169,7 +175,7 @@ try {
   await expect(customWarning).toContainText('背包页面 / 自定义页面 / 关闭背包');
   await customWarning.locator('.diagnostic-main').click();
   await expect(page.locator('.ui-hierarchy-row[data-hierarchy-id="close_inventory"]')).toHaveClass(/selected/);
-  await expect(page.locator('.inspector').getByLabel('控件名称', { exact: true })).toHaveValue('关闭背包');
+  await expect(page.getByLabel('控件显示名称', { exact: true })).toHaveValue('关闭背包');
   await expect(page.locator('.dirty-dot')).toHaveCount(0);
   const themeWarning = problems.locator('[data-component-id="inventory_button"]:not([data-ui-instance-id])');
   await themeWarning.locator('.diagnostic-main').click();
@@ -193,6 +199,11 @@ try {
   await page.screenshot({ path: path.join(output, 'ui-diagnostic-control.png') });
   checks.push('问题集中于左下角；按钮警告区分自定义页、主题默认和实例覆盖，点击定位页面及层级，检查不会更改游戏使用的实例。');
 
+  // The phases below exercise the retired chapterTitle node (章节时长, encapsulation).
+  // Text chapters now migrate to chapter-intro presets (verify-chapter-framing,
+  // verify-chapter-composition-fidelity). Kept for a future rewrite on demand.
+  const legacyChapter = !!process.env.VNS_VERIFY_LEGACY_CHAPTER;
+  if (legacyChapter) {
   phase = 'chapter workspace parameter editing';
   await openStoryMode(page, 'text');
   await caret('@章节标题');
@@ -250,12 +261,14 @@ try {
   await expect(page.locator(`.react-flow__node[data-id="${chapterNode.id}"]`)).toBeVisible();
   checks.push('可新建独立演出并使用测试台词预览；切换演出目标时蓝图画布和预览同步切换。');
 
+  } else await openStoryMode(page, 'text');
+
   phase = 'persistence and small viewport';
-  await page.getByRole('button', { name: '返回剧本', exact: true }).click();
+  if (legacyChapter) await page.getByRole('button', { name: '返回剧本', exact: true }).click();
   await expect(input).toBeVisible();
   await expect(page.getByRole('button', { name: '隐藏演出', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: '隐藏演出', exact: true }).click();
-  expect(await input.inputValue()).toContain('@城破入场演出');
+  if (legacyChapter) expect(await input.inputValue()).toContain('@城破入场演出');
   await page.getByRole('button', { name: '隐藏演出', exact: true }).click();
   await caret('旁白：相同的台词。');
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1280, 800));

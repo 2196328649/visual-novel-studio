@@ -9,6 +9,7 @@ import { createUiEventGraph } from '../src/core/ui-logic';
 import { blueprintNodeDefaults, callablePins, connectBlueprintPins, synchronizeBlueprintSignatures } from '../src/core/blueprint';
 import { timelineNodeActions } from '../src/core/performance-timeline';
 import type { Project } from '../src/core/model';
+import { projectGraphs } from '../src/core/project-resources';
 
 const root = path.resolve('.'), output = path.join(root, 'artifacts/blueprint-input-layout', new Date().toISOString().replaceAll(':', '-'));
 await fs.mkdir(output, { recursive: true }); const reports = [];
@@ -33,14 +34,14 @@ for (const workspace of ['timeline', 'ui'] as const) {
   }
   synchronizeBlueprintSignatures(project);
   const original = JSON.stringify(project); await fs.writeFile(projectFile, original);
-  const actions = (p: Project) => { const g = p.blueprints.find(g => g.id === graph.id)!; return [pictureId, soundId].map(id => timelineNodeActions(p, g, g.nodes.find(n => n.id === id)!)); };
+  const actions = (p: Project) => { const g = projectGraphs(p).find(g => g.id === graph.id)!; return [pictureId, soundId].map(id => timelineNodeActions(p, g, g.nodes.find(n => n.id === id)!)); };
   const beforeActions = actions(project), beforeNodes = structuredClone(graph.nodes);
   const app = await launchDesktopFixture({ root, projectFile, profile: path.join(folder, 'profile') }), page = await app.firstWindow(); page.setDefaultTimeout(10000);
   const errors: string[] = []; page.on('pageerror', e => errors.push(e.message)); let assistant: Page | undefined;
   const button = (name: string) => page.getByRole('button', { name, exact: true });
   const node = (id: string) => page.locator('.react-flow__node[data-id="' + id + '"]');
   const current = async () => assistant!.evaluate(async () => (await window.studio!.getAiContext!())!.project);
-  const currentGraph = async () => (await current()).blueprints.find(g => g.id === graph.id)!;
+  const currentGraph = async () => projectGraphs(await current()).find(g => g.id === graph.id)!;
   const open = async () => {
     if (workspace === 'timeline') { await page.locator('[data-workspace-tab="blueprint"]').click(); await page.getByLabel('演出目标').selectOption('graph:' + graph.id); }
     else { await page.locator('[data-workspace-tab="ui"]').click(); await page.getByLabel('界面编辑模式').getByRole('button', { name: '事件图', exact: true }).click(); await page.getByLabel('事件图页面').selectOption('ui:main'); await button('框选全部节点').click(); await node(callId!).locator('.graph-node-title').dblclick(); }
@@ -48,9 +49,17 @@ for (const workspace of ['timeline', 'ui'] as const) {
   };
   const expose = async (nodeId: string, label: string, count: number) => {
     await page.locator('.timeline-clip[data-node-id="' + nodeId + '"]').click();
-    const details = page.locator('.timeline-clip-parameters'); if (await details.getAttribute('open') === null) await details.locator('summary').click();
-    const row = details.locator('.timeline-parameter').filter({ has: page.locator(':scope > span', { hasText: label }) });
-    await row.getByRole('button', { name: '设为参数', exact: true }).click();
+    // Visual clips expose fields from the inspector's “可替换参数” tab; audio
+    // and other clips keep the call-parameter list.
+    const visualTab = page.getByRole('tablist', { name: '片段属性分类' }).getByRole('tab', { name: '可替换参数', exact: true });
+    if (await visualTab.isVisible()) {
+      await visualTab.click();
+      await page.locator('.visual-parameter-row').filter({ hasText: label }).getByRole('button', { name: /^公开到/ }).click();
+    } else {
+      const details = page.locator('.timeline-clip-parameters'); if (await details.getAttribute('open') === null) await details.locator('summary').click();
+      const row = details.locator('.timeline-parameter').filter({ has: page.locator(':scope > span', { hasText: label }) });
+      await row.getByRole('button', { name: /^设为(素材)?参数$/ }).click();
+    }
     await expect.poll(async () => (await currentGraph()).exposedInputs.length).toBe(count);
     assert.deepEqual(actions(await current()), beforeActions);
   };
@@ -79,9 +88,9 @@ for (const workspace of ['timeline', 'ui'] as const) {
     await button('查看组件连线').click(); const boxes = await verifyBoxes();
     const g = await currentGraph(); assert.equal(g.links.filter(l => g.nodes.some(n => n.type === 'getInput' && n.id === l.fromNodeId)).length, 4);
     assert.deepEqual(actions(await current()), beforeActions);
-    if (callId) { const call = (await current()).blueprints.flatMap(g => g.nodes).find(n => n.id === callId)!; for (const pin of g.exposedInputs) assert.ok(call.pins.some(p => p.id === 'arg_' + pin.id), 'parent input missing'); }
+    if (callId) { const call = projectGraphs(await current()).flatMap(g => g.nodes).find(n => n.id === callId)!; for (const pin of g.exposedInputs) assert.ok(call.pins.some(p => p.id === 'arg_' + pin.id), 'parent input missing'); }
     assert.equal(await fs.readFile(projectFile, 'utf8'), original); await button(workspace === 'ui' ? '保存界面' : '保存工程').click();
-    await expect.poll(async () => JSON.parse(await fs.readFile(projectFile, 'utf8')).blueprints).toEqual((await current()).blueprints);
+    await expect.poll(async () => projectGraphs(JSON.parse(await fs.readFile(projectFile, 'utf8')))).toEqual(projectGraphs(await current()));
     await page.reload(); await expect(page.locator('.project-title strong')).toHaveText(project.name); await open();
     const reopened = app.waitForEvent('window'); await button('AI 助手').click(); assistant = await reopened;
     await button('查看组件连线').click(); await verifyBoxes();

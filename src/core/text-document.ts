@@ -53,7 +53,7 @@ function wrapRangeDocument(source: string, start: number, end: number, firstLine
   return { ...inner, source, projection, sourceLines: starts.map((_, index) => inner.sourceLines[index - firstLine + 1] ?? (index < firstLine - 1 ? 1 : visibleLines)), scope: { start, end, firstLine, lastLine, inner } };
 }
 
-/** Keep serialized dialogue IDs out of the editing surface and clipboard. */
+/** Keep serialized dialogue, option and node IDs out of the editing surface. */
 export function textDocument(source: string, sourceMap: TextSourceLocation[] = [], options: TextDocumentOptions = {}): TextDocument {
   if (options.range && (options.range.start > 0 || options.range.end < source.length)) {
     const { start, end } = options.range;
@@ -72,16 +72,16 @@ export function textDocument(source: string, sourceMap: TextSourceLocation[] = [
   }
   const lines = source.split(/\r\n|\r|\n/), separators = [...source.matchAll(/\r\n|\r|\n/g)];
   let effectDefinition = false;
-  const markerTypes: ('dialogue' | 'node' | undefined)[] = [];
+  const markerTypes: ('dialogue' | 'option' | 'node' | undefined)[] = [];
   const markerIds = lines.map((line, index) => {
     if (/^\s*[@／/]?效果定义(?:\s*[:：]|\s)/.test(line)) effectDefinition = true;
     if (/^\s*[@／/]?效果结束\s*$/.test(line)) effectDefinition = false;
     if (effectDefinition) return undefined;
-    const command = line.trim().match(/^[@／/]\s*(对白标记|节点标记)(?:\s*[:：]\s*|\s+)(.+)$/);
+    const command = line.trim().match(/^[@／/]\s*(对白标记|选项标记|节点标记)(?:\s*[:：]\s*|\s+)(.+)$/);
     if (!command) return undefined;
     const value = command[2].trim();
     const id = /^[a-z][a-z0-9_]{0,63}$/.test(value) ? value : value.match(/^.*?【([a-z][a-z0-9_]{0,63})】$/)?.[1];
-    if (id) markerTypes[index] = command[1] === '节点标记' ? 'node' : 'dialogue';
+    if (id) markerTypes[index] = command[1] === '节点标记' ? 'node' : command[1] === '选项标记' ? 'option' : 'dialogue';
     return id;
   });
   const dialogueLines = new Map<string, number>();
@@ -129,7 +129,7 @@ export function textDocument(source: string, sourceMap: TextSourceLocation[] = [
     // A source map anchors the ID to its dialogue, past any stage commands.
     // During an incomplete edit there may be no parse location yet; keep the
     // marker hidden and anchored to the next visible line until parsing recovers.
-    let target = markerTypes[index] === 'node' ? undefined : dialogueLines.get(id);
+    let target = markerTypes[index] === 'dialogue' ? dialogueLines.get(id) : undefined;
     if (target === undefined || !Number.isInteger(target) || target <= index || target >= lines.length) target = Math.min(index + 1, lines.length - 1);
     while (projection[target].hidden && target < lines.length - 1) target++;
     const start = Math.min(starts[target], text.length);
@@ -270,6 +270,10 @@ export function patchTextDocument(document: TextDocument, source: string, edit: 
 /** After applying a rename, show the current label at every stable reference. */
 export function refreshTextReferenceNames(project: Project, source: string): string {
   const names = new Map([...project.chapters, ...project.scenes, ...project.nodes, ...project.variables, ...project.assets, ...project.characters, ...project.effects, ...projectGraphs(project), ...projectGraphs(project).flatMap(graph => graph.exposedInputs), ...(project.ui.instances ?? []), ...(project.ui.flowStyles ?? []), ...project.characters.flatMap(character => [...character.expressions, ...(character.features ?? [])])].map(item => [item.id, item.name]));
+  if (/[@／/]\s*连线过渡\s*[:：]/.test(source)) for (const node of project.nodes) {
+    if (node.kind === 'choice') for (const option of node.choices) names.set(option.id, option.text);
+    if (node.kind === 'interaction') for (const hotspot of node.hotspots) names.set(hotspot.id, hotspot.name);
+  }
   return source.split('\n').map(line => {
     for (const span of textReferenceSpans(line).reverse()) {
       if (span.from !== span.nameTo) continue;
@@ -278,6 +282,12 @@ export function refreshTextReferenceNames(project: Project, source: string): str
       const name = graph ? blueprintCallName(graph) : id ? names.get(id) : undefined;
       if (name) {
         const quote = line[span.nameFrom - 1];
+        // A renamed transition owner/port may introduce commas or newlines.
+        // Quote its whole reference instead of changing the argument count.
+        if (quote !== '"' && quote !== "'" && /^\s*[@／/]\s*连线过渡\s*[:：]/.test(line) && /[\r\n"'\\，,;；=：:]/.test(name)) {
+          line = line.slice(0, span.nameFrom) + JSON.stringify(name + line.slice(span.from, span.to)) + line.slice(span.to);
+          continue;
+        }
         const escaped = quote === '"' ? JSON.stringify(name).slice(1, -1) : quote === "'" ? name.replaceAll('\\', '\\\\').replaceAll("'", "\\'") : name;
         line = line.slice(0, span.nameFrom) + escaped + line.slice(span.nameTo);
       }

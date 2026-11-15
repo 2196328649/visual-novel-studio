@@ -29,7 +29,7 @@ async function native(hwnd: string) {
     child.once('error', reject); child.once('close', code => code === 0 ? resolve(JSON.parse(stdout)) : reject(new Error(stderr)));
   });
 }
-const app = await launchDesktopFixture({ root, projectFile, profile: path.join(output, 'profile') }), page = await app.firstWindow();
+const app = await launchDesktopFixture({ root, projectFile, profile: path.join(output, 'profile'), confirmClose: true }), page = await app.firstWindow();
 const errors: string[] = [], checks: string[] = []; let phase = 'launch'; page.on('pageerror', error => errors.push(error.message));
 try {
   await expect(page.locator('.project-title strong')).toHaveText(project.name, { timeout: 45000 });

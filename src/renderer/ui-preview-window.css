@@ -5,6 +5,8 @@
 .ui-preview-window > header span { max-width: 35%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ui-preview-window > header small { color: var(--muted); flex: 1; }
 .ui-preview-window > header button { margin-left: auto; flex: none; }
+.ui-preview-origin { flex: none; display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 8px 14px; border-bottom: 1px solid var(--border); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.ui-preview-origin > span { color: var(--muted); }
 .ui-preview-window .ui-logic-preview { display: flex; flex: 1; flex-direction: column; min-height: 0; max-height: none; padding: 0; overflow: hidden; border: 0; }
 .ui-preview-controls { flex: none; max-height: 45%; overflow-y: auto; border-bottom: 1px solid var(--border); }
 .ui-preview-window .ui-preview-toolbar { height: auto; min-height: 42px; padding: 8px 12px; display: flex; gap: 12px; flex-wrap: wrap; }
@@ -22,3 +24,9 @@
 .ui-preview-window .ui-logic-preview-frame { display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 0; overflow: hidden; }
 .ui-preview-loading { padding: 24px; }
 @media (max-width: 740px) { .ui-preview-window > header small { display: none; } .ui-preview-window > header span { max-width: 50%; } }
+
+/* Closed help/data rows should not consume the working area of a separate preview. */
+.ui-preview-window .ui-preview-controls > details { border: 0; border-radius: 0; margin: 0; padding: 3px 12px; }
+.ui-preview-window .ui-preview-controls > details > summary { min-height: 0; padding: 2px 0; }
+.ui-preview-window .ui-preview-controls > p { margin: 4px 0; }
+.ui-preview-window .ui-preview-toolbar .ui-zoom-controls { margin: 0; }

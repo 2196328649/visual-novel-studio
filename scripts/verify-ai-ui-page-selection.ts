@@ -1,3 +1,4 @@
+import { selectUiDesignScheme } from './lib/ui-design-controls';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -37,17 +38,17 @@ try{
  await expect(page.locator('.project-title strong')).toHaveText(project.name,{timeout:45000});await page.locator('[data-workspace-tab="ui"]').click();await mode('事件图').click();await page.getByLabel('事件图页面').selectOption('ui:preferences');
  await expect(button('创建页面事件图')).toBeVisible();const opened=app.waitForEvent('window');await button('AI 助手').click();assistant=await opened;
  await expect.poll(async()=>(await context())?.selectedUiPage).toEqual({pageId:'ui:preferences',uiInstanceId:'child',mode:'events'});await expect(assistant.getByLabel('当前界面页面')).toContainText('设置 · 同名方案 · 事件图');
- await mode('设计').click();for(const id of ['parent','','child']){await page.getByLabel('选择界面实例').selectOption(id);await expect.poll(async()=>(await context())?.selectedUiPage).toEqual({pageId:'ui:preferences',uiInstanceId:id||'base',mode:'design'});}await expect(button('保存界面')).toBeDisabled();await mode('事件图').click();
+ await mode('设计').click();for(const id of ['parent','','child']){await selectUiDesignScheme(page, id);await expect.poll(async()=>(await context())?.selectedUiPage).toEqual({pageId:'ui:preferences',uiInstanceId:id||'base',mode:'design'});}await expect(button('保存界面')).toBeDisabled();await mode('事件图').click();
  await send();await expect.poll(()=>captures.length).toBe(1);await page.getByLabel('事件图页面').selectOption('ui:save');await expect.poll(async()=>(await context())?.selectedUiPage?.pageId).toBe('ui:save');gates[0].release();await apply();await expect.poll(background).toBe('#354657');
  assert.equal((await current()).ui.pages!.preferences!.background,'#18212a');assert.deepEqual((await current()).ui.instances![0],project.ui.instances![0]);assert.equal(await fs.readFile(projectFile,'utf8'),original);
  await mode('事件图').focus();await page.keyboard.press('Control+z');await expect.poll(background).toBe('#28313a');await page.keyboard.press('Control+y');await expect.poll(background).toBe('#354657');await save();
  await page.getByLabel('事件图页面').selectOption('ui:preferences');await mode('设计').click();await expect(page.locator('.ui-canvas')).toHaveCSS('background-color','rgb(53, 70, 87)');
  await mode('事件图').click();await page.getByLabel('事件图页面').selectOption('first');await mode('设计').click();await page.getByRole('checkbox',{name:'阻止下层交互',exact:true}).uncheck();await mode('事件图').click();
  await expect.poll(async()=>(await context())?.selectedUiPage).toEqual({pageId:'first',mode:'events'});assert.equal((await first()).modal,false);await send();await expect.poll(()=>captures.length).toBe(2);
- await mode('设计').click();await page.getByLabel('选择自定义页面').selectOption('second');await expect.poll(async()=>(await context())?.selectedUiPage).toEqual({pageId:'second',mode:'design'});gates[1].release();await apply();
+ await mode('设计').click();await page.getByLabel('设计页面').selectOption('second');await expect.poll(async()=>(await context())?.selectedUiPage).toEqual({pageId:'second',mode:'design'});gates[1].release();await apply();
  await expect.poll(async()=>(await first()).background).toBe('#789abc');assert.deepEqual((await current()).ui.customPages[1],project.ui.customPages[1]);assert.equal((await first()).modal,false);
  await mode('设计').focus();await page.keyboard.press('Control+z');await expect.poll(async()=>(await first()).background).toBe('#102030');assert.equal((await first()).modal,false);await page.keyboard.press('Control+y');await expect.poll(async()=>(await first()).background).toBe('#789abc');
- await page.getByLabel('选择自定义页面').selectOption('first');await expect(page.locator('.ui-canvas')).toHaveCSS('background-color','rgb(120, 154, 188)');
+ await page.getByLabel('设计页面').selectOption('first');await expect(page.locator('.ui-canvas')).toHaveCSS('background-color','rgb(120, 154, 188)');
  await save();const saved=JSON.parse(await fs.readFile(projectFile,'utf8'));assert.deepEqual(compileProject(saved).diagnostics.filter(d=>d.severity==='error'),[]);assert.equal(saved.ui.customPages[0].modal,false);assert.equal(saved.ui.customPages[0].background,'#789abc');assert.deepEqual(saved.ui.customPages[1],project.ui.customPages[1]);assert.deepEqual(saved.ui.pages,project.ui.pages);assert.equal(saved.blueprints.length,0);
  await assistant.screenshot({path:path.join(output,'assistant-current-page.png')});await page.screenshot({path:path.join(output,'applied-page.png')});
  await page.locator('[data-workspace-tab="assets"]').click();await expect.poll(async()=>(await context())?.selectedUiPage).toBeUndefined();await expect(assistant.getByLabel('当前界面页面')).toHaveCount(0);

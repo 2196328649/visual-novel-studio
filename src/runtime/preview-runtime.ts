@@ -17,6 +17,8 @@ export function createPreviewRuntime(): string {
             self.ready = False
             self.revision = -1
             self.focus_counter = 0
+            self.manual_paused = False
+            self.debug_paused = False
             self.paused_at = None
             self.offset = 0.0
             self.clock = renpy.display.core.get_time
@@ -117,18 +119,26 @@ export function createPreviewRuntime(): string {
                 if not self.user.IsWindowVisible(self.hwnd): self.user.ShowWindow(self.hwnd, 8)
 
         def pause(self, paused):
+            self.manual_paused = paused
+            self.apply_pause(self.manual_paused or self.debug_paused)
+
+        def debug_pause(self, paused):
+            self.debug_paused = paused
+            self.apply_pause(self.manual_paused or self.debug_paused)
+
+        def apply_pause(self, paused):
             if paused and self.paused_at is None:
                 self.paused_at = self.clock()
                 renpy.audio.audio.pause_all()
-                self.user.EnableWindow(self.hwnd, False)
+                if self.hwnd: self.user.EnableWindow(self.hwnd, False)
                 self.emit("focus-editor")
-                self.emit("paused")
+                self.emit("paused", manualPaused=self.manual_paused, debugPaused=self.debug_paused)
             elif not paused and self.paused_at is not None:
                 self.offset += self.clock() - self.paused_at
                 self.paused_at = None
-                self.user.EnableWindow(self.hwnd, True)
+                if self.hwnd: self.user.EnableWindow(self.hwnd, True)
                 renpy.audio.audio.unpause_all()
-                self.emit("running")
+                self.emit("running", manualPaused=self.manual_paused, debugPaused=self.debug_paused)
 
         def tick(self):
             try:
@@ -182,7 +192,7 @@ export function createPreviewRuntime(): string {
                         self.ready = True
                         rect = wintypes.RECT()
                         self.user.GetWindowRect(self.hwnd, ctypes.byref(rect))
-                        self.emit("running", initialVisibility=self.initial_visibility, parent=str(self.user.GetParent(self.hwnd) or ""), owner=str(self.user.GetWindow(self.hwnd, 4) or ""), presentation="owned-viewport" if self.boot["mode"] == "embedded" else "window", bounds=[rect.left, rect.top, rect.right, rect.bottom])
+                        self.emit("paused" if self.paused_at is not None else "running", manualPaused=self.manual_paused, debugPaused=self.debug_paused, initialVisibility=self.initial_visibility, parent=str(self.user.GetParent(self.hwnd) or ""), owner=str(self.user.GetWindow(self.hwnd, 4) or ""), presentation="owned-viewport" if self.boot["mode"] == "embedded" else "window", bounds=[rect.left, rect.top, rect.right, rect.bottom])
                         if self.boot["mode"] == "window": self.user.SetForegroundWindow(self.hwnd)
             except (OSError, ValueError, RuntimeError, AttributeError, TypeError) as error:
                 self.emit("failed", message=str(error))

@@ -1,0 +1,51 @@
+.ui-flow-breadcrumb {
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  padding: 2px 8px;
+  overflow: hidden;
+  color: #f4f0e6;
+  background: rgba(24, 31, 30, .94);
+  font-size: 12px;
+}
+
+.ui-flow-breadcrumb > button {
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 2px 6px;
+  font: inherit;
+  line-height: 1.2;
+}
+
+.ui-flow-breadcrumb > span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.ui-flow-breadcrumb > strong {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.ui-flow-edge-hit:focus-visible {
+  stroke: #71bbdf;
+  stroke-opacity: .4;
+  outline: none;
+}
+
+.ui-flow-call-open {
+  position: absolute;
+  right: 4%;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: .65;
+  pointer-events: none;
+  text-shadow: none;
+}

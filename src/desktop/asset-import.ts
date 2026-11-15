@@ -1,3 +1,4 @@
+import { cloneData } from "../core/project-mutation";
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { AssetImportOptions, AssetImportReport } from '../core/bridge';
@@ -23,7 +24,7 @@ export function parseAssetImportOptions(input: unknown): AssetImportOptions {
 
 /** Import stores either a project copy or an explicit link to the original file. */
 export async function importAssetPaths(directory: string, project: Project, sources: string[], options: AssetImportOptions & { acceptFile?: (relative: string, kind: Asset['kind']) => boolean; check?: () => void } = {}, measureImage?: (file: string) => { width: number; height: number; visibleBounds?: Asset['visibleBounds'] }) {
-  const next = structuredClone(project);
+  const next = cloneData(project);
   if (options.folderId && !next.contentBrowser?.folders.some(folder => folder.id === options.folderId)) throw new Error('目标文件夹已不存在。');
   await ensureResourceDirectories(directory, next);
   const report: AssetImportReport = { imported: 0, duplicates: 0, skipped: 0, errors: [] };
@@ -66,7 +67,8 @@ export async function importAssetPaths(directory: string, project: Project, sour
       if (ids.has(asset.id)) { report.duplicates++; continue; }
       asset.category = category;
       asset.sourcePath = parts.join('/');
-      if (asset.kind === 'image' && measureImage) {
+      // PNG metadata already comes from the worker, including transparent bounds.
+      if (asset.kind === 'image' && measureImage && (!asset.width || !asset.height)) {
         const dimensions = measureImage(file);
         if (dimensions.width && dimensions.height) Object.assign(asset, dimensions);
       }

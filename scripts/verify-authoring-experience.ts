@@ -7,8 +7,10 @@ import { createProject, type Project } from '../src/core/model';
 import { projectToText, applyTextScript } from '../src/core/text-script';
 import { blueprintCatalog, type BlueprintNodeType } from '../src/core/blueprint';
 import { performanceTimeline } from '../src/core/performance-timeline';
+import { projectGraphs } from '../src/core/project-resources';
 import { saveProject } from '../src/desktop/project-store';
 import { openStoryMode } from './lib/story-workspace';
+import { cleanVerificationDirectories } from './lib/verification-cleanup';
 
 const root = path.resolve('.'), require = createRequire(import.meta.url);
 const output = path.join(root, 'artifacts/authoring-experience', new Date().toISOString().replaceAll(':', '-'));
@@ -45,7 +47,7 @@ let app: ElectronApplication | undefined, page: Page | undefined, phase = 'launc
 const checks: string[] = [], errors: string[] = [];
 const metrics: Record<string, unknown> = { assets: project.assets.length, components: project.ui.components.length, renderer: server ? 'hot' : 'compiled' };
 try {
-  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env, timeout: 60000 });
+  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env: { ...env, VNS_TEST_DISCARD_ON_CLOSE: '1' }, timeout: 60000 });
   page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message));
   await expect(page.locator('.project-title strong')).toHaveText(project.name, { timeout: 30000 });
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1520, 980));
@@ -94,12 +96,13 @@ try {
 
   phase = 'signature and resource browse';
   await page.getByRole('button', { name: '隐藏演出', exact: true }).click();
-  const showLine = (await input.inputValue()).split('\n').find(line => line.startsWith('@显示角色：测试王生'))!;
-  await select(showLine); await page.keyboard.insertText('@显示角色：测试王生，缩放=1');
+  const showLine = (await input.inputValue()).split('\n').find(line => line.startsWith('@显示角色：角色=测试王生'))!;
+  expect(showLine).toBeTruthy();
+  await select(showLine); await page.keyboard.insertText('@显示角色：角色=测试王生，缩放=1');
   await input.press('Control+Space');
   await page.getByRole('button', { name: '填写表情', exact: true }).click();
   await expect(input).toBeFocused();
-  expect(await input.inputValue()).toContain('@显示角色：测试王生，缩放=1，表情=');
+  expect(await input.inputValue()).toContain('@显示角色：角色=测试王生，缩放=1，表情=');
   await page.getByRole('option').filter({ hasText: '担忧' }).first().click();
   expect(await input.inputValue()).toContain('表情=担忧');
   phase = 'resource browser focus';
@@ -128,34 +131,42 @@ try {
   await page.getByRole('button', { name: '作品设置', exact: true }).click();
   const settings = page.getByRole('dialog', { name: '作品设置', exact: true });
   await settings.getByRole('button', { name: '编辑器外观', exact: true }).click();
-  await expect(settings.getByRole('button', { name: /^石墨/ })).toHaveAttribute('aria-pressed', 'true');
-  expect(await settings.locator('.editor-theme-card strong').allTextContents()).toEqual(['石墨', '蓝灰', '墨绿', '暖白', '自定义']);
+  await expect(settings.getByRole('button', { name: /^黑白/ })).toHaveAttribute('aria-pressed', 'true');
+  expect(await settings.locator('.editor-theme-card strong').allTextContents()).toEqual(['黑白', '亮白', '石墨', '蓝灰', '自定义']);
   await settings.locator('input[aria-label="自定义重点色"]').evaluate(element => {
     const field = element as HTMLInputElement; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, '#dc9d61'); field.dispatchEvent(new Event('input', { bubbles: true }));
   });
   await expect.poll(() => page!.evaluate(() => document.documentElement.style.getPropertyValue('--editor-accent'))).toBe('#dc9d61');
-  await settings.getByRole('button', { name: '完成', exact: true }).click();
+  await settings.getByRole('button', { name: '关闭作品设置', exact: true }).click();
   await save(); await page.reload(); await expect(page.locator('.project-title strong')).toHaveText(project.name, { timeout: 30000 });
   await expect(page.locator('html')).toHaveAttribute('data-editor-theme', 'custom');
   expect(await page.evaluate(() => document.documentElement.style.getPropertyValue('--editor-accent'))).toBe('#dc9d61');
-  checks.push('风格名称、石墨默认值和自定义颜色保存重开通过。');
+  checks.push('五种配色、黑白默认值和自定义颜色保存重开通过。');
 
   phase = 'timeline edits and undo';
-  await view('演出'); await page.getByRole('button', { name: '新建演出', exact: true }).click();
-  await expect(page.locator('.performance-authoring.timeline')).toBeVisible();
-  await page.getByRole('button', { name: '调用参数', exact: true }).click();
-  await page.locator('input[aria-label="蓝图名称"]').fill('测试进场复用');
-  await page.locator('input[aria-label="蓝图名称"]').press('Tab');
-  await page.getByRole('button', { name: '调用参数', exact: true }).click();
-  const addClip = async (type: BlueprintNodeType) => { await page!.getByRole('button', { name: '添加片段', exact: true }).click(); await page!.locator('.timeline-add-menu').getByRole('button', { name: blueprintCatalog[type].name, exact: true }).click(); };
-  await addClip('showChapter');
+  await view('蓝图'); await page.getByRole('button', { name: '新建时间轴预设', exact: true }).click();
+  await expect(page.getByRole('tab', { name: '时间轴组件', exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: '时间轴组件', exact: true }).click();
+  await page.getByLabel('时间轴预设名称', { exact: true }).fill('测试进场复用');
+  await page.getByLabel('时间轴预设名称', { exact: true }).press('Tab');
+  await page.getByRole('tab', { name: '片段', exact: true }).click();
+  const addClip = async (type: BlueprintNodeType) => {
+    await page!.getByRole('button', { name: '添加片段', exact: true }).click();
+    await page!.locator('.timeline-add-commands summary').click();
+    await page!.getByRole('menuitem', { name: blueprintCatalog[type].name, exact: true }).click();
+  };
+  await page.getByRole('button', { name: '添加片段', exact: true }).click();
+  await page.getByRole('menuitem', { name: '文字片段', exact: true }).click();
   await expect(page.locator('.timeline-clip')).toHaveCount(1);
-  const chapterId = await page.locator('.timeline-clip').getAttribute('data-node-id');
-  for (const name of ['标题', '章节背景']) {
-    const row = page.locator('.timeline-parameter').filter({ has: page.getByText(name, { exact: true }) });
-    await row.getByRole('button', { name: '公开', exact: true }).click();
+  const textId = await page.locator('.timeline-clip').getAttribute('data-node-id');
+  await page.getByLabel('片段文字内容', { exact: true }).fill('可复用的庭院标题');
+  await page.getByRole('tab', { name: '可替换参数', exact: true }).click();
+  for (const key of ['text', 'duration']) {
+    await page.locator(`.visual-parameter-row[data-parameter-key="${key}"]`).getByRole('button', { name: '公开到时间轴', exact: true }).click();
   }
+  await page.getByLabel('时间轴播放头', { exact: true }).press('Home');
   await addClip('camera');
+  await page.getByLabel('轨道缩放', { exact: true }).selectOption('100');
   const cameraClip = page.locator('.timeline-clip.selected'), cameraId = await cameraClip.getAttribute('data-node-id');
   const trackBefore = await cameraClip.locator('..').getAttribute('data-track-id');
   await page.locator('.timeline-toolbar').getByRole('button', { name: '轨道', exact: true }).click();
@@ -173,18 +184,19 @@ try {
   await expect(moved).toHaveAttribute('data-duration', String(oldDuration + .5));
   const ruler = (await page.locator('.timeline-ruler').boundingBox())!;
   await page.mouse.click(ruler.x + 230, ruler.y + 12);
-  await expect(page.getByLabel('演出预览进度', { exact: true })).toHaveValue('1');
-  await expect(page.locator('.chapter-preview')).toHaveAttribute('data-elapsed', '1');
+  await expect(page.getByLabel('时间轴播放头', { exact: true })).toHaveAttribute('aria-valuenow', '1');
+  await expect(page.getByLabel('当前时间', { exact: true })).toHaveText('1.00 秒');
+  await expect(page.locator('[data-visual-text]')).toContainText('可复用的庭院标题');
   await page.getByRole('button', { name: '播放预览', exact: true }).click();
-  await expect.poll(async () => Number(await page!.getByLabel('演出预览进度', { exact: true }).inputValue())).toBeGreaterThan(1.1);
+  await expect.poll(async () => Number(await page!.getByLabel('时间轴播放头', { exact: true }).getAttribute('aria-valuenow'))).toBeGreaterThan(1.1);
   await page.getByRole('button', { name: '暂停预览', exact: true }).click();
-  const paused = await page.getByLabel('演出预览进度', { exact: true }).inputValue(); await page.waitForTimeout(180);
-  expect(await page.getByLabel('演出预览进度', { exact: true }).inputValue()).toBe(paused);
+  const paused = await page.getByLabel('时间轴播放头', { exact: true }).getAttribute('aria-valuenow'); await page.waitForTimeout(180);
+  expect(await page.getByLabel('时间轴播放头', { exact: true }).getAttribute('aria-valuenow')).toBe(paused);
   await page.getByRole('button', { name: '停止预览', exact: true }).click(); await screenshot('performance-tracks');
-  let saved = await save(); const graph = saved.blueprints.find(graph => graph.name === '测试进场复用')!;
-  expect(graph.exposedInputs).toHaveLength(2); expect(graph.nodes.some(node => node.id === chapterId)).toBe(true);
+  let saved = await save(); const graph = projectGraphs(saved).find(graph => graph.name === '测试进场复用')!;
+  expect(graph.exposedInputs).toHaveLength(2); expect(graph.nodes.some(node => node.id === textId)).toBe(true);
   expect(performanceTimeline(saved, graph).clips.find(clip => clip.nodeId === cameraId)?.at).toBe(.6);
-  await page.reload(); await expect(page.locator('.project-title strong')).toHaveText(project.name, { timeout: 30000 }); await view('演出');
+  await page.reload(); await expect(page.locator('.project-title strong')).toHaveText(project.name, { timeout: 30000 }); await view('蓝图');
   await page.getByLabel('演出目标', { exact: true }).selectOption('graph:' + graph.id);
   await expect(page.locator(`.timeline-clip[data-node-id="${cameraId}"]`)).toHaveAttribute('data-start', '0.6');
   checks.push('轨道创建、跨轨拖拽、时长缩放、一次撤销与重做、公开输入、按秒定位、暂停和保存重开通过。');
@@ -193,10 +205,11 @@ try {
   await view('参数集');
   await page.getByRole('button', { name: /^游戏设置/ }).click();
   await page.getByRole('button', { name: '开关', exact: true }).click();
-  await page.locator('input[aria-label="参数名称"]').fill('减少闪烁');
-  await page.getByRole('button', { name: '放入设置界面并调整布局', exact: true }).click();
+  await page.getByLabel('参数名称', { exact: true }).fill('减少闪烁');
+  await page.locator('.parameter-detail summary').filter({ hasText: '界面控件（可选）' }).click();
+  await page.getByRole('button', { name: '添加到设置界面并调整布局', exact: true }).click();
   await expect(page.getByRole('tab', { name: '组件设置', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await page.getByRole('tab', { name: '游戏设置', exact: true }).click();
+  await page.getByRole('tab', { name: '页面设置', exact: true }).click();
   await expect(page.locator('.inspector input[aria-label="控件显示名称"]')).toHaveCount(0);
   await page.locator('.ui-hierarchy-row.selected').click();
   await expect(page.getByRole('tab', { name: '组件设置', exact: true })).toHaveAttribute('aria-selected', 'true');
@@ -214,7 +227,8 @@ try {
   await screenshot('parameter-component-settings');
   await view('参数集'); await page.getByRole('button', { name: /^游戏设置/ }).click();
   await page.locator('.parameter-table').getByRole('button').filter({ hasText: '减少闪烁' }).click();
-  await page.getByRole('button', { name: '删除参数', exact: true }).click(); expect((await save()).variables.some(variable => variable.id === parameter.id)).toBe(false);
+  await page.getByRole('button', { name: '删除参数', exact: true }).click();
+  await page.getByRole('button', { name: '确认删除参数', exact: true }).click(); expect((await save()).variables.some(variable => variable.id === parameter.id)).toBe(false);
   await page.getByRole('button', { name: '撤销', exact: true }).click(); expect((await save()).variables.some(variable => variable.id === parameter.id)).toBe(true);
   checks.push('参数集新建设置、一键放入界面、全局与组件属性分离、同组件重选、参数删除撤销通过；完整模板记录输入到下一帧耗时。');
   expect(errors).toEqual([]);
@@ -224,4 +238,8 @@ try {
   await page?.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {});
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'failed', phase, checks, metrics, errors, error: String(error) }, null, 2));
   console.error(String(error)); console.log(output); process.exitCode = 1;
-} finally { await app?.close(); await server?.close(); }
+} finally {
+  await app?.close(); await server?.close();
+  const cleanup = await cleanVerificationDirectories(output, ['project', 'profile']);
+  expect(cleanup.errors).toEqual([]);
+}

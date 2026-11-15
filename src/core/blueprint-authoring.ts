@@ -1,4 +1,6 @@
+import { cloneData } from "./project-mutation";
 import { graphResourceKey, projectGraphs } from './project-resources';
+import { blueprintGetterNode } from './blueprint-presentation';
 import { applyAudioClipInputs, audioClipFields, syncAudioClipPins, patchAudioClipNode } from './audio-clip';
 import { maxBlueprintInputs, actionSchema, effectiveCharacter, makeId, type BlueprintGraph, type BlueprintNode, type BlueprintPin, type Project, type StageAction, type VariableValue } from './model';
 import { blueprintInputValue, blueprintNodeDefaults, blueprintPin, callablePins, connectBlueprintPins, createBlueprintGraph } from './blueprint';
@@ -65,7 +67,7 @@ function placeInputReader(graph: BlueprintGraph, read: BlueprintNode, targetId: 
   read.y = target?.y ?? 70;
   // Reserve full expanded node bounds, as in the node editor's automatic
   // placement. Repeated single-input calls must also avoid earlier readers.
-  const height = (node: BlueprintNode) => 150 + Math.max(node.pins.filter(pin => pin.direction === 'input').length, node.pins.filter(pin => pin.direction === 'output').length) * 65;
+  const height = (node: BlueprintNode) => blueprintGetterNode(node) ? 40 : 150 + Math.max(node.pins.filter(pin => pin.direction === 'input').length, node.pins.filter(pin => pin.direction === 'output').length) * 65;
   for (let attempt = 0; attempt <= graph.nodes.length; attempt++) {
     const overlap = graph.nodes.find(node => read.x < node.x + 350 && read.x + 350 > node.x && read.y < node.y + height(node) + 28 && read.y + height(read) + 28 > node.y);
     if (!overlap) return;
@@ -111,11 +113,37 @@ export function blueprintInputTarget(graph: BlueprintGraph, id: string, project?
     const read = graph.nodes.find(node => node.type === 'getInput' && node.properties.inputId === id);
     const link = graph.links.find(link => link.fromNodeId === read?.id);
     const node = graph.nodes.find(node => node.id === link?.toNodeId);
-    const child = node && ['callFunction', 'callMacro'].includes(node.type) && link?.toPinId.startsWith('arg_') ? projectGraphs(project).find(item => item.id === node.properties.graphId) : undefined;
+    const child = node && ['callFunction', 'callMacro', 'startTask', 'debounce'].includes(node.type) && link?.toPinId.startsWith('arg_') ? projectGraphs(project).find(item => item.id === node.properties.graphId) : undefined;
     if (!child) return { node, pinId: link?.toPinId };
     graph = child; id = link!.toPinId.slice(4);
   }
   return {};
+}
+
+/** Find every actor-number consumer, including shared readers and nested calls.
+ * This does not change the first-target resource pickers or evaluate graph data. */
+export function blueprintActorInstanceTargets(graph: BlueprintGraph, id: string, project?: Pick<Project, 'blueprints' | 'timelinePresets'>): BlueprintNode[] {
+  const graphs = new Map(projectGraphs(project).map(item => [item.id, item]));
+  const visited = new Map<BlueprintGraph, Set<string>>(), targets = new Set<BlueprintNode>();
+  const visit = (current: BlueprintGraph, inputId: string) => {
+    const inputs = visited.get(current) ?? new Set<string>();
+    if (inputs.has(inputId)) return;
+    inputs.add(inputId); visited.set(current, inputs);
+    const readers = new Set(current.nodes.filter(node => node.type === 'getInput' && node.properties.inputId === inputId).map(node => node.id));
+    const nodes = new Map(current.nodes.map(node => [node.id, node]));
+    for (const link of current.links) {
+      if (!readers.has(link.fromNodeId) || link.fromPinId !== 'value') continue;
+      const node = nodes.get(link.toNodeId);
+      if (!node) continue;
+      if (link.toPinId === 'instanceId' && (node.type === 'showCharacter' || node.type === 'hideCharacter')) targets.add(node);
+      else if (['callFunction', 'callMacro', 'startTask', 'debounce'].includes(node.type) && link.toPinId.startsWith('arg_')) {
+        const child = graphs.get(String(node.properties.graphId));
+        if (child) visit(child, link.toPinId.slice(4));
+      }
+    }
+  };
+  visit(graph, id);
+  return [...targets];
 }
 export function speakerExpression(project: Project, speakerId: string | undefined, override?: VariableValue) {
   const character = effectiveCharacter(project, speakerId ?? '');
@@ -127,7 +155,7 @@ export function addPerformanceToLines(project: Project, action: StageAction, ids
   for (const node of project.nodes) if (node.kind === 'passage') for (const line of node.lines) {
     if (line.silent || (ids && !ids.has(line.id)) || (!includeNarration && !line.speakerId)) continue;
     if (line.actions.some(existing => action.kind === 'blueprint' && existing.kind === 'blueprint' ? existing.blueprintId === action.blueprintId : JSON.stringify(existing) === JSON.stringify(action))) continue;
-    line.actions.push(structuredClone(action)); count++;
+    line.actions.push(cloneData(action)); count++;
   }
   return count;
 }
@@ -151,7 +179,7 @@ export function rawSavedBlueprintAction(node: BlueprintNode): StageAction | unde
 export function updateSavedBlueprintAction(node: BlueprintNode, action: StageAction) {
   const before = rawSavedBlueprintAction(node), next = actionSchema.parse(action);
   if (!before || before.kind !== next.kind) throw new Error('不能更改已保存演出的类型。');
-  const candidate = structuredClone(node);
+  const candidate = cloneData(node);
   if (next.kind === 'visual') updateVisualNodeObject(candidate, next);
   else if (next.kind === 'audioClip' && before.kind === 'audioClip') {
     const keys = new Set([...Object.keys(before), ...Object.keys(next)]) as Set<keyof typeof next>;

@@ -1,6 +1,8 @@
+import { cloneData } from "../core/project-mutation";
 import { GraphResourceOptions } from './GraphResourceOptions';
 import { blueprintResources, projectGraphs } from '../core/project-resources';
 import { ThemeInspector } from './UiInspector';
+import type { UiInspectorPageContext } from './UiPageSettings';
 import { VisualTransitionField } from './VisualTransitionsEditor';
 
 import { applyAudioClipInputs, createAudioClip } from '../core/audio-clip';
@@ -21,6 +23,7 @@ import { ArrowDown, ArrowUp, Copy, Plus, RefreshCw, Settings2, Save, FileCode2, 
 import { connectNode, effectiveCharacter, effectiveScene, inheritanceReaches, effectDefinitionSchema, makeId, newNode, targets, type Asset, type AssetCategory, type AnimationKeyframe, type Character, type EffectDefinition, type Project, type StageAction, type StoryNode, type SceneTransition, type Scene, type Variable } from "../core/model";
 import {
   actionNames,
+  authorableActions,
   findLine,
   nodeNames,
   removeNodes,
@@ -33,6 +36,7 @@ import {
   Field,
   IconButton,
   TargetSelect,
+  ParameterKindSelect,
   ValueInput,
 } from "./components";
 
@@ -45,10 +49,18 @@ import { applyTextScript, projectToText, textCommandAction, textReference } from
 import { ParameterEditor } from "./ParameterEditor";
 import { assetCategories, assetCategoryNames, categoryAcceptsKind, categoryAssets, setAssetCategory } from '../core/asset-library';
 import { browserBridge } from './browserBridge';
-import { ActorTransitionFields } from './ActorTransitionFields';
+import { ActorTransitionFields, actorTransitionSources } from './ActorTransitionFields';
 import { actorTransitionDefaults, resolveActorTransitions, graphShowsActors } from '../core/actor-transitions';
 import { BlueprintCallFields } from './BlueprintCallFields';
+import { TextPresentationFields } from './TextPresentationEditor';
+import { speakerTextStyle } from '../core/text-presentation';
+import { lineMarks } from '../core/text-spans';
+import { TextMarkList } from './TextSpanTools';
 import { blueprintGroup } from '../core/blueprint-authoring';
+import { copyStoryModule } from '../core/story-modules';
+import { addNodeToStoryGroup } from '../core/story-groups';
+import { setStoryTransition } from '../core/flow-transitions';
+import { characterDefaultExpression, restoredCharacterDefaultExpression, characterLegacyBlueprint, characterDeletionDependents, removeUnreferencedCharacter } from '../core/character-legacy';
 
 export type ResourceSelection = {
   kind: "asset" | "character" | "variable";
@@ -62,6 +74,7 @@ export function Inspector({
   view,
   uiId,
   uiSelectionRequest,
+  uiPageContext,
   projectSettings,
   commit,
   assetUrl,
@@ -69,6 +82,7 @@ export function Inspector({
   selectResource,
   hideDialogue = false,
   selectUi,
+  onParameter,
 }: {
   project: Project;
   nodeId?: string;
@@ -77,6 +91,7 @@ export function Inspector({
   view: EditorView;
   uiId?: string;
   uiSelectionRequest?: string;
+  uiPageContext?: UiInspectorPageContext;
   projectSettings: boolean;
   commit: Commit;
   assetUrl: AssetUrl;
@@ -84,6 +99,7 @@ export function Inspector({
   selectResource: (resource?: ResourceSelection) => void;
   hideDialogue?: boolean;
   selectUi?: (id?: string) => void;
+  onParameter?: (id: string) => void;
 }) {
   const node = project.nodes.find((n) => n.id === nodeId);
   const line = hideDialogue ? undefined : findLine(project, nodeId, lineId);
@@ -189,7 +205,7 @@ export function Inspector({
             selectResource={selectResource}
           />
         ) : view === "ui" ? (
-          <ThemeInspector selectUi={selectUi} project={project} id={uiId} selectionRequest={uiSelectionRequest} commit={commit} assetUrl={assetUrl} />
+          <ThemeInspector selectUi={selectUi} project={project} id={uiId} selectionRequest={uiSelectionRequest} pageContext={uiPageContext} commit={commit} assetUrl={assetUrl} onParameter={onParameter} />
         ) : node ? (
           <>
             <Field label="名称">
@@ -261,6 +277,13 @@ export function Inspector({
                 {line.voiceId && (
                   <audio controls preload="none" src={assetUrl(line.voiceId)} />
                 )}
+                {!line.silent && <details className="ui-property-group" open={!!line.textPresentation}>
+                  <summary>文字演出</summary>
+                  <TextMarkList project={project} line={line} assetUrl={assetUrl} edit={(label, change) => commit(label, draft => { const target = findLine(draft, node.id, line.id); if (target?.id === line.id) change(target); })} />
+                  <TextPresentationFields key={project.id + '/' + node.id + '/' + line.id} project={project} look={line.textPresentation} text={line.text} marks={lineMarks(line)} voiceId={line.voiceId} assetUrl={assetUrl} commit={commit}
+                    inherited={speakerTextStyle(project, line.speakerId)} inheritedLabel={line.speakerId && project.characters.find(c => c.id === line.speakerId)?.textPresentation ? '说话角色的文字演出' : undefined}
+                    target={draft => { const target = findLine(draft, node.id, line.id); return target?.id === line.id ? target : undefined; }} />
+                </details>}
                 <div className="inspector-section-title">
                   本行演出 <span>{line.actions.length}</span>
                 </div>
@@ -346,7 +369,7 @@ export function Inspector({
                   }}
                 >
                   <option value="">添加演出动作</option>
-                  {Object.entries(actionNames).filter(([kind]) => kind !== 'characterFeature').map(([kind, name]) => (
+                  {authorableActions.map(([kind, name]) => (
                     <option
                       key={kind}
                       value={kind}
@@ -368,7 +391,7 @@ export function Inspector({
                         commit("保存为效果", changed => {
                           const source = findLine(changed, effectDraft.nodeId, effectDraft.lineId);
                           if (!source?.actions.length) return;
-                          (changed.effects ??= []).push({ id, name: effectDraft.name.trim(), commands: [], actions: structuredClone(source.actions) });
+                          (changed.effects ??= []).push({ id, name: effectDraft.name.trim(), commands: [], actions: cloneData(source.actions) });
                           if (effectDraft.replace) source.actions = [{ kind: "effect", effectId: id }];
                         });
                         setEffectDraft(undefined);
@@ -387,7 +410,7 @@ export function Inspector({
             )}
             {node.kind !== 'start' && <SceneInstanceEditor project={project} sceneId={node.sceneId} commit={commit} selectNode={selectNode} />}
             {node.kind === "jump" && (
-              <SceneTransitionEditor project={project} node={node} onChange={(transition) => editNode("场景转场", (changed) => { if (changed.kind === "jump") changed.sceneTransition = transition; })} onTarget={target => editNode("转场目标", changed => { if (changed.kind === "jump") { changed.target = target; changed.sceneTransition = { ...(changed.sceneTransition ?? { mode: 'none', duration: 0, color: '#000000' }), fromSceneId: changed.sceneId, toSceneId: project.nodes.find(item => item.id === target)?.sceneId }; } })} />
+              <SceneTransitionEditor project={project} node={node} onChange={(transition) => editNode("场景转场", (changed) => { if (changed.kind === "jump") changed.sceneTransition = transition; })} onTarget={target => editNode("转场目标", changed => { if (changed.kind === "jump") { changed.target = target; if (changed.sceneTransition) changed.sceneTransition = { ...changed.sceneTransition, fromSceneId: changed.sceneId, toSceneId: project.nodes.find(item => item.id === target)?.sceneId }; } })} />
             )}
             {node.kind === "choice" && (
               <>
@@ -410,8 +433,12 @@ export function Inspector({
                       <IconButton
                         title="删除选项"
                         onClick={() =>
-                          editNode("删除选项", (n) => {
-                            if (n.kind === "choice") n.choices.splice(i, 1);
+                          commit("删除选项", (draft) => {
+                            const n = draft.nodes.find(item => item.id === node.id);
+                            if (n?.kind === "choice") {
+                              setStoryTransition(draft, n.id, choice.id, undefined);
+                              n.choices = n.choices.filter(item => item.id !== choice.id);
+                            }
                           })
                         }
                       >
@@ -509,7 +536,7 @@ export function Inspector({
                   <input type="checkbox" checked={node.showHints} onChange={event => editNode("互动区域提示", changed => { if (changed.kind === "interaction") changed.showHints = event.target.checked; })} />
                   显示可点击区域
                 </label>
-                <NumberField label="超时秒数（0 为不限时）" value={node.timeoutSeconds} min={0} max={3600} step={0.1} onChange={value => editNode("互动超时", changed => { if (changed.kind === "interaction") changed.timeoutSeconds = value; })} />
+                <NumberField label="超时秒数（0 为不限时）" value={node.timeoutSeconds} min={0} step={0.1} onChange={value => editNode("互动超时", changed => { if (changed.kind === "interaction") changed.timeoutSeconds = value; })} />
                 <div className="inspector-section-title">互动区域 <span>{node.hotspots.length} / 64</span></div>
                 {node.hotspots.map((hotspot, index) => {
                   const editHotspot = (label: string, edit: (value: typeof hotspot) => void) => editNode(label, changed => {
@@ -522,7 +549,7 @@ export function Inspector({
                     <div className="choice-editor" key={hotspot.id}>
                       <div className="action-editor-header">
                         <strong>区域 {index + 1}</strong><div className="spacer" />
-                        <IconButton title="删除互动区域" disabled={node.hotspots.length <= 1} onClick={() => editNode("删除互动区域", changed => { if (changed.kind === "interaction") changed.hotspots = changed.hotspots.filter(item => item.id !== hotspot.id); })}><Trash2 size={14} /></IconButton>
+                        <IconButton title="删除互动区域" disabled={node.hotspots.length <= 1} onClick={() => commit("删除互动区域", draft => { const changed = draft.nodes.find(item => item.id === node.id); if (changed?.kind === "interaction") { setStoryTransition(draft, changed.id, hotspot.id, undefined); changed.hotspots = changed.hotspots.filter(item => item.id !== hotspot.id); } })}><Trash2 size={14} /></IconButton>
                       </div>
                       <Field label="区域名称"><input value={hotspot.name} onChange={event => editHotspot(`区域名称 ${hotspot.id}`, value => { value.name = event.target.value; })} /></Field>
                       <Field label="关联角色">
@@ -567,14 +594,14 @@ export function Inspector({
                       {(project.minigames ?? []).map(game => <option key={game.id} value={game.id}>{game.name}</option>)}
                     </select>
                   </Field>
-                  <p className="muted">界面由“界面 → 自定义页面”编辑，玩法由小游戏蓝图或外接 Ren'Py 脚本实现。</p>
+                  <p className="muted">旧工程兼容定义。已有逻辑可继续修改；新交互请在任意页面的事件图中使用通用蓝图和状态，无需单独的小游戏设置。</p>
                 </> : node.template === "password" ? <>
                   <Field label="正确密码"><input value={node.password} maxLength={128} onChange={event => editNode("小游戏密码", changed => { if (changed.kind === "minigame") changed.password = event.target.value; })} /></Field>
-                  <NumberField label="允许尝试次数" value={node.attempts} min={1} max={20} onChange={value => editNode("密码尝试次数", changed => { if (changed.kind === "minigame") changed.attempts = value; })} />
+                  <NumberField label="允许尝试次数" value={node.attempts} min={1} step={1} onChange={value => editNode("密码尝试次数", changed => { if (changed.kind === "minigame") changed.attempts = value; })} />
                   <label className="check-field"><input type="checkbox" checked={node.caseSensitive} onChange={event => editNode("密码大小写", changed => { if (changed.kind === "minigame") changed.caseSensitive = event.target.checked; })} />区分大小写</label>
                 </> : <>
-                  <NumberField label="目标点击次数" value={node.targetClicks} min={1} max={999} onChange={value => editNode("点击目标", changed => { if (changed.kind === "minigame") changed.targetClicks = value; })} />
-                  <NumberField label="限时秒数" value={node.timeLimit} min={1} max={600} onChange={value => editNode("点击限时", changed => { if (changed.kind === "minigame") changed.timeLimit = value; })} />
+                  <NumberField label="目标点击次数" value={node.targetClicks} min={1} step={1} onChange={value => editNode("点击目标", changed => { if (changed.kind === "minigame") changed.targetClicks = value; })} />
+                  <NumberField label="限时秒数" value={node.timeLimit} min={1} step={1} onChange={value => editNode("点击限时", changed => { if (changed.kind === "minigame") changed.timeLimit = value; })} />
                 </>}
               </>
             )}
@@ -631,6 +658,7 @@ export function Inspector({
                 </Field>
                 <Field label="值">
                   <ValueInput
+                    project={project}
                     variable={project.variables.find(
                       (v) => v.id === node.variableId,
                     )}
@@ -670,28 +698,15 @@ export function Inspector({
               <button
                 className="small-button"
                 onClick={() => {
-                  const id = makeId();
+                  const clone = copyStoryModule(node);
+                  clone.name += " 副本";
+                  clone.x += 50;
+                  clone.y += 80;
                   commit("复制节点", (p) => {
-                    const clone = structuredClone(node);
-                    clone.id = id;
-                    clone.name += " 副本";
-                    clone.x += 50;
-                    clone.y += 80;
-                    if (clone.kind === "passage")
-                      clone.lines.forEach((l) => {
-                        l.id = makeId("line");
-                      });
-                    if (clone.kind === "choice")
-                      clone.choices.forEach((c) => {
-                        c.id = makeId("option");
-                      });
-                    if (clone.kind === "interaction")
-                      clone.hotspots.forEach((hotspot) => {
-                        hotspot.id = makeId("hotspot");
-                      });
                     p.nodes.push(clone);
+                    addNodeToStoryGroup(p, clone.id, p.storyGroups?.find(group => group.nodeIds.includes(node.id))?.id);
                   });
-                  selectNode(id);
+                  selectNode(clone.id);
                 }}
               >
                 <Copy size={14} />
@@ -725,7 +740,7 @@ function SceneInstanceEditor({ project, sceneId, commit, selectNode }: { project
   const base = scene.baseSceneId ? effectiveScene(project, scene.baseSceneId) : undefined;
   const actions = effective.entryActions ?? [];
   const edit = (label: string, change: (scene: Scene) => void) => commit(label, project => { const scene = project.scenes.find(item => item.id === sceneId); if (scene) change(scene); });
-  const editActions = (change: (actions: StageAction[]) => void) => edit('场景入场演出', scene => { scene.entryActions ??= structuredClone(actions); change(scene.entryActions); });
+  const editActions = (change: (actions: StageAction[]) => void) => edit('场景入场演出', scene => { scene.entryActions ??= cloneData(actions); change(scene.entryActions); });
   return <details className="scene-instance-editor">
     <summary>场景实例 · {scene.name}</summary>
     <Field label="基础场景"><select value={scene.baseSceneId ?? ''} onChange={event => edit('场景继承', scene => { scene.baseSceneId = event.target.value || undefined; })}><option value="">无，独立场景</option>{project.scenes.filter(item => !inheritanceReaches(project.scenes, item.id, sceneId, scene => scene.baseSceneId)).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
@@ -742,27 +757,29 @@ function SceneInstanceEditor({ project, sceneId, commit, selectNode }: { project
     <div className="inspector-section-title">入场演出 <span>{actions.length} / 64</span></div>
     {scene.baseSceneId && <button className="text-button" disabled={scene.entryActions === undefined} onClick={() => edit('恢复场景演出继承', scene => { scene.entryActions = undefined; })}><RefreshCw size={14} />恢复基础演出</button>}
     {actions.map((action, index) => <div className="action-editor" key={index}><div className="action-editor-header"><strong>{actionNames[action.kind]}</strong><div className="spacer" /><IconButton title="入场动作上移" disabled={!index} onClick={() => editActions(actions => { [actions[index - 1], actions[index]] = [actions[index], actions[index - 1]]; })}><ArrowUp size={13} /></IconButton><IconButton title="入场动作下移" disabled={index === actions.length - 1} onClick={() => editActions(actions => { [actions[index + 1], actions[index]] = [actions[index], actions[index + 1]]; })}><ArrowDown size={13} /></IconButton><IconButton title="删除入场动作" onClick={() => editActions(actions => { actions.splice(index, 1); })}><Trash2 size={13} /></IconButton></div><ActionEditor project={project} action={action} onChange={next => editActions(actions => { actions[index] = next; })} /></div>)}
-    <select aria-label="添加场景入场动作" value="" disabled={actions.length >= 64} onChange={event => { const action = newAction(event.target.value as StageAction['kind'], project); if (action) editActions(actions => { actions.push(action); }); }}><option value="">添加入场动作</option>{Object.entries(actionNames).filter(([kind]) => kind !== 'characterFeature').map(([kind, name]) => <option key={kind} value={kind} disabled={!newAction(kind as StageAction['kind'], project)}>{name}</option>)}</select>
+    <select aria-label="添加场景入场动作" value="" disabled={actions.length >= 64} onChange={event => { const action = newAction(event.target.value as StageAction['kind'], project); if (action) editActions(actions => { actions.push(action); }); }}><option value="">添加入场动作</option>{authorableActions.map(([kind, name]) => <option key={kind} value={kind} disabled={!newAction(kind, project)}>{name}</option>)}</select>
     <div className="inspector-section-title">实例参数</div>
     <ParameterEditor value={scene.parameters} inherited={base?.parameters} onChange={parameters => edit('场景实例参数', scene => { scene.parameters = parameters; })} />
   </details>;
 }
 
 function SceneTransitionEditor({ project, node, onChange, onTarget }: { project: Project; node: Extract<StoryNode, { kind: "jump" }>; onChange: (transition: SceneTransition | undefined) => void; onTarget: (target: string) => void }) {
-  const transition = node.sceneTransition ?? { mode: "none", duration: 0, color: "#000000" } satisfies SceneTransition;
+  // The absent setting starts at half a second when enabled. Existing zero is
+  // authored data; switching modes, including "none", must preserve it.
+  const transition = node.sceneTransition ?? { mode: "none", duration: 0.5, color: "#000000" } satisfies SceneTransition;
   const targetNode = project.nodes.find(item => item.id === node.target);
   const setTransition = (next: SceneTransition) => onChange({ ...next, fromSceneId: node.sceneId, toSceneId: targetNode?.sceneId });
   const sceneEntry = (id: string) => project.nodes.find(item => item.sceneId === id && item.kind === 'start') ?? project.nodes.find(item => item.sceneId === id);
   return <div className="action-editor">
     <div className="inspector-section-title">场景切换</div>
     <Field label="源场景"><span>{project.scenes.find(item => item.id === node.sceneId)?.name}</span></Field>
-    <Field label="目标场景"><select value={targetNode?.sceneId ?? ''} onChange={event => { const entry = sceneEntry(event.target.value); if (entry) onTarget(entry.id); }}><option value="" disabled>选择目标场景</option>{project.scenes.map(scene => <option key={scene.id} value={scene.id} disabled={!sceneEntry(scene.id)}>{scene.name}</option>)}</select></Field>
-    <Field label="切换方式"><select value={transition.mode} onChange={event => {
+    <Field label="目标场景"><select aria-label="目标场景" value={targetNode?.sceneId ?? ''} onChange={event => { const entry = sceneEntry(event.target.value); if (entry) onTarget(entry.id); }}><option value="" disabled>选择目标场景</option>{project.scenes.map(scene => <option key={scene.id} value={scene.id} disabled={!sceneEntry(scene.id)}>{scene.name}</option>)}</select></Field>
+    <Field label="切换方式"><select aria-label="场景切换方式" value={transition.mode} onChange={event => {
       const mode = event.target.value as SceneTransition["mode"];
-      setTransition({ ...transition, mode, duration: mode === 'none' ? 0 : transition.duration || 0.5 });
+      setTransition({ ...transition, mode });
     }}><option value="none">无，直接切换</option><option value="dissolve">溶解</option><option value="fade">淡入淡出</option></select></Field>
+    <Field label="转场总时长 秒"><NumberInput aria-label="场景转场总时长 秒" type="number" min={0} step="0.1" disabled={transition.mode === 'none'} value={transition.mode === 'none' ? 0 : transition.duration} onChange={event => setTransition({ ...transition, duration: Number(event.target.value) })} /></Field>
     {transition.mode !== "none" && <>
-      <Field label="转场总时长 秒"><NumberInput type="number"   step="0.1" value={transition.duration} onChange={event => setTransition({ ...transition, duration: Number(event.target.value) })} /></Field>
       <Field label="颜色"><input type="color" value={transition.color} onChange={event => setTransition({ ...transition, color: event.target.value })} /></Field>
     </>}
     <div className="inspector-section-title">传入参数</div><ParameterEditor value={transition.parameters} onChange={parameters => setTransition({ ...transition, parameters })} />
@@ -775,7 +792,7 @@ type EffectEdit = { id: string; name: string; rows: EffectRow[]; original: strin
 const effectSignature = (name: string, rows: EffectRow[]) => JSON.stringify([name, rows.map(row => row.action ?? row.command)]);
 function effectEdit(project: Project, effect: EffectDefinition): EffectEdit {
   const rows = [
-    ...(effect.actions ?? []).map(action => ({ key: makeId("row"), action: structuredClone(action) })),
+    ...(effect.actions ?? []).map(action => ({ key: makeId("row"), action: cloneData(action) })),
     ...effect.commands.map(command => ({ key: makeId("row"), action: textCommandAction(project, command), command })),
   ];
   return { id: effect.id, name: effect.name, rows, original: effectSignature(effect.name, rows) };
@@ -880,7 +897,7 @@ export function EffectManager({ project, commit, onClose }: { project: Project; 
       <select aria-label="添加效果动作" value="" disabled={draft.rows.length >= 64} onChange={event => {
         const action = newAction(event.target.value as StageAction["kind"], choices);
         if (action) setDraft({ ...draft, rows: [...draft.rows, { key: makeId("row"), action }] });
-      }}><option value="">添加效果动作</option>{Object.entries(actionNames).filter(([kind]) => kind !== 'characterFeature').map(([kind, name]) => <option key={kind} value={kind} disabled={!newAction(kind as StageAction["kind"], choices)}>{name}</option>)}</select>
+      }}><option value="">添加效果动作</option>{authorableActions.map(([kind, name]) => <option key={kind} value={kind} disabled={!newAction(kind, choices)}>{name}</option>)}</select>
       <div className="effect-manager-references"><strong>调用位置 · {references.length}</strong>{references.length > 0 && <ul>{references.map((reference, index) => <li key={index}>{reference}</li>)}</ul>}</div>
     </> : <Empty title="尚无可复用效果" />}
     {problem && <p role="alert" className="danger-text">{problem}</p>}
@@ -902,8 +919,8 @@ export function EffectManager({ project, commit, onClose }: { project: Project; 
             return action?.kind === "effect" && action.effectId === candidate.id ? `@效果：${textReference(candidate.name, candidate.id)}` : command;
           });
           const index = changed.effects.findIndex(effect => effect.id === candidate.id);
-          if (index >= 0) changed.effects[index] = structuredClone(candidate);
-          else changed.effects.push(structuredClone(candidate));
+          if (index >= 0) changed.effects[index] = cloneData(candidate);
+          else changed.effects.push(cloneData(candidate));
         });
         onClose();
       }}><Save size={14} />保存修改</button>
@@ -949,7 +966,7 @@ function ensureExpressionOverride(character: Character, expressionId: string, ef
   if (local) return local;
   const inherited = effective?.expressions.find(expression => expression.id === expressionId);
   if (!inherited) return undefined;
-  const copy = structuredClone(inherited);
+  const copy = cloneData(inherited);
   character.expressions.push(copy);
   return copy;
 }
@@ -961,7 +978,7 @@ function ensureFeatureOverride(character: Character, featureId: string, effectiv
   if ((character.features?.length ?? 0) >= 64) return undefined;
   const inherited = effective?.features?.find(feature => feature.id === featureId);
   if (!inherited) return undefined;
-  const copy = structuredClone(inherited);
+  const copy = cloneData(inherited);
   (character.features ??= []).push(copy);
   return copy;
 }
@@ -976,7 +993,7 @@ function characterAncestors(project: Project, characterId: string) {
   return ids;
 }
 
-export type CharacterSection = 'appearance' | 'staging' | 'transitions';
+export type CharacterSection = 'appearance' | 'staging' | 'transitions' | 'text';
 
 export function ResourceInspector({
   project,
@@ -985,6 +1002,7 @@ export function ResourceInspector({
   assetUrl,
   selectResource,
   characterSection,
+  onOpenBlueprint,
 }: {
   project: Project;
   selection: ResourceSelection;
@@ -992,6 +1010,7 @@ export function ResourceInspector({
   assetUrl: AssetUrl;
   selectResource: (selection?: ResourceSelection) => void;
   characterSection?: CharacterSection;
+  onOpenBlueprint?: (id: string) => void;
 }) {
   if (selection.kind === "asset") {
     const asset = project.assets.find((a) => a.id === selection.id);
@@ -1061,6 +1080,10 @@ export function ResourceInspector({
     if (!character) return <Empty title="角色不存在" />;
     const effective = effectiveCharacter(project, character.id) ?? character;
     const base = character.baseCharacterId ? effectiveCharacter(project, character.baseCharacterId) : undefined;
+    const defaultExpression = characterDefaultExpression(project, character.id);
+    const restoredDefaultExpression = restoredCharacterDefaultExpression(project, character.id);
+    const oldBlueprint = characterLegacyBlueprint(project, character.id);
+    const deletionDependents = characterDeletionDependents(project, character.id);
     const edit = (label: string, f: (c: Character) => void) =>
       commit(label, (p) => f(p.characters.find((c) => c.id === character.id)!));
     const editExpression = (label: string, expressionId: string, f: (expression: Character["expressions"][number]) => void) =>
@@ -1069,6 +1092,25 @@ export function ResourceInspector({
     const inheritedExpressionIds = new Set((base?.expressions ?? []).map(expression => expression.id));
     return (
       <>
+        {character.baseCharacterId && <section className="character-setting-card" aria-label="旧角色关联">
+          <h3>旧工程角色关联</h3>
+          {base ? <><p className="muted">未单独调整的表情、构图、站位、角色过渡和文字演出继续沿用“{base.name}”的设置。</p><button type="button" className="small-button" onClick={() => selectResource({ kind: 'character', id: base.id })}>查看关联角色：{base.name}</button></>
+            : <p role="alert">关联角色已不存在（{character.baseCharacterId}），请撤销删除或从备份恢复该角色；这项错误会阻止生成试玩。</p>}
+        </section>}
+        {(oldBlueprint.blueprintId || character.blueprintDisabled) && <section className="character-setting-card" aria-label="旧角色显示后蓝图">
+          <h3>显示后的额外蓝图</h3>
+          <p className="muted">{oldBlueprint.enabled ? `显示这个角色后还会执行“${oldBlueprint.graph?.name ?? oldBlueprint.blueprintId}”。` : '这项额外蓝图已停用，角色立绘仍正常显示。'}</p>
+          {oldBlueprint.source && <p className="muted">绑定来源：{oldBlueprint.source.id === character.id ? '这个角色的旧设置' : `旧关联角色“${oldBlueprint.source.name}”`}。{oldBlueprint.disabledBy && `停用来源：${oldBlueprint.disabledBy.id === character.id ? '这个角色' : `旧关联角色“${oldBlueprint.disabledBy.name}”`}。`}</p>}
+          {oldBlueprint.blueprintId && !oldBlueprint.graph && <p role="alert">绑定蓝图已不存在（{oldBlueprint.blueprintId}）。</p>}
+          <div className="field-row">
+            {oldBlueprint.graph && onOpenBlueprint && <button type="button" className="small-button" onClick={() => onOpenBlueprint(oldBlueprint.graph!.id)}>查看蓝图：{oldBlueprint.graph.name}</button>}
+            {oldBlueprint.source && oldBlueprint.source.id !== character.id && <button type="button" className="small-button" onClick={() => selectResource({ kind: 'character', id: oldBlueprint.source!.id })}>查看绑定来源角色</button>}
+            {oldBlueprint.disabledBy && oldBlueprint.disabledBy.id !== character.id && oldBlueprint.disabledBy.id !== oldBlueprint.source?.id && <button type="button" className="small-button" onClick={() => selectResource({ kind: 'character', id: oldBlueprint.disabledBy!.id })}>查看停用来源角色</button>}
+            {oldBlueprint.enabled && <button type="button" className="small-button" onClick={() => edit('停用角色显示后的额外蓝图', c => { c.blueprintDisabled = true; })}>停用本角色的额外蓝图</button>}
+            {character.blueprintDisabled && <button type="button" className="small-button" onClick={() => edit('还原角色显示后的额外蓝图', c => { delete c.blueprintDisabled; })}>还原本角色的蓝图设置</button>}
+          </div>
+          {character.blueprintDisabled && <p className="muted">还原后重新采用原有绑定及上级角色的停用设置；只恢复这项额外蓝图。</p>}
+        </section>}
         {(!characterSection || characterSection === 'appearance') && <>
         <details className="character-inspector-section" open><summary>基本信息</summary>
         <div className="character-basic-fields">
@@ -1093,7 +1135,12 @@ export function ResourceInspector({
             }
           />
         </Field>
-        <Field label="默认表情" hint="显示角色时使用；单句可以覆盖。"><select aria-label="角色默认表情" value={character.defaultExpressionId ?? ''} onChange={event => edit('角色默认表情', c => { c.defaultExpressionId = event.target.value || undefined; })}><option value="">使用第一个表情</option>{effective.expressions.map(expression => <option key={expression.id} value={expression.id}>{expression.name}</option>)}</select></Field>
+        </div>
+        <Field label="默认表情" hint="显示角色时使用；单句可以覆盖。"><select aria-label="角色默认表情" value={defaultExpression.missing ? defaultExpression.configuredId : defaultExpression.expression?.id ?? ''} disabled={!effective.expressions.length} onChange={event => edit('角色默认表情', c => { c.defaultExpressionId = event.target.value; })}>{!effective.expressions.length && <option value="">没有表情</option>}{defaultExpression.missing && <option value={defaultExpression.configuredId} disabled>缺失表情：{defaultExpression.configuredId}</option>}{effective.expressions.map(expression => <option key={expression.id} value={expression.id}>{expression.name}</option>)}</select></Field>
+        <p className="muted" aria-label="默认表情来源">{defaultExpression.missing ? `原默认表情已不存在（${defaultExpression.configuredId}），请重新指定默认表情。` : defaultExpression.source ? defaultExpression.source.id === character.id ? '默认表情来自这个角色的设置。' : `默认表情沿用旧关联角色“${defaultExpression.source.name}”的设置。` : `未单独设置，实际使用${defaultExpression.expression ? `第一个表情“${defaultExpression.expression.name}”` : '无表情'}。`}</p>
+        <div className="field-row">
+          <button type="button" className="small-button" disabled={!effective.expressions.length} onClick={() => edit('明确使用第一个表情', c => { c.defaultExpressionId = effective.expressions[0].id; })}>使用第一个表情</button>
+          {character.defaultExpressionId !== undefined && <IconButton title={`还原默认表情：${restoredDefaultExpression.missing ? `缺失表情 ${restoredDefaultExpression.configuredId}` : restoredDefaultExpression.expression?.name ?? '无表情'}${restoredDefaultExpression.source && restoredDefaultExpression.source.id !== character.id ? `（沿用“${restoredDefaultExpression.source.name}”）` : '（使用第一个表情）'}`} onClick={() => edit('还原默认表情', c => { delete c.defaultExpressionId; })}><RefreshCw size={13} /></IconButton>}
         </div>
         </details>
         <details className="character-inspector-section" open><summary>立绘与表情 · {effective.expressions.length}</summary>
@@ -1116,7 +1163,7 @@ export function ResourceInspector({
                 value={expression.assetId}
                 onChange={(value) => editExpression("表情素材", expression.id, item => { item.assetId = value ?? "missing"; })}
               />
-              <small className="muted">{localExpressionIds.has(expression.id) ? inheritedExpressionIds.has(expression.id) ? "本地覆盖" : "本地" : "继承自基础角色"}</small>
+              <small className="muted">{localExpressionIds.has(expression.id) ? inheritedExpressionIds.has(expression.id) ? "本地覆盖" : "本地" : `沿用旧关联角色“${base?.name ?? character.baseCharacterId}”`}</small>
             </div>
             {localExpressionIds.has(expression.id) ? inheritedExpressionIds.has(expression.id)
               ? <IconButton title="恢复表情继承" onClick={() => edit("恢复表情继承", c => { c.expressions = c.expressions.filter(item => item.id !== expression.id); })}><RefreshCw size={13} /></IconButton>
@@ -1145,22 +1192,34 @@ export function ResourceInspector({
         <PortraitFraming project={project} character={character} assetUrl={assetUrl} onChange={value => edit("角色默认构图", c => { c.portraitFraming = value; })} />
         <CharacterPresets key={character.id} project={project} character={character} assetUrl={assetUrl} onChange={patch => edit("角色站位预设", c => { Object.assign(c, patch); })} />
         </div>}
-        {(!characterSection || characterSection === 'transitions') && <section className="character-setting-card"><ActorTransitionFields label="角色默认过渡" defaults={{ ...actorTransitionDefaults(), ...effectiveCharacter(project, character.baseCharacterId ?? "")?.actorTransitions }} value={character.actorTransitions} onChange={value => edit('角色默认过渡', c => { c.actorTransitions = value; })} /></section>}
+        {characterSection === 'text' && <section className="character-setting-card" aria-label="角色文字演出"><h3>角色文字演出</h3>
+          <p className="muted">这个角色说的每句台词默认使用这里的字体、颜色、速度和文字动画；单句可以再单独调整。</p>
+          <TextPresentationFields key={project.id + '/' + character.id} project={project} look={character.textPresentation} commit={commit} assetUrl={assetUrl} text={`${character.name}的台词会这样显示。`}
+            inherited={character.baseCharacterId ? speakerTextStyle(project, character.baseCharacterId) : undefined} inheritedLabel={base ? `旧关联角色“${base.name}”的设置` : undefined}
+            target={draft => draft.characters.find(item => item.id === character.id)} />
+        </section>}
+        {(!characterSection || characterSection === 'transitions') && <section className="character-setting-card">
+          <p className="muted">在这里设置这个角色的入场、离场和表情切换效果；单次演出可以再单独调整。</p>
+          {base?.actorTransitions && <p className="muted">旧工程保留了与“{base.name}”的过渡关联，未单独调整的项目继续跟随它；还原后也会恢复这项关联。</p>}
+          <ActorTransitionFields defaults={{ ...actorTransitionDefaults(), ...base?.actorTransitions }} value={character.actorTransitions} onChange={value => edit('角色过渡', c => { c.actorTransitions = value; })} />
+        </section>}
+        {!!deletionDependents.length && <section aria-label="角色删除依赖" className="character-setting-card">
+          <p role="status">不能删除“{character.name}”：以下{deletionDependents.length}个角色仍直接或间接关联它。删除会丢失继承设置并阻止生成试玩；请保留上级角色。</p>
+          <ul>{deletionDependents.map(dependent => <li key={dependent.id}><button type="button" className="text-button" onClick={() => selectResource({ kind: 'character', id: dependent.id })}>查看角色：{dependent.name}</button></li>)}</ul>
+        </section>}
         <div className="inspector-footer-actions">
           <button
             className="danger-text small-button"
+            disabled={!!deletionDependents.length}
             onClick={() => {
               if (
                 confirm(
                   `删除角色“${character.name}”？已有对白和演出引用需要重新指定。`,
                 )
               ) {
-                commit("删除角色", (p) => {
-                  p.characters = p.characters.filter(
-                    (c) => c.id !== character.id,
-                  );
-                });
-                selectResource(undefined);
+                let removed = false;
+                commit("删除角色", p => { removed = removeUnreferencedCharacter(p, character.id); });
+                if (removed) selectResource(undefined);
               }
             }}
           >
@@ -1188,23 +1247,11 @@ export function ResourceInspector({
         />
       </Field>
       <Field label="类型">
-        <select
-          value={variable.type}
-          onChange={(e) =>
-            edit("状态类型", (v) => {
-              v.type = e.target.value as Variable["type"];
-              v.initial =
-                v.type === "boolean" ? false : v.type === "number" ? 0 : "";
-            })
-          }
-        >
-          <option value="number">数值</option>
-          <option value="boolean">开关</option>
-          <option value="string">文字</option>
-        </select>
+        <ParameterKindSelect label="状态类型" variable={variable} onChange={(change) => edit("状态类型", change)} />
       </Field>
       <Field label="初始值">
         <ValueInput
+          project={project}
           variable={variable}
           value={variable.initial}
           onChange={(value) =>
@@ -1321,10 +1368,10 @@ export function ActionEditor({
           </select>
         </Field>
       )}
-      {(action.kind === "show" || action.kind === "hide" || action.kind === "animate") && <Field label="实例 ID"><ActorInstanceField project={project} characterId={action.characterId} value={action.instanceId} onChange={instanceId => onChange({ ...action, instanceId })} /></Field>}
+      {(action.kind === "show" || action.kind === "hide" || action.kind === "animate") && <Field label="第几个"><ActorInstanceField project={project} characterId={action.kind === 'show' ? showCharacterId : action.characterId} value={action.instanceId} onChange={instanceId => onChange({ ...action, instanceId })} /></Field>}
       {action.kind === "show" && <>
         <Field label="显示范围"><ActorLifetimeSelect value={action.lifetime} onChange={lifetime => onChange({ ...action, lifetime })} /></Field>
-        <p className="muted">{action.lifetime === 'line' ? '台词推进后自动隐藏。' : action.lifetime === 'persistent' ? '持续保留到隐藏此实例；换背景和自动发言演出不会清除它。' : '保留原指令行为，可切换为仅本句或持续显示。'} 同一 ID 更新同一实例，不同 ID 可同时显示同一角色。</p>
+        <p className="muted">{action.lifetime === 'line' ? '下一句不再显示这个角色时自动隐藏；连续显示会衔接。' : action.lifetime === 'persistent' ? '持续保留到主动隐藏；换背景和自动发言演出不会清除它。' : '保留原指令行为，可切换为仅本句或持续显示。'} 同一角色、同一编号会更新原来的角色；不同编号可同时显示，隐藏后不会重新编号。</p>
       </>}
       {action.kind === "characterFeature" && (
         <>
@@ -1394,7 +1441,7 @@ export function ActionEditor({
           </div>
         </>
       )}
-      {action.kind === "show" && <><ActorTransitionFields value={action.actorTransitions} defaults={resolveActorTransitions(project, action.characterId, { ...action, actorTransitions: undefined }) ?? actorTransitionDefaults(action.transition, action.duration)} onChange={actorTransitions => onChange({ ...action, actorTransitions })} /><label className="check-field"><input type="checkbox" checked={action.wait !== false} onChange={event => onChange({ ...action, wait: event.target.checked })} />等待过渡完成</label></>}
+      {action.kind === "show" && <><ActorTransitionFields value={action.actorTransitions} defaults={resolveActorTransitions(project, showCharacterId, { ...action, actorTransitions: undefined }) ?? actorTransitionDefaults(action.transition, action.duration)} sources={showCharacterId ? actorTransitionSources(project, showCharacterId, '指令设置') : { label: '实际角色与指令设置', unresolved: true }} onChange={actorTransitions => onChange({ ...action, actorTransitions })} /><label className="check-field"><input type="checkbox" checked={action.wait !== false} onChange={event => onChange({ ...action, wait: event.target.checked })} />等待过渡完成</label></>}
       {"transition" in action && action.kind !== "show" && (
         <Field label="转场">
           <select
@@ -1487,10 +1534,10 @@ export function ActionEditor({
             <NumberField label="纵向偏移 %" value={action.y * 100} step={.1} onChange={value => onChange({ ...action, y: value / 100 })} />
           </div>
           <div className="field-row">
-            <NumberField label="镜头缩放 %" value={action.zoom * 100} min={25} max={400} onChange={value => onChange({ ...action, zoom: value / 100 })} />
-            <NumberField label="镜头旋转 度" value={action.rotation} min={-180} max={180} onChange={value => onChange({ ...action, rotation: value })} />
+            <NumberField label="镜头缩放 %" value={action.zoom * 100} min={1} onChange={value => onChange({ ...action, zoom: value / 100 })} />
+            <NumberField label="镜头旋转 度" value={action.rotation} onChange={value => onChange({ ...action, rotation: value })} />
           </div>
-          <NumberField label="运动时长 秒" value={action.duration} min={0} max={60} step={0.1} onChange={value => onChange({ ...action, duration: value })} />
+          <NumberField label="运动时长 秒" value={action.duration} min={0} step={0.1} onChange={value => onChange({ ...action, duration: value })} />
           <EasingEditor value={action.easing} onChange={easing => onChange({ ...action, easing })} />
           <label className="check-field"><input type="checkbox" checked={action.wait} onChange={event => onChange({ ...action, wait: event.target.checked })} />完成运动后继续</label>
         </>
@@ -1498,7 +1545,7 @@ export function ActionEditor({
       {action.kind === "shake" && <><NumberField label="震动时长" value={action.duration ?? 0.6} step={0.1} onChange={duration => onChange({ ...action, duration })} /><NumberField label="震动幅度（像素）" value={action.amplitude ?? 20} onChange={amplitude => onChange({ ...action, amplitude })} /><label className="check-field"><input type="checkbox" checked={action.wait !== false} onChange={event => onChange({ ...action, wait: event.target.checked })} />等待震动完成</label><Field label="震动方向"><select value={action.direction} onChange={event => onChange({ ...action, direction: event.target.value as typeof action.direction })}><option value="horizontal">横向</option><option value="vertical">纵向</option></select></Field></>}
       {action.kind === "effect" && <Field label="效果实例"><select value={action.effectId} onChange={event => onChange({ ...action, effectId: event.target.value })}><option value="missing" disabled>选择效果实例</option>{(project.effects ?? []).map(effect => <option key={effect.id} value={effect.id}>{effect.name}</option>)}</select></Field>}
       {action.kind === 'chapter' && <ChapterFields project={project} action={action} onChange={onChange} assetUrl={assetUrl} />}
-      {action.kind === "blueprint" && <><Field label="蓝图 / 时间轴预设"><select value={action.blueprintId} onChange={event => onChange({ kind: 'blueprint', blueprintId: event.target.value })}><option value="missing" disabled>选择演出资源</option><GraphResourceOptions project={project} graphs={projectGraphs(project)} paths /></select></Field><BlueprintCallFields project={project} graph={projectGraphs(project).find(graph => graph.id === action.blueprintId)} inputs={action.inputs} onChange={inputs => onChange({ ...action, inputs })} assetUrl={assetUrl} speakerId={speakerId} />{graphShowsActors(project, action.blueprintId) && <ActorTransitionFields inheritLabel="蓝图与角色设置" label="本次角色过渡" value={action.actorTransitions} defaults={resolveActorTransitions(project, speakerId ?? '', { transition: 'dissolve' }) ?? actorTransitionDefaults()} onChange={actorTransitions => onChange({ ...action, actorTransitions })} />}</>}
+      {action.kind === "blueprint" && <><Field label="蓝图 / 时间轴预设"><select value={action.blueprintId} onChange={event => onChange({ kind: 'blueprint', blueprintId: event.target.value })}><option value="missing" disabled>选择演出资源</option><GraphResourceOptions project={project} graphs={projectGraphs(project)} paths /></select></Field><BlueprintCallFields project={project} graph={projectGraphs(project).find(graph => graph.id === action.blueprintId)} inputs={action.inputs} onChange={inputs => onChange({ ...action, inputs })} assetUrl={assetUrl} speakerId={speakerId} />{graphShowsActors(project, action.blueprintId) && <ActorTransitionFields sources={{ label: '蓝图内角色与节点设置', unresolved: true }} label="本次角色过渡" value={action.actorTransitions} onChange={actorTransitions => onChange({ ...action, actorTransitions })} />}</>}
     </>
   );
 }
@@ -1511,13 +1558,13 @@ export function KeyframeEditor({ frame, onChange }: { frame: AnimationKeyframe; 
       <NumberField label="纵向位置 %" value={frame.y * 100} step={.1} onChange={value => onChange({ ...frame, y: value / 100 })} />
     </div>
     <div className="field-row">
-      {(!axes || frame.scale !== 1) && <NumberField label="缩放 %" value={frame.scale * 100} min={5} max={400} onChange={value => onChange({ ...frame, scale: value / 100 })} />}
-      <NumberField label="旋转 度" value={frame.rotation} min={-360} max={360} onChange={value => onChange({ ...frame, rotation: value })} />
+      {(!axes || frame.scale !== 1) && <NumberField label="缩放 %" value={frame.scale * 100} min={1} onChange={value => onChange({ ...frame, scale: value / 100 })} />}
+      <NumberField label="旋转 度" value={frame.rotation} onChange={value => onChange({ ...frame, rotation: value })} />
     </div>
     {axes && <div className="field-row"><NumberField label="缩放 X %" value={(frame.scaleX ?? 1) * 100} onChange={value => onChange({ ...frame, scaleX: value / 100 })} /><NumberField label="缩放 Y %" value={(frame.scaleY ?? 1) * 100} onChange={value => onChange({ ...frame, scaleY: value / 100 })} /></div>}
     <div className="field-row">
       <NumberField label="不透明度 %" value={frame.opacity * 100} min={0} max={100} onChange={value => onChange({ ...frame, opacity: value / 100 })} />
-      <NumberField label="到达时长 秒" value={frame.duration} min={0} max={60} step={0.1} onChange={value => onChange({ ...frame, duration: value })} />
+      <NumberField label="到达时长 秒" value={frame.duration} min={0} step={0.1} onChange={value => onChange({ ...frame, duration: value })} />
     </div>
     <EasingEditor value={frame.easing} onChange={easing => onChange({ ...frame, easing })} />
   </>;
@@ -1531,15 +1578,12 @@ export function newAction(
   kind: StageAction["kind"],
   project: Project,
   hostCharacterId?: string,
-  excludeFeatureId?: string,
 ): StageAction | undefined {
   const image = categoryAssets(project, 'image', 'scene')[0];
   const music = categoryAssets(project, 'audio', 'bgm')[0];
   const sound = categoryAssets(project, 'audio', 'sound')[0];
   const characters = project.characters.map(character => effectiveCharacter(project, character.id) ?? character);
   const character = hostCharacterId ? characters.find(character => character.id === hostCharacterId) : characters.find(character => character.expressions.length);
-  const featureCharacter = hostCharacterId ? characters.find(character => character.id === hostCharacterId) : characters.find(character => character.features?.length);
-  const feature = featureCharacter?.features?.find(feature => feature.id !== excludeFeatureId);
   const expression = character?.expressions[0];
   if (kind === 'unlock') { const asset = project.assets.find(asset => asset.kind === 'image' || asset.kind === 'audio'); if (asset) return { kind, assetId: asset.id }; }
   if (kind === 'audioClip') { const asset = project.assets.find(a => a.kind === 'audio'); if (asset) return { ...createAudioClip(asset.id, asset.name, 3), sourceDuration: undefined }; }
@@ -1577,9 +1621,6 @@ export function newAction(
       { x: 0.5, y: 1, scale: 1, rotation: 0, opacity: 1, duration: 0, easing: "linear" },
       { x: 0.65, y: 1, scale: 1, rotation: 0, opacity: 1, duration: 1, easing: "ease" },
     ],
-  };
-  if (kind === "characterFeature" && featureCharacter && feature) return {
-    kind, characterId: featureCharacter.id, featureId: feature.id,
   };
   if (kind === "camera") return { kind, x: 0, y: 0, zoom: 1.1, rotation: 0, duration: 1, easing: "ease", wait: false };
   if (kind === "shake") return { kind, direction: "horizontal" };

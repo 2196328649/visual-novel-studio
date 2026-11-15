@@ -100,7 +100,9 @@ try {
   const before = await graph();
   // An offset click exercises the invisible target rather than the drawn 2 px line.
   await clickEdge('ai_bp_caution_l2', 10);
-  await expect(page.locator('.connection-details')).toContainText('变量 · 谨慎 → 比较 · 第一个值');
+  await expect(page.locator('.connection-label')).toHaveCount(0);
+  await expect(edgeLocator('ai_bp_caution_l2')).toHaveAttribute('aria-label', '连线：作品状态 · 谨慎 → 比较 · 第一个值');
+  expect(await edgeLocator('ai_bp_caution_l2').locator('.react-flow__edgeupdater').evaluateAll(elements => elements.every(element => getComputedStyle(element).opacity === '0'))).toBe(true);
   await page.keyboard.press('Delete');
   await expect.poll(async () => (await graph()).links.length).toBe(before.links.length - 1);
   expect((await graph()).nodes.map(node => node.id)).toEqual(before.nodes.map(node => node.id));
@@ -108,10 +110,10 @@ try {
   await page.getByRole('button', { name: '缩小画布', exact: true }).click();
   await page.getByRole('button', { name: '缩小画布', exact: true }).click();
   await clickEdge('ai_bp_caution_l2', 10);
-  await page.getByRole('button', { name: '断开此连线', exact: true }).click();
+  await page.keyboard.press('Delete');
   await expect.poll(async () => (await graph()).links.length).toBe(before.links.length - 1);
   await page.keyboard.press('Control+z');
-  checks.push('画布缩小时，距细线 10 px 仍可选中；Delete 和断开按钮只删除连线，Ctrl+Z 完整恢复。');
+  checks.push('画布缩小时，距细线 10 px 仍可选中；选中只高亮线条，Delete 只删除连线，Ctrl+Z 完整恢复。');
 
   await page.getByRole('button', { name: '框选全部节点', exact: true }).click();
   await clickEdge('ai_bp_caution_l1');
@@ -145,6 +147,8 @@ try {
   await page.keyboard.press('Control+Space'); await expect(page.getByRole('region', { name: '资源管理器' })).toBeVisible();
   const search = page.getByLabel('搜索资源和蓝图');
   await search.fill('方院 · 雨天');
+  // Search starts in the open folder; the scene image sits in its 场景 folder.
+  await page.getByRole('button', { name: '显示全部 1 个匹配', exact: true }).click();
   const homeCard = page.locator('[data-content-key="asset:ai_story_home"]'); await homeCard.click();
   const originalPath = (await snapshot()).assets.find(asset => asset.id === 'ai_story_home')!.path;
   await page.locator('.content-toolbar').getByRole('button', { name: '新建', exact: true }).click();
@@ -161,7 +165,7 @@ try {
   expect((await snapshot()).contentBrowser!.favorites).toContain('asset:ai_story_home');
   checks.push('资源搜索、预览、文件夹创建、移动、重命名和收藏均生效；移动与重命名保留物理路径及引用。');
 
-  await openContentFilters(page);await page.getByLabel('资源类型').selectOption('image'); await search.fill('');
+  await openContentFilters(page); await page.getByLabel('筛选图片', { exact: true }).check(); await search.fill('');
   await homeCard.click(); await page.locator('[data-content-key="asset:ai_story_boat"]').click({ modifiers: ['Control'] });
   await expect(page.locator('.content-details')).toContainText('已选 2 项');
   await page.getByLabel('移动所选资源到文件夹').selectOption(folder.id);
@@ -171,7 +175,8 @@ try {
   await homeCard.dragTo(canvas, { targetPosition: { x: 130, y: 90 } });
   await expect.poll(async () => (await graph()).nodes.some(node => node.type === 'showBackground' && node.properties.assetId === 'ai_story_home')).toBe(true);
   await page.getByRole('button', { name: '删除选中节点', exact: true }).click();
-  await page.getByRole('button', { name: '所有蓝图', exact: true }).click();
+  // Blueprints are one of the content type filters.
+  await openContentFilters(page); await page.getByLabel('筛选图片', { exact: true }).uncheck(); await page.getByLabel('筛选蓝图', { exact: true }).check(); await search.fill('');
   const macroCard = page.locator('[data-content-key="blueprint:ai_bp_end"]');
   const cardBounds = await macroCard.boundingBox(), captionBounds = await macroCard.locator('strong').boundingBox();
   expect(captionBounds!.width).toBeGreaterThan(30); expect(captionBounds!.y + captionBounds!.height).toBeLessThan(cardBounds!.y + cardBounds!.height);
@@ -188,7 +193,7 @@ try {
   const reopened = await snapshot(); expect(reopened.contentBrowser).toEqual(saved.contentBrowser);
   expect(reopened.assets.find(asset => asset.id === 'ai_story_home')?.name).toBe('方院 · 雨天（归档）');
   await openGraph('ai_bp_banquet'); await expect(page.locator('.blueprint-palette')).not.toBeVisible();
-  await page.keyboard.press('Control+Space'); await page.getByRole('button', { name: '所有蓝图', exact: true }).click();
+  await page.keyboard.press('Control+Space'); await expect(page.getByRole('region', { name: '资源管理器' })).toBeVisible();
   checks.push('保存重开保留资源文件夹、收藏、重命名和节点库折叠偏好；工程仍可编译。');
 
   for (const viewport of [{ width: 1024, height: 768 }, { width: 1280, height: 800 }, { width: 1600, height: 1000 }]) {
@@ -215,9 +220,10 @@ try {
   await page.getByRole('button', { name: '收起剧情目录', exact: true }).click(); await expect(page.locator('.story-directory')).not.toBeVisible();
   // The story graph uses the same edge interaction and controlled selection.
   await page.locator('[data-workspace-tab="flowchart"]').click();
-  const storyBefore = await snapshot(); const firstEdge = await page.getByLabel('选择剧情连线').locator('option').nth(1).getAttribute('value'); expect(firstEdge).toBeTruthy();
-  await page.getByLabel('选择剧情连线').selectOption(firstEdge!);
-  await page.getByRole('button', { name: '断开选中连线', exact: true }).last().click();
+  const storyBefore = await snapshot();
+  await page.locator('.react-flow__edge[data-id="flow:launch:next"]').click({ force: true });
+  await expect(page.locator('.story-connections, .connection-label')).toHaveCount(0);
+  await page.keyboard.press('Delete');
   expect((await snapshot()).nodes.length).toBe(storyBefore.nodes.length);
   await page.keyboard.press('Control+z'); expect((await snapshot()).nodes).toEqual(storyBefore.nodes);
   expect(errors).toEqual([]);

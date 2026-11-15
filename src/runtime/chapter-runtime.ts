@@ -1,12 +1,13 @@
 import { emissionMeshPoints } from '../core/emission-mesh';
-import { effectiveUiTheme, type Project } from '../core/model';
+import { effectiveUiComponents, type Project } from '../core/model';
+import { uiPageTheme } from '../core/ui-page-settings';
 import { chapterForceSampleRate, chapterForceSamples, chapterParticle, chapterParticleCount, chapterSource, chapterTitleRect } from '../core/chapter';
 import { pythonLiteral } from './literals';
 import { chapterRippleShader } from '../core/chapter-ripple';
 
 export function createChapterRuntime(project: Project) {
-  const theme = effectiveUiTheme(project.ui), rect = chapterTitleRect(project);
-  const component = theme.components.find(c => c.page === 'chapterTitle' && c.kind === 'chapterTitle');
+  const theme = uiPageTheme(project, 'ui:chapterTitle'), rect = chapterTitleRect(project);
+  const component = effectiveUiComponents(theme).find(c => c.page === 'chapterTitle' && c.kind === 'chapterTitle');
   const font = project.assets.find(a => a.id === (component?.style?.fontAssetId ?? theme.fontAssetId))?.path.replaceAll('\\', '/') ?? 'fonts/SourceHanSansLite.ttf';
   return `init python:
     vn_emission_mesh_points = ${pythonLiteral(Object.fromEntries(project.assets.filter(asset => asset.emissionMesh).map(asset => [asset.path.replaceAll('\\', '/'), emissionMeshPoints(asset.emissionMesh!)])))}
@@ -114,7 +115,33 @@ export function createChapterRuntime(project: Project) {
     def vn_chapter_elapsed(duration, at):
         # ATL's local st can restart when a screen rebuilds. Animation time
         # belongs to the displayed screen and keeps all its effects in sync.
+        screen = renpy.get_screen("vn_chapter_title", layer="master")
+        clock = screen.scope.get("_vn_clock") if screen else None
+        if clock and clock.get("held"):
+            if clock.get("started") is None and vn_flow_transition_render_holding():
+                return 0.0
+            if clock.get("started") is None:
+                clock["started"] = vn_stage_clock()
+            at = vn_stage_clock() - clock["started"] + vn_stage_render_delta()
         return min(duration, max(0.0, at))
+
+    def vn_chapter_clock():
+        return dict(held=vn_flow_transition_holding(), started=None)
+
+    def vn_chapter_tick(clock, duration, waiting, layer):
+        if clock.get("started") is None and vn_flow_transition_render_holding():
+            return
+        if clock.get("started") is None:
+            clock["started"] = vn_stage_clock()
+        elapsed = vn_stage_clock() - clock["started"] + vn_stage_render_delta()
+        if elapsed >= min(0.3, duration * 0.1):
+            renpy.set_screen_variable("can_dismiss", True, screen="vn_chapter_title", layer=layer)
+        if renpy.is_skipping() or elapsed >= duration:
+            if waiting:
+                renpy.end_interaction(True)
+            else:
+                renpy.hide_screen("vn_chapter_title", layer=layer)
+                renpy.restart_interaction()
 
     def vn_chapter_presence_update(duration, effect, trans, st, at):
         elapsed = vn_chapter_elapsed(duration, at)

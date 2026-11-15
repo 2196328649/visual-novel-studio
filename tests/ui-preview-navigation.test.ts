@@ -55,8 +55,10 @@ test('page timers stop on leave, restart relative to entry, and ignore duplicate
 test('save/load navigation isolates mode controls and returning from a dialogue restores the dialogue',()=>{
  const p=fixture();p.ui.components.push({...button('save_only','save',undefined),saveMode:'save',shortcut:'a'},{...button('load_only','save',undefined),saveMode:'load',shortcut:'a'},button('switch_load','save','load'),button('dialogue_settings','say','preferences'));
  const sample=(events:UiPreviewEvent[])=>previewUiLogic(p,p.ui.components.filter(c=>c.page==='main'),'ui:main',{},events);
- const saved=sample([click('save')]);assert.equal(saved.saveMode,'save');assert.equal(saved.components.find(c=>c.component.id==='save_only')?.visible,true);assert.equal(saved.components.find(c=>c.component.id==='load_only')?.visible,false);
- const loaded=sample([click('save'),click('switch_load')]);assert.equal(loaded.saveMode,'load');assert.equal(loaded.components.find(c=>c.component.id==='save_only')?.visible,false);assert.equal(loaded.components.find(c=>c.component.id==='load_only')?.visible,true);
+ const titleSave=sample([click('save')]);assert.equal(titleSave.pageId,'ui:main');assert.equal(titleSave.incomplete,true);
+  const storySample=(events:UiPreviewEvent[])=>previewUiLogic(p,p.ui.components.filter(c=>c.page==='main'),'ui:main',{},events,{host:'story'});
+  const saved=storySample([click('save')]);assert.equal(saved.saveMode,'save');assert.equal(saved.components.find(c=>c.component.id==='save_only')?.visible,true);assert.equal(saved.components.find(c=>c.component.id==='load_only')?.visible,false);
+ const loaded=storySample([click('save'),click('switch_load')]);assert.equal(loaded.saveMode,'load');assert.equal(loaded.components.find(c=>c.component.id==='save_only')?.visible,false);assert.equal(loaded.components.find(c=>c.component.id==='load_only')?.visible,true);
  assert.equal(sample([click('load'),click('return_save')]).pageId,'ui:main');
  const dialogue=previewUiLogic(p,p.ui.components.filter(c=>c.page==='say'),'ui:say',{},[click('dialogue_settings'),click('voices'),click('return_voices'),click('return_settings')]);assert.equal(dialogue.pageId,'ui:say');
  const standalone=previewUiLogic(p,p.ui.components.filter(c=>c.page==='preferences'),'ui:preferences',{},[click('return_settings')]);assert.equal(standalone.pageId,'ui:main');

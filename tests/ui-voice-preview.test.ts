@@ -81,7 +81,8 @@ test('standard confirmation works without custom item geometry and removes locke
  const pending=[all,{kind:'voiceData',data:'unlocks',ids:[]} as UiPreviewEvent,open,voice('favorite','voice_2')];
  const current=sample(pending),confirmation=current.layers.at(-1)!;
  assert.equal(confirmation.message,component.list.voiceRemoveMessage);assert.equal(confirmation.nativeConfirm,true);
- assert.equal(sample([...pending,click('yes')]).voice.favorites.length,13);
+ assert.equal(sample([...pending,click('yes')]).voice.favorites.length,12); // Native layout retains authored confirmation controls.
+ assert.equal(sample([...pending,click('yes'),{kind:'confirm',requestId:confirmation.instance,value:true}]).voice.favorites.length,12);
  const accepted=sample([...pending,{kind:'confirm',requestId:confirmation.instance,value:true}]);assert.equal(accepted.voice.favorites.includes('voice_2'),false);assert.equal(accepted.voice.favorites.length,12);assert.equal(accepted.incomplete,false);
  // A test-data change while the dialog is open must not toggle/re-add its old target.
  const gone=sample([...pending,{kind:'voiceData',data:'favorites',ids:['voice_0']},{kind:'confirm',requestId:confirmation.instance,value:true}]);assert.deepEqual(gone.voice.favorites,['voice_0']);

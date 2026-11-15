@@ -38,7 +38,7 @@ try {
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1500, 960));
   await expect(page.locator('.project-title strong')).toHaveText(project.name, { timeout: 45000 });
   await page.locator('[data-workspace-tab="ui"]').click();
-  await page.getByLabel('设计页面', { exact: true }).selectOption('custom'); await page.getByLabel('选择自定义页面', { exact: true }).selectOption(id);
+  await page.getByLabel('设计页面', { exact: true }).selectOption(id);
   const zoom = page.getByLabel('画面缩放比例', { exact: true });
   phase = 'zoom';
   await zoom.selectOption('50'); await expect.poll(async () => (await page!.locator('.ui-canvas').boundingBox())!.width).toBeCloseTo(project.width * .5, -1);

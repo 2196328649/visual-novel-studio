@@ -3,15 +3,25 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { expect, type ElectronApplication, type Page } from '@playwright/test';
 import { createServer } from 'vite';
-import { launchDesktopFixture, installedExecutable } from './lib/desktop-fixture';
+import { launchDesktopFixture } from './lib/desktop-fixture';
+import { openUiGlobalSettings } from './lib/ui-design-controls';
+import { cleanVerificationDirectories } from './lib/verification-cleanup';
+import { loadProject } from '../src/desktop/project-store';
 
+if (process.env.VNS_INSTALLED_EXE) throw new Error('Use only the isolated development editor.');
 const root = path.resolve('.'), output = path.join(root, 'artifacts/chapter-framing', new Date().toISOString().replaceAll(':', '-'));
 const directory = path.join(output, 'project'), projectFile = path.join(directory, 'project.vns.json');
-await fs.cp(installedExecutable ? path.join(path.dirname(installedExecutable), 'resources/resources/templates/aihong') : path.join(root, 'resources/templates/aihong'), directory, { recursive: true });
+await fs.cp(path.join(root, 'resources/templates/aihong'), directory, { recursive: true });
 const originalProject = JSON.parse(await fs.readFile(projectFile, 'utf8'));
 const originalMesh = originalProject.assets.find((asset: { id: string }) => asset.id === 'ai_presentation_title_one').emissionMesh;
 assert.equal(originalMesh.vertices.length, 172);
 assert.equal(originalMesh.triangles.length, 161);
+// The current template uses authored image controls. Give this isolated copy a
+// legacy page backdrop so the global framing controls have a real target.
+const background = originalProject.ui.components.find((component: { page: string; kind: string }) => component.page === 'chapterTitle' && component.kind === 'image');
+assert.ok(background?.assetId);
+originalProject.ui.pages.chapterTitle.backgroundId = background.assetId;
+await fs.writeFile(projectFile, JSON.stringify(originalProject));
 const server = await createServer({ root, server: { host: '127.0.0.1', port: 0, watch: { ignored: ['**/artifacts/**', '**/resources/**'] } } });
 await server.listen();
 let app: ElectronApplication | undefined, page: Page | undefined;
@@ -24,10 +34,10 @@ const launch = async () => {
     if (secondary) window.setPosition(secondary.workArea.x, secondary.workArea.y);
     window.setContentSize(1520, 980);
   });
-  await page.locator('.view-tabs').getByRole('button', { name: '界面', exact: true }).click();
-  await page.locator('.ui-toolbar').getByRole('button', { name: '章节标题', exact: true }).click();
-  await page.getByRole('tab', { name: '游戏设置', exact: true }).click();
-  const settings = page.locator('details.ui-property-group').filter({ has: page.locator('summary').filter({ hasText: /^章节进场$/ }) });
+  await page.locator('[data-workspace-tab="ui"]').click();
+  await page.getByLabel('设计页面', { exact: true }).selectOption('chapterTitle');
+  const dialog = await openUiGlobalSettings(page);
+  const settings = dialog.locator('details.ui-inspector-group').filter({ has: page.locator(':scope > summary .ui-group-title', { hasText: /^章节进场$/ }) });
   await settings.locator(':scope > summary').click();
   await settings.locator('.chapter-composition > summary').click();
 };
@@ -40,18 +50,23 @@ try {
   await page!.getByLabel('背景横向偏移 %', { exact: true }).fill('20');
   await page!.getByLabel('背景纵向偏移 %', { exact: true }).fill('-5');
   await expect(page!.locator('[data-chapter-background-offset]').first()).toHaveAttribute('style', /translate\(20%, -5%\)/);
-  await page!.getByRole('button', { name: '保存工程', exact: true }).click();
+  await page!.getByRole('dialog', { name: '作品设置', exact: true }).getByRole('button', { name: '完成', exact: true }).click();
+  await page!.getByRole('button', { name: '保存界面', exact: true }).click();
+  await expect(page!.locator('.ui-save-status')).toHaveText('已保存', { timeout: 60000 });
   await expect(page!.locator('.dirty-dot')).toHaveCount(0);
   const saved = JSON.parse(await fs.readFile(projectFile, 'utf8'));
   assert.equal(saved.ui.chapterTransition.backgroundOffsetX, .2); assert.equal(saved.ui.chapterTransition.backgroundOffsetY, -.05);
   assert.equal(saved.ui.chapterTransition.particleColor, '#d96231');
   assert.deepEqual(saved.assets.find((asset: { id: string }) => asset.id === 'ai_presentation_title_one').emissionMesh, originalMesh);
   await app!.close(); app = undefined;
+  const reopened = await loadProject(projectFile);
+  assert.equal(reopened.project.ui.chapterTransition?.backgroundOffsetX, .2, 'A stale recovery snapshot must not supersede the completed save.');
   await launch();
   await expect(page!.getByLabel('背景横向偏移 %', { exact: true })).toHaveValue('20');
   await expect(page!.getByLabel('背景纵向偏移 %', { exact: true })).toHaveValue('-5');
   await expect(page!.getByLabel('章节粒子颜色', { exact: true })).toHaveValue('#d96231');
   await page!.getByRole('checkbox', { name: '笔触消散时背景轻微波动', exact: true }).uncheck();
+  await page!.getByRole('dialog', { name: '作品设置', exact: true }).getByRole('button', { name: '完成', exact: true }).click();
   await expect(page!.locator('.chapter-ripple-scene')).toHaveCount(0);
   await expect(page!.locator('[data-chapter-background-offset]').first()).toHaveAttribute('style', /translate\(20%, -5%\)/);
   await page!.locator('.ui-canvas').screenshot({ path: path.join(output, '02-reopened-no-ripple.png') });
@@ -61,4 +76,4 @@ try {
   await page?.screenshot({ path: path.join(output, 'failure.png') }).catch(() => undefined);
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'failed', error: String(error), errors }, null, 2));
   throw error;
-} finally { await app?.close(); await server.close(); console.log(output); }
+} finally { await app?.close(); await server.close(); const cleanup = await cleanVerificationDirectories(output, ['project', 'profile']); assert.deepEqual(cleanup.errors, []); console.log(output); }

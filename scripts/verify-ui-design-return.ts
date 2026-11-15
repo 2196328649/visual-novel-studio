@@ -60,7 +60,7 @@ try {
   await mode('事件图').click(); await editor.getByLabel('事件图页面').selectOption('ui:main');
   await editor.locator('[data-workspace-tab="assets"]').click(); await expect.poll(() => app.windows().length).toBe(1); await editor.locator('[data-workspace-tab="ui"]').click(); await mode('设计').click(); await visible(['image', 'title', 'button', 'progress']);
   await editor.locator('[data-hierarchy-id="title"]').click(); await editor.getByLabel('文字', { exact: true }).fill('往返后保存'); await editor.getByRole('button', { name: '保存界面', exact: true }).click();
-  const saved = JSON.parse(await fs.readFile(projectFile, 'utf8')); assert.equal(saved.ui.components.find((c: UiComponent) => c.id === 'title').text, '往返后保存'); assert.deepEqual(saved.assets, project.assets);
+await expect(editor.locator('.ui-save-status')).toHaveText('已保存');  const saved = JSON.parse(await fs.readFile(projectFile, 'utf8')); assert.equal(saved.ui.components.find((c: UiComponent) => c.id === 'title').text, '往返后保存'); assert.deepEqual(saved.assets, project.assets);
   await editor.reload(); await expect(editor.locator('.project-title strong')).toHaveText(project.name, { timeout: 45000 }); await editor.locator('[data-workspace-tab="ui"]').click(); await mode('事件图').click(); await mode('设计').click(); await visible(['image', 'title', 'button', 'progress']);
   await expect(editor.locator('[data-component-id="title"]')).toHaveText('往返后保存'); assert.deepEqual(errors, []);
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', compiledBuild: true, before, after: await measure(), checks: ['普通与多次设计/事件图往返', '实际图片绘制与控件尺寸比例', '窄窗口与恢复宽窗口', '草稿修改/撤销/显式保存重开', '独立预览打开时往返', '设置页与自定义页往返', '首次从事件图返回设计', '工程与素材保留'], errors }, null, 2));

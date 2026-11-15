@@ -1,3 +1,4 @@
+import { writeSpineBundleFixture } from '../scripts/lib/spine-bundle-fixture';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
@@ -123,8 +124,7 @@ test('Android environment checks are read only and distinguish missing SDK, RAPT
   project.assets.push({ id: 'spine', name: '动画', kind: 'spine', path: 'assets/spine.json' });
   check = await checkExportEnvironment(project, { sdkRoot: sdk, spineRuntimeDir: spine }, async () => 'javac 21.0.8');
   assert.equal(check.checks.find(c => c.id === 'spine')!.status, 'missing');
-  for (const abi of androidAbis) await file(spine, `android/${abi}/libvns_spine.so`);
-  await file(spine, 'vns_spine.dll'); await file(spine, 'vns_spine.py');
+  await writeSpineBundleFixture(spine);
   assert.equal((await checkExportEnvironment(project, { sdkRoot: sdk, spineRuntimeDir: spine }, async () => 'javac 21.0.8')).ready, true);
   await file(sdk, 'rapt/hash.txt', 'wrong-version');
   assert.equal((await checkExportEnvironment(project, { sdkRoot: sdk, spineRuntimeDir: spine }, async () => 'javac 21.0.8')).checks.find(c => c.id === 'rapt')!.status, 'missing');
@@ -155,7 +155,7 @@ test('Android preparation imports existing Ren’Py signing and places native li
   project.exportSettings.platform = 'android'; project.exportSettings.android.packageName = 'com.example.story';
   project.assets.push({ id: 'spine', name: '动画', kind: 'spine', path: 'assets/spine.json' });
   await file(projectDir, 'android.keystore', 'original apk identity'); await file(projectDir, 'bundle.keystore', 'original bundle identity');
-  for (const abi of androidAbis) await file(spineRuntimeDir, `android/${abi}/libvns_spine.so`, abi);
+  await writeSpineBundleFixture(spineRuntimeDir);
   await prepareAndroidExport(project, { projectDir, buildDir, sdkRoot, spineRuntimeDir }, async () => { assert.fail('existing signing must not be regenerated'); });
   assert.equal(await fs.readFile(path.join(buildDir, 'bundle.keystore'), 'utf8'), 'original bundle identity');
   assert.equal(JSON.parse(await fs.readFile(path.join(buildDir, 'android.json'), 'utf8')).package, 'com.example.story');

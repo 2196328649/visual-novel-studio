@@ -5,6 +5,7 @@ import { effectiveCharacter, makeId, targets, type InteractionHotspot, type Proj
 import type { Commit } from "./editor";
 import { finishPreviewLine, linePreviewSnapshot, type PreviewCamera } from '../core/line-preview';
 import { IconButton } from "./components";
+import { setStoryTransition } from '../core/flow-transitions';
 
 export type AssetUrl = (id?: string) => string | undefined;
 function precedingPassage(project: Project, nodeId: string) {
@@ -47,7 +48,7 @@ export function InteractionStage({ project, node, commit, assetUrl, editable = t
         commit("添加互动区域", changed => { const target = changed.nodes.find(item => item.id === node.id); if (target?.kind === "interaction") target.hotspots.push({ id, name: `互动区域 ${target.hotspots.length + 1}`, x: 0.35, y: 0.3, width: 0.3, height: 0.4 }); });
         setSelectedId(id);
       }}><Plus size={16} /></IconButton>
-      <IconButton title="删除当前互动区域" disabled={!selected || node.hotspots.length <= 1} onClick={() => commit("删除互动区域", changed => { const target = changed.nodes.find(item => item.id === node.id); if (target?.kind === "interaction") target.hotspots = target.hotspots.filter(hotspot => hotspot.id !== selected?.id); })}><Trash2 size={16} /></IconButton>
+      <IconButton title="删除当前互动区域" disabled={!selected || node.hotspots.length <= 1} onClick={() => commit("删除互动区域", changed => { const target = changed.nodes.find(item => item.id === node.id); if (target?.kind === "interaction" && selected) { setStoryTransition(changed, target.id, selected.id, undefined); target.hotspots = target.hotspots.filter(hotspot => hotspot.id !== selected.id); } })}><Trash2 size={16} /></IconButton>
       <div className="spacer" /><span className="resolution">{project.width} × {project.height}</span>
     </div>}
     <div className="stage-scroll">

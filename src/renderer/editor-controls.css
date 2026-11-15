@@ -36,9 +36,9 @@
 #root .field-toggle .field-control { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; flex: 1; min-height: 36px; cursor: pointer; }
 #root .field-toggle .field-label { margin: 0; color: var(--editor-text, #e5e9eb); }
 #root .field-toggle input[type=checkbox] { appearance: none; position: relative; flex: 0 0 34px; width: 34px; height: 20px; min-height: 20px; padding: 0; margin: 0; border: 1px solid var(--editor-border, #526069); border-radius: 12px; background: var(--editor-raised, #3a454c); cursor: pointer; }
-#root .field-toggle input[type=checkbox]::after { content: ''; position: absolute; width: 14px; height: 14px; left: 2px; top: 2px; background: #eef2f3; border-radius: 50%; transition: transform .12s; }
+#root .field-toggle input[type=checkbox]::after { content: ''; position: absolute; width: 14px; height: 14px; left: 2px; top: 2px; background: var(--editor-raised-text, #eef2f3); border-radius: 50%; transition: transform .12s; }
 #root .field-toggle input[type=checkbox]:checked { background: var(--editor-accent, #428b7d); border-color: var(--editor-accent, #428b7d); }
-#root .field-toggle input[type=checkbox]:checked::after { transform: translateX(14px); }
+#root .field-toggle input[type=checkbox]:checked::after { background: var(--editor-on-accent, #ffffff); transform: translateX(14px); }
 #root .field-toggle input[type=checkbox]:focus-visible { outline: 2px solid var(--editor-accent, #70bbae); outline-offset: 3px; }
 #root .field-toggle input[type=checkbox]:disabled { opacity: .45; cursor: default; }
 .character-staging-sections { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); align-items: start; }

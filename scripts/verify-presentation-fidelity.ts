@@ -22,7 +22,9 @@ try {
   // Hold the noise field still for the uniform-fade measurement. A separate
   // full-screen fixture below checks the shader at two actual animation times.
   p.ui.chapterTransition = { ...p.ui.chapterTransition, rippleSpeed: 0 };
-  const chapter = p.nodes.find(n => n.kind === 'chapterTitle')!; assert.ok(chapter.kind === 'chapterTitle');
+  // The template's chapter cards are its chapter-title page and presentation images, not story nodes.
+  const chapterCard = (title: string, backgroundId: string, titleImageId: string) => { for (const id of [backgroundId, titleImageId]) assert.ok(p.assets.some(a => a.id === id), id); return { title, backgroundId, titleImageId }; };
+  const chapter = chapterCard(p.chapters[0].name, 'ai_presentation_chapter_one', 'ai_presentation_title_one');
   const opening = p.nodes.find(n => n.id === 'opening')!; assert.ok(opening.kind === 'passage');
   const titleImage = p.assets.find(a => a.id === chapter.titleImageId)!.path;
   const background = p.assets.find(a => a.id === chapter.backgroundId)!.path;
@@ -94,6 +96,11 @@ try {
         vn_bp_show(character, expression, 0.5, 1, 1, 10, True)
         renpy.restart_interaction()
 
+# In play the chapter page fades in over the cleared stage, not over the bright title menu.
+screen vn_test_black_stage():
+    zorder 70
+    add Solid("#000000")
+
 screen vn_test_ripple(time, strength):
     zorder 999
     modal True
@@ -139,11 +146,13 @@ testcase geometry_and_opening:
     pause 0.6
     assert eval not preferences.fullscreen
     assert eval abs(vn_test_client()[1] - vn_test_client()[0] * ${p.height / p.width}) <= 1
+    run Show("vn_test_black_stage")
     $ vn_test_start = vn_test_time.monotonic()
     run Show("vn_chapter_title", title=${JSON.stringify(chapter.title)}, title_image=${JSON.stringify(titleImage)}, background=${JSON.stringify(background)}, effect="ink", duration=8.0, _vn_wait=False)
 ${captures.map((t, i) => `    pause until eval vn_test_time.monotonic() - vn_test_start >= ${t * 8}
     screenshot "opening-${i}-${t}.png"`).join('\n')}
     pause until not screen "vn_chapter_title"
+    run Hide("vn_test_black_stage")
     assert screen "main_menu"
     assert eval len(vn_chapter_particles_for(${JSON.stringify(titleImage)}, ${JSON.stringify(chapter.title)})) == 200
     assert eval all(vn_chapter_particle_frame(p, (p["delay"] + 1.0) / 7.0)[0] < 0 and vn_chapter_particle_frame(p, (p["delay"] + 1.0) / 7.0)[1] > 0 for p in vn_chapter_particles_for(${JSON.stringify(titleImage)}, ${JSON.stringify(chapter.title)}))
@@ -159,7 +168,8 @@ ${p.characters.filter(c => c.expressions.length).map(c => `    run Function(vn_t
     run Jump("vn_node_ai_ending_shelter")
     pause until eval vn_performance_active and renpy.showing("vn_visual_ending_title")
     pause 0.8
-    assert not screen "say"
+    # The say screen stays as an empty hidden shell for dialogue bookkeeping; no frame is drawn.
+    assert eval renpy.get_widget("say", "window") is None
     screenshot "ending-black-caption.png"
     pause until screen "main_menu"
     screenshot "ending-return-title.png"

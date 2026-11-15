@@ -46,7 +46,7 @@ try{
  await audio.click({position:{x:14,y:14}});await expect.poll(()=>audio.evaluate(a=>(a as HTMLAudioElement).paused)).toBe(true);
  await openStoryMode(page,'text');const input=page.getByLabel('中文文本剧本',{exact:true});await input.focus();await input.press('Control+End');await input.press('Enter');await input.press('/');
  const commands=page.getByRole('dialog',{name:'中文指令面板',exact:true});await expect(commands.getByText('自动显示发言角色',{exact:true})).toHaveCount(0);
- await commands.getByText('播放台词演出',{exact:true}).click();assert.ok((await input.inputValue()).includes('@播放台词演出'));
+ await commands.getByText('开始台词演出',{exact:true}).click();assert.ok((await input.inputValue()).includes('@开始台词演出'));
  assert.deepEqual(errors,[]);await fs.writeFile(path.join(output,'report.json'),JSON.stringify({status:'passed',control,music,plays,errors},null,2));console.log(output);
 }catch(error){await page.screenshot({path:path.join(output,'failure.png')});throw error;}
 finally{await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().forEach(w=>w.destroy())).catch(()=>undefined);await app.close();}

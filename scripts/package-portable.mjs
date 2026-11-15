@@ -8,7 +8,13 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { version } = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
 const release = path.join(root, 'release'), input = path.join(release, 'win-unpacked');
 const folder = `Visual-Novel-Studio-${version}`, filename = `${folder}-portable-win-x64.zip`;
-const stage = path.join(root, 'artifacts/portable-package', `${version}-${randomUUID().slice(0, 8)}`);
+const stagingRoot = process.env.VNS_PORTABLE_STAGE_ROOT
+  ? path.resolve(process.env.VNS_PORTABLE_STAGE_ROOT) : path.join(root, 'artifacts/portable-package');
+const stagingRelative = path.relative(path.join(root, 'artifacts'), stagingRoot);
+if (stagingRelative === '..' || stagingRelative.startsWith('..' + path.sep) || path.isAbsolute(stagingRelative)) {
+  throw new Error('Portable staging must stay within this workspace’s artifacts directory.');
+}
+const stage = path.join(stagingRoot, `${version}-${randomUUID().slice(0, 8)}`);
 const sha256 = async file => {
   const hash = createHash('sha256');
   for await (const data of createReadStream(file)) hash.update(data);

@@ -2,14 +2,15 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { projectSchema } from '../src/core/model';
+import { projectGraphs } from '../src/core/project-resources';
 import { buildProject, runRenpy } from '../src/runtime/service';
 
 const root = path.resolve('.'), source = process.env.VNS_UI_EVENT_PROJECT;
 if (!source) throw Error('Set VNS_UI_EVENT_PROJECT to the desktop-authored timeline fixture.');
 const project = projectSchema.parse(JSON.parse(await fs.readFile(source, 'utf8')));
-const owner = project.blueprints.find(g => g.uiPageId === 'ui:main')!;
+const owner = projectGraphs(project).find(g => g.uiPageId === 'ui:main')!;
 const call = owner.nodes.find(n => n.type === 'callFunction')!;
-const timeline = project.blueprints.find(g => g.id === call.properties.graphId)!;
+const timeline = projectGraphs(project).find(g => g.id === call.properties.graphId)!;
 const nested = timeline.nodes.find(n => n.type === 'callFunction')!;
 assert.ok(timeline.timelineComponent && nested);
 const output = path.join(root, 'artifacts/ui-event-timeline-runtime', new Date().toISOString().replaceAll(':', '-'));

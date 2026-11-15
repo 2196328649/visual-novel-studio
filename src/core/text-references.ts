@@ -1,6 +1,7 @@
 import { commandSignature } from './command-parameters';
 import { argumentTokens, bindArguments } from './text-arguments';
 import { textHeading, type TextHeadingKind } from './text-headings';
+import { parameterOperandRanges } from './parameter-references';
 
 export interface TextReferenceSpan {
   from: number;
@@ -38,7 +39,10 @@ export function textReferenceSpans(line: string): TextReferenceSpan[] {
   }
   const direct = line.match(/^(\s*[@／/]\s*)([^:：]*【[a-z][a-z0-9_]{0,63}】)\s*(?:[:：]|$)/);
   if (direct) field(direct[1].length, direct[1].length + direct[2].length);
-  const command = line.match(/^(\s*[@／/]\s*([^:：]+?)\s*[:：]\s*)(.*)$/) ?? line.match(/^(\s*[@／/]\s*([^\s:：]+)\s+)(.*)$/);
+  // Like commandParts, a bare stable reference includes the full graph name.
+  // Splitting it again at a space would record the same ID twice and replace
+  // only the name's suffix when refreshing references after a visible edit.
+  const command = line.match(/^(\s*[@／/]\s*([^:：]+?)\s*[:：]\s*)(.*)$/) ?? (direct ? null : line.match(/^(\s*[@／/]\s*([^\s:：]+)\s+)(.*)$/));
   if (!command) return spans;
   const name = command[2].toLowerCase(), start = command[1].length, value = command[3];
   if (name === '动作') {
@@ -59,16 +63,15 @@ export function textReferenceSpans(line: string): TextReferenceSpan[] {
   } else if (name === '选项') {
     const arrow = value.match(/->|→|前往/);
     if (arrow?.index !== undefined) field(start + arrow.index + arrow[0].length, line.length);
-  } else if (['设置', '变量', 'set', '如果', '条件'].includes(name)) {
-    const comparison = value.match(name === '如果' || name === '条件' ? /^(\s*)(.+?)\s*(?:>=|<=|==|!=|>|<|=)/ : /^(\s*如果\s+)(.+?)\s*(?:>=|<=|==|!=|>|<|=)/);
-    if (comparison) field(start + comparison[1].length, start + comparison[1].length + comparison[2].length);
+  } else if (['设置', '变量', '如果', '条件'].includes(name)) {
+    for (const operand of parameterOperandRanges(line)) if (operand.format === 'reference') field(operand.from, operand.to);
   } else if (definitions.has(name)) field(start, line.length, true);
   else {
     const signature = commandSignature(name);
     if (signature) {
       const referenceKinds = new Set(['character', 'expression', 'feature', 'target', 'node', 'effect', 'blueprint', 'sceneAsset', 'image', 'asset', 'bgm', 'sound', 'voice']);
       for (const { token, index } of bindArguments(value, signature.parameters, true).bindings) {
-        if (!referenceKinds.has(signature.parameters[index]?.kind)) continue;
+        if (!referenceKinds.has(signature.parameters[index]?.kind) && !(signature.name === '连线过渡' && signature.parameters[index]?.name === '出口')) continue;
         const loop = signature.name === '背景音乐' && index === 0 ? token.raw.match(/\s+(?:循环|不循环)\s*$/) : undefined;
         field(start + token.valueStart, loop?.index === undefined ? start + token.end : start + token.valueStart + loop.index);
       }

@@ -28,7 +28,7 @@ delete env.ELECTRON_RUN_AS_NODE; delete env.VNS_TEST_ROOT;
 let app: ElectronApplication | undefined, page: Page | undefined;
 const checks: string[] = [], errors: string[] = [];
 async function launch() {
-  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env });
+  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env: { ...env, VNS_TEST_DISCARD_ON_CLOSE: '1' } });
   // The real UI and IPC are exercised, but no build process can run in this test.
   await app.evaluate(({ ipcMain }) => {
     (globalThis as any).__exportRequests = [];

@@ -39,7 +39,7 @@ test('unnamed declarations, reordered parameters and transition defaults are acc
 });
 
 test('inline errors identify the declaration and do not partially consume its actions', () => {
-  for (const value of ['允许点击跳过=可能', '结束后=暂停', '结束转场=推拉', '淡出=-1', '停留=61', '淡入=很久', '颜色=red', '未知=1', '允许点击跳过=是，允许点击跳过=否']) {
+  for (const value of ['允许点击跳过=可能', '结束后=暂停', '结束转场=推拉', '淡出=-1', '停留=-0.5', '淡入=很久', '颜色=red', '未知=1', '允许点击跳过=是，允许点击跳过=否']) {
     const parsed = applyTextScript(createProject(), '@等待：1\n@独立演出：开场，' + value + '\n旁白：保留');
     assert.deepEqual(parsed.issues.filter(i => i.severity === 'error').map(i => i.sourceLine), [2], value);
     const dialogue = parsed.project.nodes.find(n => n.kind === 'passage' && n.lines.some(l => l.text === '保留'))!;

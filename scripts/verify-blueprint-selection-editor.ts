@@ -1,14 +1,17 @@
 import { _electron as electron, expect, type ElectronApplication, type Page } from '@playwright/test';
 import { createServer } from 'vite';
 import { createRequire } from 'node:module';
+import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { createProject, type Project } from '../src/core/model';
 import { blueprintNodeDefaults, connectBlueprintPins, createBlueprintGraph } from '../src/core/blueprint';
+import { storyContentId, storyScopeKey } from '../src/core/story-graph';
+import { storySceneNodeId } from '../src/core/story-groups';
 import { saveProject } from '../src/desktop/project-store';
 
 const root = path.resolve('.'), require = createRequire(import.meta.url);
-const output = path.join(root, 'artifacts/blueprint-selection-editor', new Date().toISOString().replaceAll(':', '-'));
+const output = path.resolve(process.env.VNS_ARTIFACT_ROOT ?? 'artifacts/blueprint-selection-editor', 'selection-' + new Date().toISOString().replaceAll(':', '-') + '-' + randomUUID().slice(0, 8));
 const projectFile = path.join(output, 'project/project.vns.json');
 const project = createProject('蓝图框选与参数验收'), graph = createBlueprintGraph('function', '框选测试'), other = createBlueprintGraph('function', '另一张图');
 graph.nodes = [];
@@ -37,7 +40,7 @@ const node = (id: string) => page!.locator(`.react-flow__node[data-id="${id}"]`)
 const edge = (id: string) => page!.locator(`.react-flow__edge[data-id="${id}"]`);
 const record = (message: string) => { checks.push(message); console.log(`PASS ${checks.length}: ${message}`); };
 const launch = async () => {
-  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env, timeout: 60000 });
+  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env: { ...env, VNS_TEST_DISCARD_ON_CLOSE: '1' }, timeout: 60000 });
   page = await app.firstWindow(); page.setDefaultTimeout(10000); page.on('pageerror', error => errors.push(error.message));
   await expect(page.locator('.project-title strong')).toHaveText(project.name);
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1700, 1100));
@@ -46,14 +49,30 @@ const save = async () => { await page!.getByRole('button', { name: '保存工程
 const undo = () => page!.getByRole('button', { name: '撤销', exact: true }).click();
 const redo = () => page!.getByRole('button', { name: '重做', exact: true }).click();
 const savedGraph = (saved: Project) => saved.blueprints.find(item => item.id === graph.id)!;
-const clear = async () => { await page!.locator('.blueprint-workspace .workspace-toolbar').click({ position: { x: 80, y: 20 } }); await page!.keyboard.press('Escape'); await expect(page!.locator('.react-flow__node.selected')).toHaveCount(0); await expect(page!.locator('.react-flow__edge.selected')).toHaveCount(0); };
+// Read hit testing to find real pane space outside nodes, wires and the multi-selection overlay.
+const clear = async () => {
+  let point: Point | undefined;
+  await expect.poll(async () => {
+    point = await page!.evaluate(() => {
+      const pane = document.querySelector('.flow-container .react-flow__pane'); if (!pane) return undefined;
+      const bounds = pane.getBoundingClientRect(), left = Math.max(0, bounds.left) + 12, top = Math.max(0, bounds.top) + 12;
+      const right = Math.min(innerWidth, bounds.right) - 12, bottom = Math.min(innerHeight, bounds.bottom) - 12;
+      for (let y = top; y < bottom; y += 24) for (let x = left; x < right; x += 24) if (document.elementFromPoint(x, y) === pane) return { x, y };
+      return undefined;
+    });
+    return !!point;
+  }, { message: 'Clearing selection requires an unobstructed canvas pane point.' }).toBe(true);
+  expect(await page!.evaluate(at => document.elementFromPoint(at.x, at.y)?.classList.contains('react-flow__pane'), point!)).toBe(true);
+  await page!.mouse.click(point!.x, point!.y);
+  await expect(page!.locator('.react-flow__node.selected')).toHaveCount(0); await expect(page!.locator('.react-flow__edge.selected')).toHaveCount(0);
+};
 const fit = async (story = false) => {
   if (story) await page!.locator('.react-flow__controls-fitview').click(); else await page!.getByRole('button', { name: '框选全部节点', exact: true }).click();
   await page!.waitForTimeout(260);
 };
 const openGraph = async (id = graph.id) => {
   await page!.locator('[data-workspace-tab="blueprint"]').click();
-  await page!.getByLabel('演出目标', { exact: true }).selectOption('graph:' + id); await fit();
+  await page!.getByLabel('蓝图资源', { exact: true }).selectOption('graph:' + id); await fit();
 };
 const marquee = async (from: Point, to: Point) => {
   await page!.mouse.move(from.x, from.y); await page!.mouse.down(); await page!.mouse.move(to.x, to.y, { steps: 16 }); await page!.mouse.up();
@@ -109,9 +128,13 @@ try {
   const top = await wirePoint(graph.links[0].id), bottom = await wirePoint(graph.links[2].id);
   await marquee({ x: top.x - 16, y: Math.min(top.y, bottom.y) - 15 }, { x: bottom.x + 16, y: Math.max(top.y, bottom.y) + 15 });
   await expect(page!.locator('.react-flow__edge.selected')).toHaveCount(2); await expect(page!.locator('.react-flow__node.selected')).toHaveCount(0);
-  await expect(page!.getByText('已选中 2 条连线', { exact: true })).toBeVisible();
+  await expect(page!.getByText('已选中 2 条连线：按 Delete 断开，拖动端点可改接。', { exact: true })).toBeVisible();
   await page!.screenshot({ path: path.join(output, 'wire-marquee.png') });
-  record('框选能独立选中一条或多条连线，端点在选框外也有效；单线删除和一次撤销通过。');
+  // Wires keep a wide click area; a drag that starts on the wire itself still draws a marquee.
+  await clear(); const onWire = await wirePoint(graph.links[0].id);
+  await marquee(onWire, { x: onWire.x + 30, y: onWire.y + 24 });
+  await expect(edge(graph.links[0].id)).toHaveClass(/selected/); await expect(page!.locator('.react-flow__edge.selected')).toHaveCount(1); await expect(page!.locator('.react-flow__node.selected')).toHaveCount(0);
+  record('框选能独立选中一条或多条连线，端点在选框外也有效，从连线上起拖同样框选；单线删除和一次撤销通过。');
 
   phase = 'mixed selection and undo'; await clear(); await partialNode(finish.id);
   await page!.keyboard.down('Control'); const mixed = await wirePoint(graph.links[2].id); await page!.mouse.click(mixed.x, mixed.y); await page!.keyboard.up('Control');
@@ -154,17 +177,35 @@ try {
   record('正常与缩小视图中，离细线 9 像素仍能点中，连线点击区域不随缩放变窄。');
 
   phase = 'story graph marquee and atomic undo'; await page!.locator('[data-workspace-tab="flowchart"]').click(); await fit(true); await clear();
+  const flowWorkspace = page!.locator('.unified-flow-workspace'); await expect(flowWorkspace).toHaveAttribute('data-flow-scope', 'game');
+  // Built-in game flow and story contents now live in separate canvas scopes.
+  const builtInIds = await page!.locator('.react-flow__node-gameFlow').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-id')!)); expect(builtInIds.length).toBeGreaterThan(0);
+  const beforeBuiltInDelete = await save(); expect(beforeBuiltInDelete.gameFlow?.beforeTitle.steps ?? []).toHaveLength(0); expect(beforeBuiltInDelete.gameFlow?.beforeNewGame ?? []).toHaveLength(0);
+  await allBox(); await expect(page!.locator('.react-flow__node-gameFlow.selected')).toHaveCount(builtInIds.length); await expect(node(storyContentId)).toHaveClass(/selected/);
+  // Select protected nodes without their editable wires, then verify Delete preserves the whole project.
+  await clear(); await node(builtInIds[0]).locator('.graph-node-title').click(); await page!.keyboard.down('Control');
+  for (const id of [...builtInIds.slice(1), storyContentId]) await node(id).locator('.graph-node-title').click();
+  await page!.keyboard.up('Control'); await expect(page!.locator('.react-flow__node.selected')).toHaveCount(builtInIds.length + 1); await expect(page!.locator('.react-flow__edge.selected')).toHaveCount(0);
+  await page!.keyboard.press('Delete'); expect(await save()).toEqual(beforeBuiltInDelete); await expect(page!.locator('.react-flow__node-gameFlow')).toHaveCount(builtInIds.length); await expect(node(storyContentId)).toBeVisible();
+  await clear(); await node(storyContentId).locator('.graph-node-title strong').dblclick(); await expect(flowWorkspace).toHaveAttribute('data-flow-scope', 'content');
+  await node(storySceneNodeId(sceneId)).locator('.graph-node-title strong').dblclick(); const sceneScopeKey = storyScopeKey({ kind: 'scene', sceneId }); await expect(flowWorkspace).toHaveAttribute('data-flow-scope', sceneScopeKey);
+  await fit(true); await clear(); await expect(page!.locator('.react-flow__node-story')).toHaveCount(project.nodes.length); await expect(page!.locator('.react-flow__node-gameFlow')).toHaveCount(0);
   await partialNode('story_a'); await clear(); await selectWireBox('story_start:next');
   await page!.keyboard.press('Delete'); expect((await save()).nodes.find(node => node.id === 'story_start')).not.toHaveProperty('next'); await undo(); await save();
   await clear(); await fit(true); await groupDrag(['story_b', 'story_end_b'], true); await clear(); await fit(true);
-  const beforeStory = (await save()).nodes; await allBox(); await expect(page!.locator('.react-flow__node.selected')).toHaveCount(project.nodes.length);
-  await page!.keyboard.press('Delete'); await expect(page!.locator('.react-flow__node')).toHaveCount(1); expect((await save()).nodes[0].id).toBe(project.entryId);
+  // Story-entry and return references are selected with the stories; Delete preserves the entry reference.
+  const references = await page!.locator('.react-flow__node-storyContainer').count(), entryReference = 'story:ref:' + sceneScopeKey + ':in:entry'; expect(references).toBeGreaterThan(0); await expect(node(entryReference)).toBeVisible();
+  const beforeStory = (await save()).nodes; await allBox(); await expect(page!.locator('.react-flow__node.selected')).toHaveCount(project.nodes.length + references);
+  await expect(page!.locator('.react-flow__node-story.selected')).toHaveCount(project.nodes.length);
+  await expect(page!.locator('.react-flow__node-storyContainer.selected')).toHaveCount(references);
+  await page!.keyboard.press('Delete'); await expect(page!.locator('.react-flow__node-story')).toHaveCount(1); await expect(page!.locator('.react-flow__node-storyContainer')).toHaveCount(1); await expect(node(entryReference)).toBeVisible(); expect((await save()).nodes.map(node => node.id)).toEqual([project.entryId]);
   await expect(page!.locator('[data-workspace-tab="flowchart"]')).toHaveClass(/active/);
   await page!.screenshot({ path: path.join(output, 'story-cleared-entry.png') });
-  await undo(); expect((await save()).nodes).toEqual(beforeStory);
-  await redo(); await expect(page!.locator('.react-flow__node')).toHaveCount(1); expect((await save()).nodes.map(node => node.id)).toEqual([project.entryId]);
-  await undo(); expect((await save()).nodes).toEqual(beforeStory);
-  record('剧情流程同样支持部分相交、独立框选连线和整组移动；混合删除一次撤销，开始节点受保护。');
+  await undo(); expect((await save()).nodes).toEqual(beforeStory); await expect(page!.locator('.react-flow__node-storyContainer')).toHaveCount(references);
+  await redo(); await expect(page!.locator('.react-flow__node-story')).toHaveCount(1); await expect(node(entryReference)).toBeVisible(); expect((await save()).nodes.map(node => node.id)).toEqual([project.entryId]);
+  await undo(); expect((await save()).nodes).toEqual(beforeStory); await expect(page!.locator('.react-flow__node-storyContainer')).toHaveCount(references);
+  await page!.getByLabel('流程图位置', { exact: true }).getByRole('button', { name: '流程图', exact: true }).click(); await expect(flowWorkspace).toHaveAttribute('data-flow-scope', 'game'); await expect(page!.locator('.react-flow__node-gameFlow')).toHaveCount(builtInIds.length);
+  record('分层剧情流程支持部分相交、独立框选连线和整组移动；剧情与引用混选删除一次撤销重做，开始节点、入口引用与顶层内置流程受保护。');
 
   phase = 'restart preference persistence'; await openGraph(); await node(math.id).getByRole('button', { name: '收起节点参数', exact: true }).click(); await save();
   await app!.close(); app = undefined; await launch(); await openGraph();

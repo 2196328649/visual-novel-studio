@@ -8,8 +8,8 @@ export type UiAnimationPlayMode = keyof typeof uiAnimationPlayModes;
 export interface UiAnimationPlayback { mode: UiAnimationPlayMode; loops: number; speed: number; offset: number; clipDuration: number }
 export function validUiAnimationPlayback(mode: unknown, loops: unknown, speed: unknown, fromCurrent: unknown): boolean {
   return typeof mode === 'string' && Object.hasOwn(uiAnimationPlayModes, mode)
-    && typeof loops === 'number' && Number.isInteger(loops) && loops >= 0 && loops <= 1000000
-    && typeof speed === 'number' && Number.isFinite(speed) && speed >= .01 && speed <= 100
+    && typeof loops === 'number' && Number.isInteger(loops) && loops >= 0
+    && typeof speed === 'number' && Number.isFinite(speed) && speed >= .01
     && typeof fromCurrent === 'boolean';
 }
 export function uiAnimationPlaybackDuration(playback: UiAnimationPlayback): number {

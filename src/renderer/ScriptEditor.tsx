@@ -1,8 +1,6 @@
+import { cloneData } from "../core/project-mutation";
 import {
-  ArrowDown,
-  ArrowUp,
   ChevronRight,
-  Copy,
   GitBranch,
   MessageSquare,
   Plus,
@@ -19,19 +17,22 @@ import {
 } from "../core/model";
 import { formatCondition, nodeNames, type Commit } from "./editor";
 import { Empty, IconButton } from "./components";
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { copyStoryModule, createStoryModule, insertStoryModule, removeStoryModule, type ModuleKind, type ModulePlacement } from '../core/story-modules';
 import { LineEffects } from './LineEffects';
 import { Inspector } from './Inspector';
 import type { AssetUrl } from './StageEditor';
-import { editorPalette, readEditorTheme, readableColor } from './editor-theme';
+import { editorPalette, readEditorTheme } from './editor-theme';
 import { isStandaloneNode } from '../core/standalone-performance';
 import type { PerformanceTarget } from '../core/performance-workspace';
+import { sameScriptRowContext } from '../core/script-row-context';
+import { ScriptLine, type ScriptTextSelection } from './ScriptLine';
+import { useStableCallbacks } from './useStableCallbacks';
 
 export function ScriptEditorActions({ project, sceneId, addNode }: { project: Project; sceneId: string; addNode: (kind: NodeKind) => void }) {
   const count = project.nodes.filter(n => n.sceneId === sceneId).reduce((total, node) => total + (node.kind === 'passage' ? node.lines.filter(line => !line.silent).length : 0), 0);
-  return <><span className="muted module-line-count">{count} 行对白</span><div className="spacer" /><button type="button" className="small-button" onClick={() => addNode('passage')}><Plus size={15} />段落</button><select aria-label="添加剧情节点" value="" onChange={event => { if (event.target.value) addNode(event.target.value as NodeKind); }}><option value="">添加节点</option>{(['choice', 'condition', 'set', 'jump', 'call', 'return', 'interaction', 'minigame', 'end'] as NodeKind[]).map(kind => <option key={kind} value={kind}>{nodeNames[kind]}</option>)}</select></>;
+  return <><span className="muted module-line-count">{count} 行对白</span><div className="spacer" /><button type="button" className="small-button" onClick={() => addNode('passage')}><Plus size={15} />段落</button><select aria-label="添加剧情节点" value="" onChange={event => { if (event.target.value) addNode(event.target.value as NodeKind); }}><option value="">添加节点</option>{(['choice', 'condition', 'set', 'jump', 'call', 'return', 'interaction', 'end'] as NodeKind[]).map(kind => <option key={kind} value={kind}>{nodeNames[kind]}</option>)}</select></>;
 }
 
 export function ScriptEditor({
@@ -39,6 +40,7 @@ export function ScriptEditor({
   sceneId,
   selectedNodeId,
   selectedLineId,
+  revealRequest,
   commit,
   playbackCommit,
   select,
@@ -53,6 +55,8 @@ export function ScriptEditor({
   sceneId: string;
   selectedNodeId?: string;
   selectedLineId?: string;
+  /** Directory requests also reveal a destination that is already selected. */
+  revealRequest?: number;
   commit: Commit;
   playbackCommit?: Commit;
   select: (nodeId: string, lineId?: string) => void;
@@ -65,12 +69,39 @@ export function ScriptEditor({
 }) {
   const nodes = project.nodes.filter((n) => n.sceneId === sceneId);
   const [properties, setProperties] = useState<string>();
+  const [textSelection, setTextSelection] = useState<ScriptTextSelection>();
+  const [openLines, setOpenLines] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleLine = (id: string) => setOpenLines(current => { const next = new Set(current); if (!next.delete(id)) next.add(id); return next; });
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState<{ id: string; name: string }>();
   const [menu, setMenu] = useState<{ x: number; y: number; nodeId?: string; lineId?: string }>();
   const [clipboard, setClipboard] = useState<StoryNode>();
   const [lineClipboard, setLineClipboard] = useState<StoryLine>();
-  useEffect(() => { setCollapsed(new Set()); setClipboard(undefined); setLineClipboard(undefined); setMenu(undefined); }, [project.id]);
+  const localSelection = useRef<{ projectId: string; nodeId: string; lineId: string; request?: number } | undefined>(undefined);
+  const revealFrame = useRef<number | undefined>(undefined);
+  const activateLine = (nodeId: string, lineId: string) => {
+    // A click or native focus already reached this row. Revealing its complete
+    // (possibly very tall) settings again forces layout and moves the viewport.
+    if (revealFrame.current !== undefined) cancelAnimationFrame(revealFrame.current);
+    revealFrame.current = undefined;
+    localSelection.current = nodeId !== selectedNodeId || lineId !== selectedLineId ? { projectId: project.id, nodeId, lineId, request: revealRequest } : undefined;
+    select(nodeId, lineId);
+  };
+  const rowContext = useRef(project);
+  if (!sameScriptRowContext(rowContext.current, project)) rowContext.current = project;
+  const handlers = useStableCallbacks({
+    getProject: () => project, commit, playbackCommit: playbackCommit ?? commit, assetUrl, select, activate: activateLine,
+    openBlueprint: (id: string) => openBlueprint?.(id),
+    openPerformance: (target: PerformanceTarget) => openPerformance?.(target),
+    focus: (nodeId: string, lineId: string) => { activateLine(nodeId, lineId); setTextSelection(current => current?.lineId === lineId ? current : undefined); },
+    toggle: (nodeId: string, lineId: string) => { activateLine(nodeId, lineId); toggleLine(lineId); },
+    contextMenu: (nodeId: string, lineId: string, x: number, y: number) => setMenu({ nodeId, lineId, x, y }),
+    selectText: (lineId: string, start: number, end: number) => {
+      setTextSelection(current => end <= start ? undefined : current?.lineId === lineId && current.start === start && current.end === end ? current : { lineId, start, end });
+      if (end > start) setOpenLines(current => current.has(lineId) ? current : new Set(current).add(lineId));
+    },
+  });
+  useEffect(() => { setCollapsed(new Set()); setOpenLines(new Set()); setTextSelection(undefined); setClipboard(undefined); setLineClipboard(undefined); setMenu(undefined); }, [project.id]);
   useEffect(() => {
     if (!menu) return;
     const close = (event: PointerEvent) => { if (!(event.target as Element).closest('.module-context-menu')) setMenu(undefined); };
@@ -92,7 +123,7 @@ export function ScriptEditor({
   const insertLine = (placement: ModulePlacement, paste = false) => {
     if (!menu?.nodeId || !menu.lineId || paste && !lineClipboard) return;
     const { nodeId, lineId } = menu;
-    const line: StoryLine = { ...(paste ? structuredClone(lineClipboard!) : { text: '', actions: [] }), id: makeId('line') };
+    const line: StoryLine = { ...(paste ? cloneData(lineClipboard!) : { text: '', actions: [] }), id: makeId('line') };
     commit(paste ? '粘贴台词' : '插入台词', draft => {
       const node = draft.nodes.find(node => node.id === nodeId);
       if (node?.kind === 'passage') node.lines.splice(node.lines.findIndex(line => line.id === lineId) + (placement === 'below' ? 1 : 0), 0, line);
@@ -107,10 +138,28 @@ export function ScriptEditor({
     window.addEventListener('editor-theme-change', refresh);
     return () => window.removeEventListener('editor-theme-change', refresh);
   }, []);
-  useEffect(() => {
-    const target = selectedLineId ? document.getElementById(`line-${selectedLineId}`) : selectedNodeId ? document.getElementById(`node-${selectedNodeId}`) : undefined;
-    target?.scrollIntoView({ block: 'nearest' });
-  }, [selectedNodeId, selectedLineId, sceneId]);
+  useLayoutEffect(() => {
+    const local = localSelection.current;
+    localSelection.current = undefined;
+    if (local && local.projectId === project.id && local.nodeId === selectedNodeId && local.lineId === selectedLineId && local.request === revealRequest) return;
+    if (selectedNodeId) setCollapsed(current => {
+      if (!current.has(selectedNodeId)) return current;
+      const next = new Set(current); next.delete(selectedNodeId); return next;
+    });
+    // Directory navigation and newly inserted/copied rows still reveal their
+    // destination, after React has committed its layout for this selection.
+    revealFrame.current = requestAnimationFrame(() => {
+      revealFrame.current = undefined;
+      const section = selectedNodeId ? document.getElementById(`node-${selectedNodeId}`) : undefined;
+      const target = (selectedLineId ? document.getElementById(`line-${selectedLineId}`) : undefined)
+        ?? section?.querySelector('.passage-heading-row') ?? section;
+      target?.scrollIntoView({ block: 'nearest' });
+    });
+    return () => {
+      if (revealFrame.current !== undefined) cancelAnimationFrame(revealFrame.current);
+      revealFrame.current = undefined;
+    };
+  }, [project.id, selectedNodeId, selectedLineId, sceneId, revealRequest]);
   return (
     <div className="script-workspace">
       {!embedded && <div className="workspace-toolbar">
@@ -147,7 +196,6 @@ export function ScriptEditor({
               "call",
               "return",
               "interaction",
-              "minigame",
               "end",
             ] as NodeKind[]
           ).map((kind) => (
@@ -192,133 +240,17 @@ export function ScriptEditor({
               <LineEffects project={project} nodeId={node.id} line={node.lines[0]} number={1} commit={commit} playbackCommit={playbackCommit} assetUrl={assetUrl} select={() => select(node.id, node.lines[0].id)} openBlueprint={openBlueprint} openPerformance={openPerformance} autoExpand />
             </div> : node.kind === "passage" ? (
               <div className="story-lines">
-                {node.lines.map((line, lineIndex) => (
-                  <div
-                    key={line.id}
-                    id={`line-${line.id}`}
-                    className={`story-line ${node.id === selectedNodeId && line.id === selectedLineId ? "selected" : ""}`}
-                    onClick={() => select(node.id, line.id)}
-                    onContextMenu={event => { event.preventDefault(); event.stopPropagation(); setMenu({ x: event.clientX, y: event.clientY, nodeId: node.id, lineId: line.id }); }}
-                  >
-                    <span className="line-number">{lineIndex + 1}</span>
-                    <div className="line-content">
-                      <LineEffects project={project} nodeId={node.id} line={line} number={lineIndex + 1} commit={commit} playbackCommit={playbackCommit} assetUrl={assetUrl} select={() => select(node.id, line.id)} openBlueprint={openBlueprint} openPerformance={openPerformance} />
-                      <div className="line-top">
-                        {line.silent ? <button className="text-button" onClick={() => commit('为演出添加对白', draft => { const passage = draft.nodes.find(item => item.id === node.id); if (passage?.kind === 'passage') delete passage.lines[lineIndex].silent; })}><Plus size={13} />仅演出 · 添加台词</button> : <select
-                          aria-label={`第${lineIndex + 1}行说话人`}
-                          value={line.speakerId ?? ""}
-                          style={{
-                            color: readableColor(project.characters.find(
-                              (c) => c.id === line.speakerId,
-                            )?.color ?? palette.text, palette.input),
-                          }}
-                          onChange={(e) =>
-                            commit(`说话人 ${line.id}`, (p) => {
-                              const n = p.nodes.find((n) => n.id === node.id);
-                              if (n?.kind === "passage")
-                                n.lines[lineIndex].speakerId =
-                                  e.target.value || undefined;
-                            })
-                          }
-                        >
-                          <option value="">旁白</option>
-                          {project.characters.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.name}
-                            </option>
-                          ))}
-                        </select>}
-                        <div className="line-actions">
-                          <IconButton
-                            title="向上移动"
-                            disabled={lineIndex === 0}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              commit("移动对白", (p) => {
-                                const n = p.nodes.find((n) => n.id === node.id);
-                                if (n?.kind === "passage")
-                                  [n.lines[lineIndex - 1], n.lines[lineIndex]] =
-                                    [
-                                      n.lines[lineIndex],
-                                      n.lines[lineIndex - 1],
-                                    ];
-                              });
-                            }}
-                          >
-                            <ArrowUp size={13} />
-                          </IconButton>
-                          <IconButton
-                            title="向下移动"
-                            disabled={lineIndex === node.lines.length - 1}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              commit("移动对白", (p) => {
-                                const n = p.nodes.find((n) => n.id === node.id);
-                                if (n?.kind === "passage")
-                                  [n.lines[lineIndex + 1], n.lines[lineIndex]] =
-                                    [
-                                      n.lines[lineIndex],
-                                      n.lines[lineIndex + 1],
-                                    ];
-                              });
-                            }}
-                          >
-                            <ArrowDown size={13} />
-                          </IconButton>
-                          <IconButton
-                            title="复制对白"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const id = makeId("line");
-                              commit("复制对白", (p) => {
-                                const n = p.nodes.find((n) => n.id === node.id);
-                                if (n?.kind === "passage")
-                                  n.lines.splice(lineIndex + 1, 0, {
-                                    ...structuredClone(line),
-                                    id,
-                                  });
-                              });
-                              select(node.id, id);
-                            }}
-                          >
-                            <Copy size={13} />
-                          </IconButton>
-                          <IconButton
-                            title="删除对白"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              commit("删除对白", (p) => {
-                                const n = p.nodes.find((n) => n.id === node.id);
-                                if (n?.kind === "passage")
-                                  n.lines.splice(lineIndex, 1);
-                              });
-                            }}
-                          >
-                            <Trash2 size={13} />
-                          </IconButton>
-                        </div>
-                      </div>
-                      {!line.silent && <textarea
-                        aria-label={`第${lineIndex + 1}行对白`}
-                        className="dialogue-input"
-                        placeholder="输入对白或旁白…"
-                        rows={Math.max(
-                          1,
-                          Math.min(7, Math.ceil(line.text.length / 46)),
-                        )}
-                        value={line.text}
-                        onFocus={() => select(node.id, line.id)}
-                        onChange={(e) =>
-                          commit(`对白 ${line.id}`, (p) => {
-                            const n = p.nodes.find((n) => n.id === node.id);
-                            if (n?.kind === "passage")
-                              n.lines[lineIndex].text = e.target.value;
-                          })
-                        }
-                      />}
-                    </div>
-                  </div>
-                ))}
+                {node.lines.map((line, lineIndex) => <ScriptLine key={line.id}
+                  context={rowContext.current} getProject={handlers.getProject}
+                  nodeId={node.id} line={line} index={lineIndex} lineCount={node.lines.length}
+                  selected={node.id === selectedNodeId && line.id === selectedLineId}
+                  expanded={openLines.has(line.id)} textSelection={textSelection?.lineId === line.id ? textSelection : undefined}
+                  palette={palette} commit={handlers.commit} playbackCommit={handlers.playbackCommit}
+                  assetUrl={handlers.assetUrl} select={handlers.select} activate={handlers.activate} focus={handlers.focus}
+                  toggle={handlers.toggle} selectText={handlers.selectText} contextMenu={handlers.contextMenu}
+                  openBlueprint={openBlueprint ? handlers.openBlueprint : undefined}
+                  openPerformance={openPerformance ? handlers.openPerformance : undefined}
+                />)}
                 <button
                   className="add-line"
                   onClick={() => {
@@ -349,16 +281,16 @@ export function ScriptEditor({
       {menu && createPortal(<div className="performance-context-menu module-context-menu" role="menu" aria-label={menuLine ? '台词菜单' : '模块菜单'} style={{ left: Math.max(8, Math.min(menu.x, window.innerWidth - 255)), top: Math.max(8, Math.min(menu.y, window.innerHeight - 480)) }}>
         {menuLine ? <>
           <button role="menuitem" onClick={() => insertLine('above')}>在上方插入新台词</button><button role="menuitem" onClick={() => insertLine('below')}>在下方插入新台词</button><hr />
-          <button role="menuitem" onClick={() => { setLineClipboard(structuredClone(menuLine)); setMenu(undefined); }}>复制台词</button>
-          <button role="menuitem" onClick={() => { setLineClipboard(structuredClone(menuLine)); commit('剪切台词', draft => { const node = draft.nodes.find(node => node.id === menuNode!.id); if (node?.kind === 'passage') node.lines = node.lines.filter(line => line.id !== menuLine.id); }); setMenu(undefined); }}>剪切台词</button>
+          <button role="menuitem" onClick={() => { setLineClipboard(cloneData(menuLine)); setMenu(undefined); }}>复制台词</button>
+          <button role="menuitem" onClick={() => { setLineClipboard(cloneData(menuLine)); commit('剪切台词', draft => { const node = draft.nodes.find(node => node.id === menuNode!.id); if (node?.kind === 'passage') node.lines = node.lines.filter(line => line.id !== menuLine.id); }); setMenu(undefined); }}>剪切台词</button>
           <button role="menuitem" disabled={!lineClipboard} onClick={() => insertLine('above', true)}>粘贴到台词上方</button><button role="menuitem" disabled={!lineClipboard} onClick={() => insertLine('below', true)}>粘贴到台词下方</button>
           <button role="menuitem" onClick={() => { commit('删除台词', draft => { const node = draft.nodes.find(node => node.id === menuNode!.id); if (node?.kind === 'passage') node.lines = node.lines.filter(line => line.id !== menuLine.id); }); setMenu(undefined); }}>删除台词</button>
         </> : <>
           {menuNode && <>
             <button role="menuitem" onClick={() => { setRenaming({ id: menuNode.id, name: menuNode.name }); setMenu(undefined); }}>重命名</button>
             <button role="menuitem" onClick={() => { toggle(menuNode.id); setMenu(undefined); }}>{collapsed.has(menuNode.id) ? '展开模块' : '收起模块'}</button>
-            <button role="menuitem" disabled={menuNode.kind === 'start'} onClick={() => { setClipboard(structuredClone(menuNode)); setMenu(undefined); }}>复制模块</button>
-            <button role="menuitem" disabled={menuNode.kind === 'start'} onClick={() => { setClipboard(structuredClone(menuNode)); commit('剪切模块', draft => removeStoryModule(draft, menuNode.id)); setMenu(undefined); }}>剪切模块</button>
+            <button role="menuitem" disabled={menuNode.kind === 'start'} onClick={() => { setClipboard(cloneData(menuNode)); setMenu(undefined); }}>复制模块</button>
+            <button role="menuitem" disabled={menuNode.kind === 'start'} onClick={() => { setClipboard(cloneData(menuNode)); commit('剪切模块', draft => removeStoryModule(draft, menuNode.id)); setMenu(undefined); }}>剪切模块</button>
             <button role="menuitem" disabled={menuNode.kind === 'start'} onClick={() => { commit('删除模块', draft => removeStoryModule(draft, menuNode.id)); setMenu(undefined); }}>删除模块</button><hr />
             {menuNode.kind !== 'passage' && menuNode.kind !== 'start' && <button role="menuitem" onClick={() => { setProperties(menuNode.id); setMenu(undefined); }}>编辑内容…</button>}
           </>}

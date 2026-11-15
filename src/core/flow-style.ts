@@ -5,11 +5,41 @@ import { textHeading } from './text-headings';
 export function flowNodeAppearance(project: Project, component: UiComponent, node: { kind?: string; styleId?: string }): UiComponent {
   const preset = project.ui.flowStyles?.find(s => s.id === node.styleId);
   const skin = preset?.skin ?? (node.kind === 'end' ? component.list?.flowEndSkin : node.kind === 'chapterTitle' ? component.list?.flowChapterSkin : undefined) ?? component.skin;
-  return { ...component, skin, style: { ...component.style, ...preset?.style, opacity: preset?.style?.opacity ?? 1, playerOpacity: false } };
+  // In-memory resets and JSON round-trips must inherit identically. Caption slots
+  // remain one whole override; merging them by index changes existing projects.
+  const base = Object.fromEntries(Object.entries(component.style ?? {}).filter(([, value]) => value !== undefined));
+  const overrides = Object.fromEntries(Object.entries(preset?.style ?? {}).filter(([, value]) => value !== undefined));
+  return { ...component, skin, style: { ...base, ...overrides, opacity: preset?.style?.opacity ?? 1, playerOpacity: false } };
+}
+
+export function flowCaptionSlot(parts: NonNullable<UiComponent['style']>['captionParts'], count: number, index: number) {
+  return parts?.[Math.min(Math.max(0, parts.length - count + index), parts.length - 1)];
 }
 
 export function flowStyleUsages(project: Project, styleId: string) {
-  return [...project.chapters, ...project.scenes, ...project.nodes].filter(item => item.flowchart?.styleId === styleId);
+  const metadata = [...project.chapters, ...project.scenes, ...project.nodes].filter(item => item.flowchart?.styleId === styleId);
+  const containers = [
+    { kind: 'theme' as const, id: project.id, name: '基础方案', components: project.ui.components },
+    ...(project.ui.instances ?? []).map(instance => ({ kind: 'instance' as const, id: instance.id, name: instance.name, components: instance.components })),
+    ...(project.ui.customPages ?? []).map(page => ({ kind: 'customPage' as const, id: page.id, name: page.name, components: page.components })),
+  ];
+  const customEntries = containers.flatMap(container => container.components.flatMap(component => component.kind === 'flowchart'
+    ? (component.list?.flowContent?.custom?.entries ?? []).filter(entry => entry.styleId === styleId).map(entry => {
+      const owner = entry.owner;
+      const ownerTitle = owner
+        ? (owner.kind === 'chapter' ? project.chapters : owner.kind === 'scene' ? project.scenes : project.nodes).find(item => item.id === owner.id)?.name
+        : project.nodes.find(item => item.id === entry.nodeId)?.name;
+      return {
+        id: `${container.kind}:${container.id}:${component.id}:${entry.nodeId}`,
+        name: `${container.name} · ${component.name?.trim() || component.id} · ${entry.name?.trim() || ownerTitle || entry.nodeId}`,
+        componentId: component.id,
+        nodeId: entry.nodeId,
+        container: { kind: container.kind, id: container.id },
+        ...(owner ? { owner: { ...owner } } : {}),
+      };
+    })
+    : []));
+  return [...metadata, ...customEntries];
 }
 
 export function availableFlowStyleName(styles: FlowStyle[], base = '新样式') {

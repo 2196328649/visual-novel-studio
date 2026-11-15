@@ -21,6 +21,10 @@
 .play-watch { flex: none; width: 238px; padding: 16px; background: #222a33; border-left: 1px solid #3c4754; overflow: auto; }
 .play-watch h3 { color: #a8d9cd; margin: 0 0 12px; font-size: 12px; }
 .play-watch h3:not(:first-child) { margin-top: 25px; }
+.play-origin { font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.play-origin strong { color: #d5eee6; }
+.play-origin p { margin: 7px 0; color: #a7b8c7; }
+.play-origin > span { color: #bbcbd6; }
 .play-location { display: block; width: 100%; text-align: left; border: 1px solid #45535f; background: #2c3641; border-radius: 5px; padding: 10px; color: #e5eef4; }
 .play-location small { display: block; color: #97afc2; margin-top: 6px; }
 .play-variable { display: flex; justify-content: space-between; gap: 15px; padding: 9px 0; border-bottom: 1px solid #34414d; font-size: 12px; }

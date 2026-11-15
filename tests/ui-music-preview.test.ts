@@ -69,13 +69,13 @@ test('native music preview supplies scrolling controls, respects custom replacem
  project.ui.pages!.musicRoom={layout:'custom'};assert.equal(nativeMusicPreview(project,'ui:musicRoom',[]),undefined);
 });
 
-test('switching a blueprint-opened music menu stops playback even when the menu continuation retains its instance', () => {
+test('switching a blueprint-opened music menu releases its page instance but retains the menu continuation', () => {
  const {project,sample}=fixture();const graph=createBlueprintGraph('ui','打开音乐菜单'),node=blueprintNodeDefaults('uiAction');node.properties={screen:'music_room'};graph.nodes.push(node);connectBlueprintPins(graph,graph.nodes[0].id,'exec',node.id,'exec_in');project.blueprints.push(graph);
  Object.assign(project.ui.components.find(c=>c.id==='open_music')!,{action:'blueprint',blueprintId:graph.id});
  project.ui.components.push({id:'music_settings',kind:'button',page:'musicRoom',text:'设置',action:'preferences',x:0,y:0,width:.1,height:.1});
  const events=[open,play('track_12')],before=sample(events),after=sample([...events,click('music_settings')]);
  assert.equal(before.layers.at(-1)?.mode,'menu');assert.equal(before.music.playback?.assetId,'track_12');
- assert.equal(after.layers.at(-1)?.instance,before.layers.at(-1)?.instance);assert.equal(after.pageId,'ui:preferences');assert.equal(after.music.playback,undefined);
+ assert.notEqual(after.layers.at(-1)?.instance,before.layers.at(-1)?.instance);assert.equal(after.layers.at(-1)?.mode,'menu');assert.equal(after.pageId,'ui:preferences');assert.equal(after.music.playback,undefined);
 });
 
 test('playlist discovery includes story music and explicit list entries but excludes unrelated audio and invalid resource types', () => {

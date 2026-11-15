@@ -4,7 +4,10 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createProject } from '../src/core/model';
-import { atomicWrite, autosaveProject, containedPath, loadProject, parseProject, saveProject } from '../src/desktop/project-store';
+import { createBlueprintGraph } from '../src/core/blueprint';
+import { applyTextScript, projectToText } from '../src/core/text-script';
+import { editTextDocument, refreshTextReferenceNames, textDocument, textEdit } from '../src/core/text-document';
+import { atomicWrite, autosaveProject, containedPath, loadProject, parseProject, saveProject, UnsupportedProjectFormatError } from '../src/desktop/project-store';
 import { validateProject } from '../src/core/validate';
 import { assetCategoryNames } from '../src/core/asset-library';
 
@@ -55,6 +58,39 @@ test('saved project preserves IDs, content, and graph links after reopening', as
   assert.deepEqual(contentBrowser!.folders.map(folder => folder.category), Object.keys(assetCategoryNames));
   assert.equal(project.contentBrowser, undefined);
   for (const name of Object.values(assetCategoryNames)) assert.ok((await fs.stat(path.join(dir, 'assets', name))).isDirectory());
+});
+
+test('editing unrelated dialogue preserves spaced blueprint calls through apply, save and reopen', async t => {
+  const parent = await fs.realpath(os.tmpdir()), dir = await fs.mkdtemp(path.join(parent, 'vns-spaced-calls-'));
+  t.after(async () => {
+    const relative = path.relative(parent, await fs.realpath(dir));
+    assert.ok(relative && relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative));
+    await fs.rm(dir, { recursive: true });
+  });
+  const project = createProject(), names = ['夜宴 · 音乐淡入', '旧忆 · 换景与配乐', '城破 · 战火与急雨'];
+  const graphs = names.map((name, index) => ({ ...createBlueprintGraph('effect', name), id: `spaced_call_${index}` }));
+  project.blueprints.push(...graphs);
+  const passage = project.nodes.find(node => node.kind === 'passage')!;
+  passage.lines = [{ id: 'spaced_dialogue', text: '第一句。', actions: graphs.map(graph => ({ kind: 'blueprint', blueprintId: graph.id })) }];
+  const original = projectToText(project), document = textDocument(original, applyTextScript(project, original).sourceMap);
+  const changed = document.text.replace('第一句。', '第一句。已修改');
+  const source = editTextDocument(document, textEdit(document.text, changed, { start: 0, end: document.text.length }));
+  const applied = applyTextScript(project, source);
+  assert.deepEqual(applied.issues.filter(issue => issue.severity === 'error'), []);
+  const refreshed = refreshTextReferenceNames(applied.project, source);
+  assert.equal(refreshed, source);
+  applied.project.scriptText = { format: 'vns-text-1', content: refreshed };
+  const file = path.join(dir, 'project.vns.json');
+  await saveProject(file, applied.project);
+  const loaded = (await loadProject(file)).project;
+  assert.equal(loaded.scriptText?.content, source);
+  assert.equal(textDocument(loaded.scriptText!.content).text, changed);
+  assert.equal(refreshTextReferenceNames(loaded, loaded.scriptText!.content), source);
+  assert.deepEqual(loaded.blueprints.map(graph => graph.name), names);
+  const reopened = loaded.nodes.find(node => node.id === passage.id);
+  assert.ok(reopened?.kind === 'passage');
+  assert.equal(reopened.lines[0].text, '第一句。已修改');
+  assert.deepEqual(reopened.lines[0].actions.map(action => action.kind === 'blueprint' && action.blueprintId), graphs.map(graph => graph.id));
 });
 
 test('save-as preflights every asset before copying and never overwrites different destination content', async t => {
@@ -165,4 +201,49 @@ test('validation catches missing branches and references while allowing interact
   assert.ok(validateProject(project).some(d => d.message.includes('循环')));
   passage.next = 'missing';
   assert.ok(validateProject(project).some(d => d.message.includes('已不存在')));
+});
+
+test('unsupported main documents never silently fall back to an older previous file or autosave', async t => {
+  const parent = await fs.realpath(os.tmpdir()), dir = await fs.mkdtemp(path.join(parent, 'vns-unsupported-primary-'));
+  t.after(async () => { const real = await fs.realpath(dir); assert.equal(path.dirname(real), parent); await fs.rm(real, { recursive: true, force: true }); });
+  const file = path.join(dir, 'project.vns.json'), previous = createProject('较旧的备份');
+  const graph = createBlueprintGraph('function', '新版节点'); previous.blueprints.push(graph);
+  await fs.writeFile(file + '.previous', JSON.stringify(previous));
+  await fs.writeFile(file + '.autosave', JSON.stringify({ savedAt: Date.now() + 60000, project: previous }));
+  for (const unsupported of [{ ...previous, schemaVersion: 99 }, { ...previous, blueprints: [{ ...graph, nodes: [{ ...graph.nodes[0], type: 'future_preserved_node', properties: { unrecognized: 'keep me' } }] }] }]) {
+    const source = JSON.stringify(unsupported); await fs.writeFile(file, source);
+    await assert.rejects(loadProject(file), UnsupportedProjectFormatError);
+    assert.equal(await fs.readFile(file, 'utf8'), source);
+    assert.equal(await fs.readFile(file + '.previous', 'utf8'), JSON.stringify(previous));
+  }
+});
+
+test('a newer same-project unsupported autosave is protected, while old/unrelated ones do not block opening', async t => {
+  const parent = await fs.realpath(os.tmpdir()), dir = await fs.mkdtemp(path.join(parent, 'vns-unsupported-autosave-'));
+  t.after(async () => { const real = await fs.realpath(dir); assert.equal(path.dirname(real), parent); await fs.rm(real, { recursive: true, force: true }); });
+  const file = path.join(dir, 'project.vns.json'), original = createProject('主文件');
+  await saveProject(file, original); const bytes = await fs.readFile(file, 'utf8');
+  const newer = { savedAt: Date.now() + 60000, project: { ...original, schemaVersion: 99 } };
+  await fs.writeFile(file + '.autosave', JSON.stringify(newer)); await assert.rejects(loadProject(file), UnsupportedProjectFormatError);
+  assert.equal(await fs.readFile(file, 'utf8'), bytes); assert.equal(await fs.readFile(file + '.autosave', 'utf8'), JSON.stringify(newer));
+  await fs.writeFile(file + '.autosave', JSON.stringify({ ...newer, savedAt: 0 })); assert.equal((await loadProject(file)).project.id, original.id);
+  await fs.writeFile(file + '.autosave', JSON.stringify({ ...newer, project: { ...newer.project, id: 'unrelated_project' } })); assert.equal((await loadProject(file)).project.id, original.id);
+});
+
+test('migration preserves the selected raw recovery source and keeps later distinct pre-migration versions', async t => {
+  const parent = await fs.realpath(os.tmpdir()), dir = await fs.mkdtemp(path.join(parent, 'vns-migration-origin-'));
+  t.after(async () => { const real = await fs.realpath(dir); assert.equal(path.dirname(real), parent); await fs.rm(real, { recursive: true, force: true }); });
+  const file = path.join(dir, 'project.vns.json'), project = createProject('历史来源');
+  const legacy = (title: string) => { const { name: _name, ...rest } = project; return { ...rest, schemaVersion: 0, title }; };
+  const first = JSON.stringify(legacy('第一次迁移')); await fs.writeFile(file, first); await loadProject(file);
+  assert.equal(await fs.readFile(file + '.before-migration', 'utf8'), first);
+  const second = JSON.stringify(legacy('后续迁移')); await fs.writeFile(file, second); await loadProject(file);
+  const copies = (await fs.readdir(dir)).filter(name => name.startsWith('project.vns.json.before-migration'));
+  assert.equal(copies.length, 2); assert.deepEqual(new Set(await Promise.all(copies.map(name => fs.readFile(path.join(dir, name), 'utf8')))), new Set([first, second]));
+  await fs.writeFile(file, JSON.stringify(project)); const autosave = JSON.stringify({ savedAt: Date.now() + 60000, project: legacy('从旧自动保存迁移') });
+  await fs.writeFile(file + '.autosave', autosave); assert.equal((await loadProject(file)).project.name, '从旧自动保存迁移');
+  assert.equal(await fs.readFile(file + '.autosave.before-migration', 'utf8'), autosave);
+  await fs.unlink(file + '.autosave'); await fs.writeFile(file, '{broken'); const previous = JSON.stringify(legacy('从旧备份迁移')); await fs.writeFile(file + '.previous', previous);
+  assert.equal((await loadProject(file)).project.name, '从旧备份迁移'); assert.equal(await fs.readFile(file + '.previous.before-migration', 'utf8'), previous);
+  assert.equal(await fs.readFile(file, 'utf8'), '{broken');
 });

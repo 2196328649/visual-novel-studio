@@ -13,29 +13,25 @@ export function uiTextColor(component: UiComponent, theme: UiTheme, state: UiBut
   const style = component.style;
   return (state === 'disabled' ? style?.disabledTextColor : state === 'selected' ? style?.selectedTextColor : state === 'hover' || state === 'pressed' ? style?.hoverTextColor : undefined) ?? style?.textColor ?? theme.textColor;
 }
-export const uiProperties = {
-  visible: { name: '显示', type: 'boolean', initial: true },
-  enabled: { name: '启用', type: 'boolean', initial: true },
-  selected: { name: '选中', type: 'boolean', initial: false },
-  text: { name: '文字', type: 'string', initial: '' },
-  x: { name: '横向位置（画面比例）', type: 'number', initial: 0 },
-  y: { name: '纵向位置（画面比例）', type: 'number', initial: 0 },
-  width: { name: '宽度（画面比例）', type: 'number', initial: 1 },
-  height: { name: '高度（画面比例）', type: 'number', initial: 1 },
-  opacity: { name: '不透明度（0～1）', type: 'number', initial: 1 },
-  value: { name: '进度（0～1）', type: 'number', initial: 0 },
-} as const;
-export type UiProperty = keyof typeof uiProperties;
-export function uiPropertyApplies(component: UiComponent, property: UiProperty): boolean {
-  if (property === 'enabled') return ['button','preference','preferenceChoice'].includes(component.kind);
-  if (property === 'selected') return component.kind === 'button';
-  if (property === 'text') return component.kind === 'button' || component.kind === 'text' && !component.binding;
-  if (property === 'value') return component.kind === 'progress';
-  return true;
+export function uiStateColor(component: UiComponent, state: UiButtonState, accent = '#3b8f80'): string {
+  const s = component.style;
+  return (state === 'disabled' ? s?.disabledBackground ?? '#22282a' : state === 'pressed' ? s?.pressedBackground ?? s?.hoverBackground ?? accent : state === 'selected' ? s?.selectedBackground ?? s?.hoverBackground ?? accent : state === 'hover' ? s?.hoverBackground ?? s?.background ?? accent : s?.background ?? '#283133');
 }
+export { uiProperties, uiPropertyApplies, type UiProperty } from './ui-properties';
 export const skinKinds = new Set<UiComponent['kind']>(['button', 'preferenceChoice', 'choiceList', 'saveSlots', 'galleryGrid', 'musicTrackList', 'voiceCollection', 'chapterList', 'pauseMenu', 'flowchart', 'historyList']);
 
 /** Physical pressure is deliberately independent of the selected/toggled state. */
+/** Edges that meet leave no middle to stretch, so keep one source pixel for it, as Unity's slicing does. */
+export function nineSliceEdges<T extends { left: number; top: number; right: number; bottom: number }>(borders: T, width?: number, height?: number): T {
+  const fit = (start: number, end: number, size?: number): [number, number] => {
+    if (!size || size < 2 || start + end < size) return [start, end];
+    const kept = Math.min(start, size - 1);
+    return [kept, Math.min(end, size - 1 - kept)];
+  };
+  const [left, right] = fit(borders.left, borders.right, width), [top, bottom] = fit(borders.top, borders.bottom, height);
+  return { ...borders, left, right, top, bottom };
+}
+
 export function uiSkinAsset(skin: UiSkin | undefined, state: UiButtonState): string | undefined {
   if (!skin) return;
   if (state === 'pressed') return skin.pressed ?? skin.hover ?? skin.idle;

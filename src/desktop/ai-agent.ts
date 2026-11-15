@@ -1,7 +1,9 @@
+import { cloneData } from "../core/project-mutation";
 import { z } from 'zod';
 import path from 'node:path';
 import { aiLines, aiOperationSchema, aiRequestMessages, applyAiChanges, parseAiResponse, prepareAiChanges, type AiOperation, type AiRequest, type AiResponse } from '../core/ai';
 import { aiReadResponseSchema, aiReadSchema, readAiProject } from '../core/ai-project-read';
+import { isPrivateAiProjectPath, scrubAiProject } from '../core/ai-project-privacy';
 import { editableProjectFields } from '../core/ai-project-edit';
 import { aiEffectHolds, aiProjectEffects, aiTaskOutcomes, aiTaskEvidenceDiagnostics, createAiAgentProposal, type AiAgentTask, type AiEffect, type AiToolEvidence } from '../core/ai-agent-review';
 import { applyAiWorkflow, type AiWorkflowProposal } from '../core/ai-workflow';
@@ -10,7 +12,7 @@ import { currentTextProject, previewDialogueRevision } from '../core/text-exchan
 import { currentScriptText } from '../core/script-text';
 import { applyTextScript, projectToText } from '../core/text-script';
 import { readOnlyAiEditorCommand } from '../core/ai-editor-commands';
-import { validateProject } from '../core/validate';
+import { addedAiProjectErrors, aiProjectDiagnostics } from '../core/ai-project-validation';
 import { AiRetryableError, AiService } from './ai-service';
 import { aiAttachmentText, readAiAttachmentPage, resolveAiSource } from './ai-agent-files';
 import { importAssetPaths } from './asset-import';
@@ -64,6 +66,14 @@ export const aiAgentGuide = `\n现在使用通用工具循环。下面的工具�
 
 const errorText = (error: unknown) => (error instanceof z.ZodError ? error.issues.slice(0, 12).map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ') : error instanceof Error ? error.message : String(error)).slice(0, 4000);
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+const changeTextForModel = (text: string, operation: AiOperation) => {
+  if (operation.kind === 'editProject' && text !== '未设置' && text !== '已移除') {
+    if (isPrivateAiProjectPath(operation.path)) return '已隐藏文件位置';
+    try { text = JSON.stringify(scrubAiProject(JSON.parse(text), operation.path), null, 2) ?? '未设置'; }
+    catch { /* Non-JSON change descriptions can be displayed unchanged. */ }
+  }
+  return text.slice(0, 600);
+};
 class AiEvidenceError extends Error {
   constructor(readonly userMessage: string, diagnostics: unknown) {
     super(userMessage + '\n证据诊断：' + JSON.stringify(diagnostics)
@@ -73,8 +83,8 @@ class AiEvidenceError extends Error {
 
 export async function runAiAgent(service: Pick<AiService, 'agentStep'>, request: AiRequest, options: AiAgentOptions): Promise<AiResponse> {
   const { check, progress } = options;
-  const original = request.readOnly ? structuredClone(request.project) : currentTextProject(request.project);
-  let draft = structuredClone(original), revision = 0, reviewed = -1, repairs = 0, toolCount = 0;
+  const original = request.readOnly ? cloneData(request.project) : currentTextProject(request.project);
+  let draft = cloneData(original), revision = 0, reviewed = -1, repairs = 0, toolCount = 0;
   const allowed = new Set(request.lineIds), inspected = new Set<string>();
   const tasks: AiAgentTask[] = [], evidence: AiToolEvidence[] = [], warnings: string[] = [], details: AiWorkflowProposal['details'] = [];
   const portraitFallbacks = new Map<string, { characterId: string; id: string; assetId: string; fallbackName: string }>();
@@ -94,7 +104,7 @@ export async function runAiAgent(service: Pick<AiService, 'agentStep'>, request:
   };
   const syncSource = (before: Project, next: Project) => {
     const source = projectToText(next);
-    next.scriptText = source === projectToText(before) ? structuredClone(before.scriptText) : currentScriptText(source, next.scriptText?.sourceName ?? before.scriptText?.sourceName);
+    next.scriptText = source === projectToText(before) ? cloneData(before.scriptText) : currentScriptText(source, next.scriptText?.sourceName ?? before.scriptText?.sourceName);
     return next;
   };
   const proposal = () => {
@@ -107,10 +117,9 @@ export async function runAiAgent(service: Pick<AiService, 'agentStep'>, request:
     return result;
   };
   const validate = () => {
-    const previous = new Set(validateProject(original).filter(issue => issue.severity === 'error').map(issue => JSON.stringify([issue.nodeId, issue.lineId, issue.message])));
-    const issues = validateProject(draft);
-    const newErrors = issues.filter(issue => issue.severity === 'error' && !previous.has(JSON.stringify([issue.nodeId, issue.lineId, issue.message])));
-    return { errors: issues.filter(issue => issue.severity === 'error').length, warnings: issues.filter(issue => issue.severity === 'warning').length, newErrors, issues: issues.slice(0, 60), partial: issues.length > 60 };
+    const issues = aiProjectDiagnostics(draft);
+    const newErrors = addedAiProjectErrors(aiProjectDiagnostics(original), issues).map(({ projectValue, ...issue }) => issue);
+    return { errors: issues.filter(issue => issue.severity === 'error').length, warnings: issues.filter(issue => issue.severity === 'warning').length, newErrors, issues: issues.slice(0, 60).map(({ projectValue, ...issue }) => issue), partial: issues.length > 60 };
   };
   const stage = (next: Project, replaceStory = false, preserveSource = false) => {
     if (request.readOnly) throw new Error('当前是只读请求，不能导入或修改工程。');
@@ -160,7 +169,7 @@ export async function runAiAgent(service: Pick<AiService, 'agentStep'>, request:
         const binding = importedPortraitBindingSchema.omit({ images: true }).extend({ images: importedPortraitBindingSchema.shape.images.optional(), importId: identifier.optional(), source: z.string().min(1).max(4096).optional() }).strict()
           .refine(value => !!value.images !== !!value.importId, 'images和importId必须提供且只提供一种。').refine(value => !value.source || !!value.importId, 'source 只能与 importId 一起使用。');
         const input = z.object({ bindings: z.array(binding).min(1).max(100) }).strict().parse(args);
-        let next = structuredClone(draft); const notices: string[] = [], results = [], pendingFallbacks = new Map(portraitFallbacks);
+        let next = cloneData(draft); const notices: string[] = [], results = [], pendingFallbacks = new Map(portraitFallbacks);
         for (const item of input.bindings) {
           const character = effectiveCharacter(next, item.characterId);
           if (!character) throw new Error(`角色不存在：${item.characterId}`);
@@ -221,13 +230,13 @@ export async function runAiAgent(service: Pick<AiService, 'agentStep'>, request:
         const changes = prepareAiChanges(draft, input.operations, [...allowed]);
         stage(applyAiChanges(draft, changes));
         for (const change of changes) { if (change.lineId) inspected.add(change.lineId); details.push({ lineId: change.lineId, action: change.label, reason: `${change.before.slice(0, 600)} → ${change.after.slice(0, 600)}` }); }
-        return { data: { accepted: changes.length, changes: changes.map(({ label, before, after }) => ({ label, before: before.slice(0, 600), after: after.slice(0, 600) })) }, mutation: true, detail: `校验并暂存 ${changes.length} 项实际操作。` };
+        return { data: { accepted: changes.length, changes: changes.map(({ label, before, after, operation }) => ({ label, before: changeTextForModel(before, operation), after: changeTextForModel(after, operation) })) }, mutation: true, detail: `校验并暂存 ${changes.length} 项实际操作。` };
       }
       case 'checkProject': {
         if (!call.taskIds.length) throw new Error('checkProject 必须填写要核对的 taskIds，才能作为该任务的完成证据。请使用新的调用 id，并关联已登记的任务：' + JSON.stringify(tasks));
         const input = z.object({ checks: z.array(checkSchema).min(1).max(100) }).strict().parse(args);
         const scoped = { ...draft, nodes: draft.nodes.map(node => node.kind === 'passage' ? { ...node, lines: node.lines.filter(line => allowed.has(line.id)) } : node) };
-        for (const item of input.checks) if (!editableProjectFields.includes(item.path[0] as any) || item.path.some(part => typeof part === 'string' && ['path', 'sourcePath', 'externalPath', 'scriptText'].includes(part))) throw new Error('检查路径不在允许范围。');
+        for (const item of input.checks) if (!editableProjectFields.includes(item.path[0] as any) || isPrivateAiProjectPath(item.path)) throw new Error('检查路径不在允许范围。');
         const results = input.checks.map(item => ({ ...item, passed: aiEffectHolds(scoped, item) }));
         return { data: { passed: results.every(item => item.passed), results }, complete: results.every(item => item.passed), checks: input.checks, detail: results.every(item => item.passed) ? '预期结果逐项检查通过。' : '部分预期结果尚未满足。' };
       }
@@ -300,15 +309,18 @@ export async function runAiAgent(service: Pick<AiService, 'agentStep'>, request:
         draft = applyAiChanges(original, changes); legacyOperations.push(...result.operations); if (result.message) legacyMessages.push(result.message);
         messages.push({ role: 'assistant', content }, { role: 'user', content: `本批已校验并暂存 ${legacyOperations.length} 项操作，尚未应用。请继续剩余批次；read返回暂存工程。` }); continue;
       }
-      usedTools = true;
       if (legacyOperations.length) throw new Error('已使用旧版分批操作协议；请完成当前批次，不要混用工具协议。');
       const turn = turnSchema.parse(raw);
+      // Validate the envelope and all task additions before committing either.
+      const nextTasks = [...tasks];
       for (const task of turn.tasks ?? []) {
-        const previous = tasks.find(item => item.id === task.id);
+        const previous = nextTasks.find(item => item.id === task.id);
         if (previous && !same(previous, task)) throw new Error('已登记的任务不能删除或改写；请补充新任务。');
-        if (!previous) tasks.push(task);
+        if (!previous) nextTasks.push(task);
       }
-      if (tasks.length > 30) throw new Error('本次任务过多，请缩小范围。');
+      if (nextTasks.length > 30) throw new Error('本次任务过多，请缩小范围。');
+      tasks.push(...nextTasks.slice(tasks.length));
+      usedTools = true;
       if (turn.finish) {
         if (toolCount && !tasks.length) throw new Error('请列出本次请求的任务，并为每项提供结果；纯检查任务可使用kind:inspect。');
         if (tasks.length && reviewed !== revision) throw new Error('当前草稿尚未审阅。请先调用reviewChanges检查当前草稿，再逐项结束。');
@@ -333,7 +345,7 @@ export async function runAiAgent(service: Pick<AiService, 'agentStep'>, request:
         if (++toolCount > 160) throw new Error('工具调用达到本次上限，尚未应用工程，请缩小任务后重试。');
         if (ids.has(call.id)) { results.push({ id: call.id, error: '调用id已使用；请使用新id，避免重复执行。' }); continue; }
         ids.add(call.id);
-        const before = structuredClone(draft), record: AiToolEvidence = { id: call.id, name: call.name, taskIds: call.taskIds, ok: false, mutation: false, effects: [], complete: false, detail: '' };
+        const before = cloneData(draft), record: AiToolEvidence = { id: call.id, name: call.name, taskIds: call.taskIds, ok: false, mutation: false, effects: [], complete: false, detail: '' };
         try {
           if (call.taskIds.some(id => !tasks.some(task => task.id === id))) throw new Error('工具引用了未登记的任务。');
           const readOnly = ['readProject', 'listAttachments', 'readAttachment', 'readScript', 'checkProject', 'validateProject', 'reviewChanges'].includes(call.name);
@@ -342,7 +354,7 @@ export async function runAiAgent(service: Pick<AiService, 'agentStep'>, request:
           progress(`AI 正在${({ readProject: '读取工程', readAttachment: '读取附件', importAssets: '导入素材', bindPortraits: '绑定角色立绘', importText: '导入剧本', editScript: '修改剧本', editProject: '修改工程', checkProject: '核对结果', reviewChanges: '审阅实际修改', validateProject: '检查工程' } as Record<string, string>)[call.name] ?? '执行创作工具'}…`);
           const result = await callTool(call); check();
           Object.assign(record, { ok: true, mutation: !!result.mutation, effects: aiProjectEffects(before, draft), complete: result.complete !== false, checks: result.checks, detail: result.detail ?? '读取完成。' });
-          if (result.mutation && !record.effects.length && !same(before.scriptText, draft.scriptText)) record.effects.push({ path: ['scriptText'], value: structuredClone(draft.scriptText) });
+          if (result.mutation && !record.effects.length && !same(before.scriptText, draft.scriptText)) record.effects.push({ path: ['scriptText'], value: cloneData(draft.scriptText) });
           results.push({ id: call.id, name: call.name, ok: true, revision, ...result });
         } catch (error) {
           check(); draft = before;

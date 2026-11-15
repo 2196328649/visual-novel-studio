@@ -1,0 +1,19 @@
+.ui-page-interface { min-width: 0; }
+.ui-page-interface h3, .ui-page-interface h4 { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.ui-page-interface input:not([type="checkbox"]), .ui-page-interface select, .ui-page-interface textarea { min-width: 0; box-sizing: border-box; }
+.ui-page-interface .ui-page-parameters { min-width: 0; margin: 10px 0 12px; }
+.ui-page-parameters + .ui-page-parameters { border-top: 1px solid var(--editor-border); padding-top: 4px; }
+.ui-page-interface .blueprint-member-heading { margin: 5px 0; }
+.ui-page-interface .blueprint-member-heading > strong { color: var(--editor-muted); font-weight: 600; }
+.ui-page-interface .ui-page-parameter-definition { padding: 8px; border: 1px solid var(--editor-border); border-radius: 4px; background: color-mix(in srgb, var(--editor-text) 2%, var(--editor-panel)); }
+.ui-page-parameter-actions { display: flex; gap: 5px; flex-wrap: wrap; margin: 8px 0 0; }
+.ui-page-parameter-actions > button { padding: 3px 7px; font-size: 11px; border: 1px solid var(--editor-border); border-radius: 3px; color: var(--editor-text); }
+.ui-page-interface [role="alertdialog"] { border: 1px solid var(--editor-accent); padding: 10px; margin-top: 10px; border-radius: 4px; }
+.ui-page-interface [role="alertdialog"] ul { max-height: 180px; overflow: auto; padding-left: 18px; }
+.ui-page-interface [role="alertdialog"] p, .ui-page-interface [role="alertdialog"] li { overflow-wrap: anywhere; }
+.blueprint-page-fields { display: grid; gap: 6px; }
+.blueprint-page-fields [role="alertdialog"] { padding: 8px; border: 1px solid var(--accent); }
+
+.ui-page-arguments { min-width: 0; margin: 8px 0; padding: 8px; border: 1px solid var(--border); border-radius: 5px; }
+.ui-page-argument + .ui-page-argument { margin-top: 10px; }
+.ui-page-stale-arguments p { overflow-wrap: anywhere; }

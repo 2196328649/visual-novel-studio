@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { createProject } from '../src/core/model';
@@ -22,7 +23,15 @@ const model=performanceTimeline(project,parent);arrangePerformanceTimeline(proje
 await fs.mkdir(output,{recursive:true});await fs.writeFile(path.join(output,'project.vns.json'),JSON.stringify(project));
 const result=await buildProject({project,sdkRoot:sdk,outputDir:build,development:true});if(!result.ok)throw Error(result.log);
 const story=path.join(build,'game/story.rpy');let source=await fs.readFile(story,'utf8');
-source=source.split('\n').flatMap(line=>line.includes('$ vn_show_visual(')?[line,'    $ qa_visual_at = renpy.get_game_runtime() - qa_start']:line.includes('$ renpy.music.stop(')?[line,'    $ qa_stop_at = renpy.get_game_runtime() - qa_start','    $ vn_var_duration_input = 10.0']:[line]).join('\n');
+let visualProbes = 0, stopProbes = 0;
+source = source.split('\n').flatMap(line => {
+  const indent = line.match(/^(\s*)\$/)?.[1];
+  if (indent === undefined) return [line];
+  if (/\bvn_show_visual\(/.test(line)) { visualProbes++; return [line, indent + '$ qa_visual_at = renpy.get_game_runtime() - qa_start']; }
+  if (line.includes('$ renpy.music.stop(')) { stopProbes++; return [line, indent + '$ qa_stop_at = renpy.get_game_runtime() - qa_start', indent + '$ vn_var_duration_input = 10.0']; }
+  return [line];
+}).join('\n');
+assert.ok(visualProbes > 0 && stopProbes > 0, 'Generated timeline probes must attach to actual emitted statements');
 await fs.writeFile(story,source);
 await fs.writeFile(path.join(build,'game/testcases.rpy'),`default qa_start = 0.0
 default qa_visual_at = -1.0

@@ -66,7 +66,7 @@ test('omitted phases inherit while a mode or seconds alone creates only that ove
     const action = textCommandAction(project, source, true)!;
     assert.ok(action.kind === 'show'); assert.deepEqual(action.actorTransitions, expected);
   }
-  for (const source of ['入场过渡=错误', '离场秒数=-1', '表情切换秒数=61', '入场秒数=abc']) {
+  for (const source of ['入场过渡=错误', '离场秒数=-1', '表情切换秒数=-0.1', '入场秒数=abc']) {
     assert.throws(() => textCommandAction(project, '@显示角色：' + source, true));
   }
 });

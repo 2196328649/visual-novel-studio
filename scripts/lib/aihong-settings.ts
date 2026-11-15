@@ -7,7 +7,7 @@ import type { UnityObject, UnityUi } from './unity-ui';
 interface Context {
   project: Project; ui: UnityUi;
   image: (id: string, page: UiComponent['page'], original: string) => UiComponent;
-  button: (id: string, page: UiComponent['page'], original: string, action: NonNullable<UiComponent['action']>, caption: string) => UiComponent;
+  button: (id: string, page: UiComponent['page'], original: string, action: UiComponent['action'], caption: string) => UiComponent;
   text: (id: string, page: UiComponent['page'], original: string, binding: UiComponent['binding']) => UiComponent;
   asset: (record: UnityObject | undefined) => string;
   skin: (node: UnityObject) => UiSkin;
@@ -80,7 +80,11 @@ export function addAihongSettings(context: Context) {
     const p = `${root}/Content/${name}`;
     image(`ai_settings_${safe(name)}_background`, 'preferences', `${p}/BG`);
     label(`ai_settings_${safe(name)}_label`, 'preferences', `${p}/BG/${name === 'LanguageSetting' ? 'Uguitext' : 'Uguitext (1)'}`, caption);
-    for (const direction of ['BtnPre', 'BtnNext']) button(`ai_settings_${safe(name)}_${direction.toLowerCase()}`, 'preferences', `${p}/${direction}`, 'return', '此示例仅含中文内容').disabled = true;
+    for (const [direction, label] of [['BtnPre', '上一种'], ['BtnNext', '下一种']]) {
+      const arrow = button(`ai_settings_${safe(name)}_${direction.toLowerCase()}`, 'preferences', `${p}/${direction}`, undefined, '此示例仅含中文内容');
+      arrow.name = label + (name === 'LanguageSetting' ? '界面语言' : '配音语言');
+      arrow.disabled = true;
+    }
   }
   for (const [name, action, caption] of [['InitButton', 'resetPreferences', '恢复初始设置'], ['ButtonBack', 'return', '返回'], ['ButtonEndGame', 'quit', '退出游戏'], ['ButtonBackTitle', 'mainMenu', '返回标题']] as const) button(`ai_settings_${name.toLowerCase()}`, 'preferences', `${root}/Content/Button/${name}`, action, caption);
   const openVoices = button('ai_settings_characters', 'preferences', `${root}/Content/OpenCharacterVolumeSetting`, 'voiceSettings', '角色音量');

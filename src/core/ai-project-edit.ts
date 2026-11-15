@@ -1,8 +1,10 @@
+import { cloneData } from "./project-mutation";
 import { z } from 'zod';
-import { projectSchema, type Project } from './model';
+import { projectSchema, type Project, type Variable } from './model';
 import { projectToText } from './text-script';
+import { parameterResetsWithSettings, parameterSetDefaults, parameterSetFor, parameterSets, storyParametersId } from './parameter-sets';
 
-export const editableProjectFields = ['name', 'version', 'width', 'height', 'playerDefaults', 'parameterSets', 'exportSettings', 'assets', 'characters', 'variables', 'effects', 'blueprints', 'timelinePresets', 'minigames', 'contentBrowser', 'chapters', 'scenes', 'nodes', 'entryId', 'ui'] as const;
+export const editableProjectFields = ['name', 'version', 'width', 'height', 'playerDefaults', 'parameterSets', 'exportSettings', 'assets', 'characters', 'variables', 'effects', 'blueprints', 'timelinePresets', 'textPresets', 'minigames', 'contentBrowser', 'chapters', 'scenes', 'nodes', 'storyGroups', 'gameFlow', 'entryId', 'ui'] as const;
 const pathSegmentSchema = z.union([z.string().min(1).max(200), z.number().int().nonnegative(), z.object({ id: z.string().min(1).max(200) }).strict()]);
 export const aiProjectEditSchema = z.object({
   kind: z.literal('editProject'),
@@ -33,7 +35,13 @@ function keyFor(parent: any, segment: z.infer<typeof pathSegmentSchema>): string
   if (!Array.isArray(parent) && typeof segment !== 'string') throw new Error('对象属性必须使用名称。');
   return segment;
 }
-export function applyProjectEdit(project: Project, operation: AiProjectEdit) {
+function initializeParameterBehavior(project: Project, variable: Variable) {
+  const defaults = parameterSetDefaults(parameterSetFor(project, variable));
+  variable.persistent ??= defaults.persistent;
+  variable.resetWithSettings ??= defaults.resetWithSettings;
+}
+export function applyProjectEdit(project: Project, operation: AiProjectEdit, baseline?: Project) {
+  operation = aiProjectEditSchema.parse(operation);
   assertKeys(operation.value);
   let parent: any = project;
   for (const segment of operation.path.slice(0, -1)) {
@@ -44,20 +52,43 @@ export function applyProjectEdit(project: Project, operation: AiProjectEdit) {
   }
   if (!parent || typeof parent !== 'object') throw new Error('工程修改路径不存在。');
   const key = keyFor(parent, operation.path.at(-1)!);
-  const before = structuredClone(parent[key]);
+  const before = cloneData(parent[key]);
+  if (operation.action === 'append' && !Array.isArray(parent[key])) throw new Error('append 只能向已有列表增加条目。');
+  if (operation.action === 'remove' && !Object.hasOwn(parent, key)) throw new Error('要删除的内容不存在。');
+  // Generic edits can bypass moveParameter/removeParameterSet. Read old behavior
+  // before a group disappears, and preserve it when replacing an existing variable.
+  // Explicit edits to resetWithSettings still do exactly what their path requests.
+  const groupsChanged = operation.path[0] === 'parameterSets';
+  const variablesChanged = operation.path[0] === 'variables' && (operation.path.length <= 2 || operation.path[2] === 'parameterSetId');
+  const existingIds = baseline && new Set(baseline.variables.map(variable => variable.id));
+  const resets = groupsChanged || variablesChanged
+    ? new Map(project.variables.filter(variable => !existingIds || existingIds.has(variable.id) || variable.resetWithSettings !== undefined)
+      .map(variable => [variable.id, { value: parameterResetsWithSettings(project, variable), group: variable.parameterSetId, variable }])) : undefined;
   if (operation.action === 'append') {
-    if (!Array.isArray(parent[key])) throw new Error('append 只能向已有列表增加条目。');
-    parent[key].push(structuredClone(operation.value));
+    parent[key].push(cloneData(operation.value));
   } else if (operation.action === 'remove') {
-    if (!Object.hasOwn(parent, key)) throw new Error('要删除的内容不存在。');
     if (Array.isArray(parent)) parent.splice(Number(key), 1); else delete parent[key];
-  } else parent[key] = structuredClone(operation.value);
+  } else parent[key] = cloneData(operation.value);
+  if (resets && Array.isArray(project.variables)) for (const variable of project.variables) {
+    if (!variable || typeof variable !== 'object') continue;
+    const previous = resets.get(variable.id);
+    if (variable.resetWithSettings === undefined && previous && (variable !== previous.variable || variable.parameterSetId !== previous.group || parameterResetsWithSettings(project, variable) !== previous.value)) variable.resetWithSettings = previous.value;
+    const newlyCreated = existingIds ? !existingIds.has(variable.id) : !previous;
+    if (newlyCreated && parameterSets(project).some(set => set.id === (variable.parameterSetId ?? storyParametersId))) initializeParameterBehavior(project, variable);
+  }
   return { label: '工程 · ' + operation.path.map(part => typeof part === 'object' ? part.id : part).join(' / '), before: JSON.stringify(before, null, 2) ?? '未设置', after: operation.action === 'remove' ? '已移除' : JSON.stringify(parent[key], null, 2) ?? '未设置' };
 }
 
 /** Validate the whole batch, not transient intermediate states of connected edits. */
-export function finalizeProjectEdits(project: Project) {
-  const parsed = projectSchema.parse(project);
+export function finalizeProjectEdits(project: Project, baseline?: Project) {
+  // Final fallback for new IDs declared before their group. Existing variables
+  // keep their policy; merely reading or editing unrelated fields never migrates them.
+  const candidate = baseline ? cloneData(project) : project;
+  if (baseline && Array.isArray(candidate.variables)) {
+    const existingIds = new Set(baseline.variables.map(variable => variable.id));
+    for (const variable of candidate.variables) if (variable && !existingIds.has(variable.id)) initializeParameterBehavior(candidate, variable);
+  }
+  const parsed = projectSchema.parse(candidate);
   const check = (raw: any, valid: any) => {
     if (!raw || typeof raw !== 'object') return;
     for (const [key, value] of Object.entries(raw)) {
@@ -65,7 +96,7 @@ export function finalizeProjectEdits(project: Project) {
       check(value, valid?.[key]);
     }
   };
-  check(project, parsed);
+  check(candidate, parsed);
   if (parsed.scriptText) parsed.scriptText = { ...parsed.scriptText, content: projectToText(parsed) };
   return parsed;
 }

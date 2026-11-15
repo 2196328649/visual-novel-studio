@@ -1,9 +1,12 @@
+import { uiPageTheme } from '../core/ui-page-settings';
+import { resolveUiHierarchy } from '../core/ui-hierarchy';
+import { cloneData } from "../core/project-mutation";
 import type { UiAnimationFocus } from './ui-animation-editor-focus';
 import { aiSelectedUiAnimation } from '../core/ai-selection';
 import type { UiAnimationSelection } from '../core/ai-selection';
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { Pause, Play, Plus, Trash2 } from 'lucide-react';
-import { makeId, effectiveUiTheme, sortUiComponents, type Project, type UiAnimationClip, type UiAnimationKey } from '../core/model';
+import { makeId, effectiveUiTheme, type Project, type UiAnimationClip, type UiAnimationKey } from '../core/model';
 import { addUiAnimationTrack, sampleUiAnimationTrack, uiAnimationClipProblems, uiAnimationInitial, uiClipComponents } from '../core/ui-animation-clips';
 import { uiAnimationEasings, uiAnimationPropertyNames, type UiAnimationProperty } from '../core/ui-animation';
 import { uiPropertyApplies } from '../core/ui';
@@ -25,7 +28,7 @@ export function UiAnimationEditor({focus,project,clip,commit,assetUrl,onBack,onA
  const drag=useRef<{keyId:string;trackId:string;startX:number;time:number;width:number;value:number}|undefined>(undefined);
  const track=clip.tracks.find(t=>t.id===trackId),key=track?.keys.find(k=>k.id===keyId);
  const targetName=(id:string)=>{const c=components.find(c=>c.id===id);return c?componentName(c):'缺失控件';};
- const playhead=Math.min(time,clip.duration),theme=effectiveUiTheme(project.ui),scale=width/project.width;
+ const playhead=Math.min(time,clip.duration),theme=uiPageTheme(project,clip.pageId),scale=width/project.width;
  const page=clip.pageId.slice(3) as keyof NonNullable<Project['ui']['pages']>;
  const settings=clip.pageId.startsWith('ui:')?theme.pages?.[page]:project.ui.customPages.find(p=>p.id===clip.pageId);
  const backgroundId=settings?.backgroundId??(['ui:main','ui:say','ui:choice'].includes(clip.pageId)?theme.menuBackgroundId:undefined);
@@ -56,7 +59,7 @@ export function UiAnimationEditor({focus,project,clip,commit,assetUrl,onBack,onA
   return()=>{if(focus.active())focus.finish({status:'cancelled',message:'已离开动画编辑器，定位已取消。'});};
  },[focus,clip.id]);
  const update=(label:string,edit:(target:UiAnimationClip)=>void)=>{
-  const next=structuredClone(clip);edit(next);const errors=uiAnimationClipProblems(project,next);
+  const next=cloneData(clip);edit(next);const errors=uiAnimationClipProblems(project,next);
   if(errors.length){setNotice(errors.join(' ')+' 修改未应用。');return false;}
   setNotice('');commit(label,draft=>{const index=draft.ui.animations?.findIndex(a=>a.id===clip.id)??-1;if(index>=0)draft.ui.animations![index]=next;});return true;
  };
@@ -71,8 +74,8 @@ export function UiAnimationEditor({focus,project,clip,commit,assetUrl,onBack,onA
  const hierarchy=<div className="ui-animation-library"><p>选择控件与属性，为它添加关键帧轨道。</p>{components.map(c=><button key={c.id} className={component?.id===c.id?'active':''} aria-pressed={component?.id===c.id} data-animation-component={c.id} onClick={()=>onComponentSelect(c.id)}>{componentName(c)}</button>)}<label>动画属性<select aria-label="添加轨道属性" value={component&&uiPropertyApplies(component,property)?property:'opacity'} onChange={e=>setProperty(e.target.value as UiAnimationProperty)}>{Object.entries(uiAnimationPropertyNames).filter(([p])=>!component||uiPropertyApplies(component,p as UiAnimationProperty)).map(([p,n])=><option key={p} value={p}>{n}</option>)}</select></label><button className="small-button" disabled={!component||clip.tracks.length>=128} onClick={addTrack}><Plus size={14}/>添加属性轨道</button></div>;
  const canvas=<div className="ui-animation-preview-scroll" ref={frame}><div className="ui-animation-preview" aria-label="控件动画画布" style={{width,margin:'0 auto',aspectRatio:`${project.width}/${project.height}`,background:settings?.background??theme.background,color:theme.textColor}}>
   {backgroundId&&<img className="stage-background" src={assetUrl(backgroundId)} alt="界面背景"/>}
-  {sortUiComponents(components).map(original=>{const c=structuredClone(original);for(const t of clip.tracks.filter(t=>t.componentId===c.id)){const value=sampleUiAnimationTrack(t,playhead,uiAnimationInitial(original,t.property));if(t.property==='opacity')c.style={...c.style,opacity:value};else c[t.property]=value;}
-   return <div key={c.id} className={'ui-animation-component ui-logic-component kind-'+c.kind+(component?.id===c.id?' selected':'')} data-animation-preview={c.id} style={uiComponentPreviewStyle(project,c,scale)} onClick={()=>onComponentSelect(c.id)} title={componentName(c)}><UiComponentContent project={project} component={c} assetUrl={assetUrl} scale={scale}/></div>;
+  {resolveUiHierarchy(components.map(original=>{const c=cloneData(original);for(const t of clip.tracks.filter(t=>t.componentId===c.id)){const value=sampleUiAnimationTrack(t,playhead,uiAnimationInitial(original,t.property));if(t.property==='opacity')c.style={...c.style,opacity:value};else c[t.property]=value;}return c;}),{viewport:project,design:true}).filter(row=>row.visible).map(({component:c,geometry})=>{
+    return <div key={c.id} className={'ui-animation-component ui-logic-component kind-'+c.kind+(component?.id===c.id?' selected':'')} data-animation-preview={c.id} style={uiComponentPreviewStyle(project,c,scale,'idle',c,geometry)} onClick={()=>onComponentSelect(c.id)} title={componentName(c)}><UiComponentContent project={project} component={c} assetUrl={assetUrl} scale={scale}/></div>;
   })}</div><small>控件关键帧预览 · 点击画布控件可选择；此处不触发按钮事件。</small></div>;
  const timeline=<div className="ui-animation-timeline"><div className="ui-animation-transport"><button className="small-button" disabled={!clip.duration||!clip.tracks.length} aria-label={playing?'暂停动画预览':'播放动画预览'} onClick={()=>{if(!playing&&playhead>=clip.duration)setTime(0);setPlaying(p=>!p);}}>{playing?<Pause size={14}/>:<Play size={14}/>}</button><button className="text-button" onClick={()=>{setPlaying(false);setTime(0);}}>回到起点</button><label>播放头<NumberInput aria-label="动画播放头秒数" value={playhead} step={.01} onChange={e=>{setPlaying(false);setTime(Math.max(0,Math.min(clip.duration,e.target.valueAsNumber)));}}/> 秒</label><button className="small-button" disabled={!track||track.keys.length>=1024} onClick={addKey}><Plus size={13}/>在播放头添加关键帧</button></div>
   <div className="ui-animation-ruler"><span>控件 / 属性</span><input aria-label="动画时间标尺" type="range" min={0} max={clip.duration||1} step={.001} value={playhead} onChange={e=>{setPlaying(false);setTime(Number(e.target.value));}}/></div>
@@ -91,7 +94,7 @@ export function UiAnimationEditor({focus,project,clip,commit,assetUrl,onBack,onA
  const inspector=<div className="ui-animation-inspector"><label>动画名称<input aria-label="界面动画名称" value={clip.name} maxLength={120} onChange={e=>{if(e.target.value.trim())update('重命名界面动画',a=>{a.name=e.target.value;});}}/></label><label>总时长（秒）<NumberInput aria-label="界面动画总时长" value={clip.duration} step={.1} onChange={e=>update('修改界面动画时长',a=>{a.duration=e.target.valueAsNumber;})}/></label><small>缩短时长前，请先移动或删除超出范围的关键帧。</small>
   {key?<Fragment key={key.id}><h3>关键帧</h3><label>时间（秒）<NumberInput aria-label="关键帧时间" value={key.time} step={.01} onChange={e=>editKey({time:e.target.valueAsNumber})}/></label><label>{uiAnimationPropertyNames[track!.property]}<NumberInput aria-label="关键帧数值" value={key.value} step={.01} onChange={e=>editKey({value:e.target.valueAsNumber})}/></label><label>到达此帧的缓动<select aria-label="关键帧缓动" value={key.easing} onChange={e=>editKey({easing:e.target.value as UiAnimationKey['easing']})}>{Object.entries(uiAnimationEasings).map(([id,n])=><option key={id} value={id}>{n}</option>)}</select></label><button className="small-button" disabled={track!.keys.length<=1} onClick={()=>{if(update('删除动画关键帧',a=>{const t=a.tracks.find(t=>t.id===track!.id)!;t.keys=t.keys.filter(k=>k.id!==key.id);}))setKeyId(undefined);}}><Trash2 size={13}/>删除关键帧</button></Fragment>:<p>选择菱形关键帧，编辑它的时间与数值。可拖动关键帧，或用方向键微调。</p>}
   {track&&<button className="text-button" onClick={()=>{if(update('删除动画轨道',a=>{a.tracks=a.tracks.filter(t=>t.id!==track.id);})){setTrackId(undefined);setKeyId(undefined);}}}>删除所选轨道</button>}
-  <hr/><small>动画从首帧开始，末帧后保持至总时长；首帧晚于 0 秒时，从播放时的控件值过渡。</small><button className="text-button" onClick={()=>{commit('删除界面动画',draft=>{draft.ui.animations=draft.ui.animations?.filter(a=>a.id!==clip.id);});onBack();}}>删除此动画</button><small>删除后可撤销；引用此动画的节点会提示引用缺失。</small>
+  <hr/><small>动画从首帧开始，末帧后保持至总时长；首帧晚于 0 秒时，从播放时的控件值过渡。</small><button className="text-button" onClick={()=>{commit('删除界面动画',draft=>{draft.ui.animations=draft.ui.animations?.filter(a=>a.id!==clip.id);});onBack();}}>删除此动画</button><small>删除后，引用此动画的节点会提示引用缺失。</small>
  </div>;
  return <div ref={editor} className="ui-animation-editor"><UiFontFaces project={project} assetUrl={assetUrl}/><div className="workspace-toolbar"><button className="small-button" onClick={onBack}>返回事件图</button><strong>控件动画 · {clip.name}</strong><span>{clip.tracks.length} 条属性轨道</span></div>{notice&&<div className="ui-event-notice" role="status">{notice}<button aria-label="关闭动画提示" onClick={()=>setNotice('')}>×</button></div>}<UiDock defaultTop={60} storageKey="vns-ui-animation-dock-v1" label="控件动画面板布局" labels={{hierarchy:'控件',canvas:'动画预览',settings:'关键帧轨道',inspector:'详细信息'}} panels={{hierarchy,canvas,settings:timeline,inspector}}/></div>;
 }

@@ -83,7 +83,7 @@ function skin(node: UnityObject): UiSkin {
   }
   return result;
 }
-function button(id: string, page: UiComponent['page'], original: string, action: NonNullable<UiComponent['action']>, text: string) {
+function button(id: string, page: UiComponent['page'], original: string, action: UiComponent['action'], text: string) {
   const node = ui.node(original);
   const component: UiComponent = { id, page, kind: 'button', action, text, skin: skin(node), ...position(node, id) };
   project.ui.components.push(component);

@@ -1,0 +1,106 @@
+.blueprint-property-fields { min-width: 0; }
+.blueprint-property-fields .blueprint-property-entry { min-width: 0; }
+.blueprint-property-fields .blueprint-property-row {
+  display: grid;
+  grid-template-columns: minmax(88px, 42%) minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 2px 0;
+}
+.blueprint-property-fields .blueprint-property-row > :is(select, .blueprint-pin-value) { min-width: 0; width: 100%; }
+.blueprint-property-fields .blueprint-property-select { text-overflow: ellipsis; }
+.blueprint-property-fields .blueprint-pin-value { min-width: 0; }
+.blueprint-property-fields :is(input, select) { max-width: 100%; min-width: 0; }
+.blueprint-property-fields .blueprint-property-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.blueprint-property-fields .blueprint-property-icon:hover:not(:disabled) { color: var(--text); background: var(--editor-raised); }
+.blueprint-property-fields .blueprint-property-icon:disabled { opacity: .35; cursor: default; }
+.blueprint-property-fields .blueprint-property-mode {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  margin: 0;
+  padding: 1px 25px 1px 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.blueprint-property-fields .blueprint-property-mode > span { flex: none; }
+.blueprint-property-fields .blueprint-property-mode > select { flex: 1; min-width: 0; }
+.blueprint-property-fields .blueprint-property-source { display: flex; align-items: center; gap: 3px; min-width: 0; width: 100%; }
+.blueprint-property-fields .blueprint-property-source > .blueprint-pin-source {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  font-size: 11px;
+  cursor: pointer;
+}
+.blueprint-property-fields .blueprint-property-source > .blueprint-pin-source:hover:not(:disabled) { color: var(--text); text-decoration: underline; }
+.blueprint-property-fields .blueprint-property-source > .blueprint-pin-source:disabled { cursor: default; }
+.blueprint-property-fields .blueprint-property-add {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  margin-top: 2px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+}
+.blueprint-property-fields .blueprint-property-add > svg { flex: none; }
+.blueprint-property-fields .blueprint-property-add > select { flex: 1; border: 0; background-color: transparent; color: inherit; padding-left: 0; }
+.blueprint-property-fields .blueprint-property-status { display: block; margin: 0; padding: 3px 0; font-size: 11px; line-height: 16px; color: var(--muted); }
+.blueprint-property-fields .blueprint-property-status[data-warning] { color: var(--amber, #e4b677); }
+.blueprint-property-fields-inspector .blueprint-value-input { min-width: 0; }
+.blueprint-property-fields-inspector .blueprint-color-value { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.blueprint-property-fields-inspector .blueprint-color-value > input[type=color] { flex: 0 0 24px; width: 24px; padding: 1px; }
+.blueprint-property-fields-inspector .blueprint-color-value > input:not([type=color]) { min-width: 0; width: 100%; }
+.blueprint-property-fields-inspector .blueprint-property-row { grid-template-columns: minmax(0, 1fr) 20px; }
+.blueprint-property-fields-inspector .blueprint-property-row > .blueprint-property-select { grid-column: 1; grid-row: 1; }
+.blueprint-property-fields-inspector .blueprint-property-row > .blueprint-pin-value { grid-column: 1 / -1; grid-row: 2; }
+.blueprint-property-fields-inspector .blueprint-property-row > .blueprint-property-remove { grid-column: 2; grid-row: 1; }
+.generic-blueprint-workspace .blueprint-graph-node .blueprint-property-fields-card .blueprint-property-row { display: grid; grid-template-columns: minmax(0, 42%) minmax(0, 1fr) 20px; }
+.generic-blueprint-workspace .blueprint-graph-node .blueprint-property-fields-card .blueprint-property-row.collapsed { display: flex; }
+.generic-blueprint-workspace .blueprint-property-fields-card .blueprint-property-row .blueprint-property-name { max-width: none; }
+.generic-blueprint-workspace .blueprint-property-fields-card :is(.blueprint-property-select, .blueprint-property-mode select) {
+  height: 24px;
+  padding: 2px 5px;
+  border-color: var(--editor-border);
+  background-color: var(--editor-input);
+  color: var(--editor-input-text);
+  font-size: 11px;
+  line-height: 18px;
+}
+.generic-blueprint-workspace .blueprint-property-fields-card .blueprint-property-mode { padding-left: 12px; padding-right: 31px; }
+.generic-blueprint-workspace .blueprint-property-fields-card :is(.blueprint-property-icon, .blueprint-property-mode, .blueprint-property-add, .blueprint-property-status) { color: var(--editor-node-muted); }
+.generic-blueprint-workspace .blueprint-property-fields-card .blueprint-property-status[data-warning] { color: var(--amber, #e4b677); }
+.generic-blueprint-workspace .blueprint-property-fields-card .blueprint-property-icon:hover:not(:disabled) { color: var(--editor-raised-text); background: var(--editor-raised); }
+.generic-blueprint-workspace .blueprint-property-fields-card .blueprint-property-add { margin-inline: 12px 6px; border-color: var(--editor-border); }
+.generic-blueprint-workspace .blueprint-property-fields-card .blueprint-property-add > select { height: 26px; font-size: 11px; color: var(--editor-node-muted); }
+.generic-blueprint-workspace .blueprint-property-fields-card .blueprint-property-status {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  padding: 2px 12px;
+  max-height: 36px;
+}

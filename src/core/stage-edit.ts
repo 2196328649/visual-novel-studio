@@ -1,3 +1,4 @@
+import { cloneData } from "./project-mutation";
 import { projectGraphs, addProjectGraphs } from './project-resources';
 import { setAfterOffsets, setMoveOffsets, nodeMoveOffsets, supportsEntranceOffsets } from './move-offsets';
 import { availableBlueprintName } from './blueprint-names';
@@ -17,7 +18,8 @@ import { actorCurveProperties, setActorAnimationPoseAt } from './actor-animation
 import { actionTiming } from './performance-timing';
 import { linePlaybackPlan, sampleLinePlayback } from './line-preview';
 import { linePreviewSnapshot, type PreviewActor, type PreviewSelection } from './line-preview';
-import { applyTextScript, linePerformanceText, playbackText, standaloneText, projectToText, textReference, type TextSourceLocation, type TextNodeLocation } from './text-script';
+import { applyTextScript, linePerformanceText, playbackText, standaloneText, projectToText, textPresentationText, textReference, type TextSourceLocation, type TextNodeLocation } from './text-script';
+import { dialogueMarkupRows, dialogueMarkupDeclarationRows } from './text-spans';
 
 export type StageCommit = (label: string, edit: (project: Project) => void) => { source: string; sourceMap: TextSourceLocation[] } | undefined;
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
@@ -112,7 +114,7 @@ function cameraSource(project: Project, origin: PreviewActionOrigin | undefined,
     if (node && saved?.kind === 'camera') return { action: saved, name: `共享演出 ${graph!.name} / ${node.name}`, save: () => { node.properties.action = JSON.stringify(saved); } };
     if (node?.type === 'camera') {
       if (graph!.links.some(link => link.toNodeId === node.id && node.pins.some(pin => pin.id === link.toPinId && pin.dataType !== 'exec'))) throw new Error('镜头参数由数据连线控制，请在来源蓝图中编辑。');
-      const action = structuredClone(resolved);
+      const action = cloneData(resolved);
       return { action, name: `共享演出 ${graph!.name} / ${node.name}`, save: () => {
         node.type = 'savedAction'; node.properties = { action: JSON.stringify(actionSchema.parse(action)) }; node.pins = blueprintNodeDefaults('savedAction').pins;
       } };
@@ -169,16 +171,28 @@ export function moveStageVisual(project: Project, selection: PreviewSelection, r
   const state = sampleLinePlayback(snapshot.before, plan, time).state;
   const visible = stageVisualObjects(state).filter(item => item.rootId === rootId && item.object.instanceId === instanceId);
   if (visible.length !== 1) throw new Error('当前时刻对象不存在或实例标识重复。');
-  const origin = snapshot.context.actionOrigins?.get(state.visuals.get(rootId)!.object);
+  const playingRoot = state.visuals.get(rootId)!.object;
+  const origin = snapshot.context.actionOrigins?.get(playingRoot);
   if (!origin) throw new Error('无法定位视觉对象的可编辑来源。');
   const graph = projectGraphs(project).find(graph => graph.id === origin.blueprintId);
   const node = graph?.nodes.find(node => node.id === origin.blueprintNodeId);
   const actions = origin.sceneId ? project.scenes.find(scene => scene.id === origin.sceneId)?.entryActions : lineFor(project, origin)?.actions;
   const action = node ? rawSavedBlueprintAction(node) : origin.direct ? actions?.[origin.actionIndex] : undefined;
   if (action?.kind !== 'visual') throw new Error('无法定位视觉对象的可编辑来源，请打开来源演出。');
-  const path = visualInstancePath(action, instanceId);
+  // Playback scopes a reusable timeline's identities to each call. Its source
+  // still has the authored IDs, while the local object hierarchy is unchanged.
+  const path = visualInstancePath(playingRoot, instanceId);
   if (!path) throw new Error('对象已移除或实例标识重复。');
-  let object = action; for (const index of path) object = object.children![index];
+  let object = action, playing = playingRoot;
+  for (const index of path) {
+    // Resource children are a materialized cache, not an editable local tree.
+    // The instance's own transform remains editable at the resource boundary.
+    if (object.compositionId) throw new Error('此对象来自组合资源，请打开组合资源编辑内部内容。');
+    const child = object.children?.[index], shownChild = playing.children?.[index];
+    if (object.content !== playing.content || object.children?.length !== playing.children?.length || !child || !shownChild) throw new Error('对象结构已变化，请打开来源演出重新选择。');
+    object = child; playing = shownChild;
+  }
+  if (object.content !== playing.content) throw new Error('对象结构已变化，请打开来源演出重新选择。');
   const scale = origin.visualTimeScales?.[instanceId] ?? 1;
   const localTime = visible[0].elapsed / scale, originalPatch = { ...patch };
   if (originalPatch.rippleSpeed !== undefined) originalPatch.rippleSpeed *= scale;
@@ -259,7 +273,7 @@ export function moveStageActor(project: Project, selection: PreviewSelection, id
           const source = showSource(project, origin, inherited.sourceShow), original = source?.action;
           if (!source || !original) throw new Error('无法定位前文入场的可编辑来源，请打开来源演出。');
           const localTime = inherited.elapsed + (milliseconds - start) / 1000;
-          const animation = structuredClone(inherited.action), pose = inherited.initial;
+          const animation = cloneData(inherited.action), pose = inherited.initial;
           animation.keyframes.unshift({ x: pose.x, y: pose.y, scale: pose.scale, rotation: pose.rotation, opacity: pose.opacity, duration: 0, easing: 'linear' });
           setActorAnimationPoseAt(animation, localTime, pose, posePatch);
           const timing = actionTiming(inherited.sourceShow);
@@ -345,7 +359,7 @@ export function patchStageSource(before: Project, after: Project, source: string
     if (node.kind !== 'passage') continue;
     for (const line of node.lines) {
       const prior = original.get(`${node.id}/${line.id}`);
-      if (!prior || (same(prior.actions, line.actions) && prior.voiceId === line.voiceId && same(prior.playback, line.playback))) continue;
+      if (!prior || (same(prior.actions, line.actions) && prior.voiceId === line.voiceId && same(prior.playback, line.playback) && same(prior.textPresentation, line.textPresentation) && same(prior.textSpans, line.textSpans) && same(prior.textPauses, line.textPauses))) continue;
       const locations = sourceMap.filter(location => !location.reference && location.nodeId === node.id && location.lineId === line.id);
       const dialogue = locations.find(location => location.actionCount === undefined);
       const actionRows = locations.filter(location => location.actionCount !== undefined && !location.playback).map(location => location.sourceLine - 1);
@@ -353,14 +367,18 @@ export function patchStageSource(before: Project, after: Project, source: string
       if (!dialogue && !line.silent) throw new Error('请先为当前段落添加台词，再编辑舞台。');
       const at = dialogue ? dialogue.sourceLine - 1 : actionRows[0];
       if (at === undefined) throw new Error('找不到此演出在文本中的位置。');
+      const markupDeclarations = dialogue ? dialogueMarkupDeclarationRows(rows, at) : [];
+      // New directives precede the whole syntax prefix. Inserting between its
+      // declaration and dialogue would invalidate an otherwise unchanged line.
+      const directiveAt = markupDeclarations.length ? Math.min(...markupDeclarations) : at;
       if (!same(prior.actions, line.actions)) {
         const actions = actionRows;
         [...actions, ...playbackRows].forEach(row => remove.add(row));
-        insert.set(Math.min(actions[0] ?? at, playbackRows[0] ?? at), [...linePerformanceText(after, node, line), ...(line.silent ? [standaloneText(isStandaloneNode(node) ? node.name : undefined, line.playback)] : playbackText(line.playback))]);
+        insert.set(Math.min(actions[0] ?? directiveAt, playbackRows[0] ?? directiveAt), [...linePerformanceText(after, node, line), ...(line.silent ? [standaloneText(isStandaloneNode(node) ? node.name : undefined, line.playback)] : playbackText(line.playback))]);
       } else if (!same(prior.playback, line.playback)) {
         playbackRows.forEach(row => remove.add(row));
         const declaration = actionRows.find(row => /^\s*[@／/]\s*独立演出\s*(?:[:：]|$)/.test(rows[row]));
-        const boundary = line.silent ? declaration ?? (actionRows.at(-1) ?? at) + 1 : playbackRows[0] ?? at;
+        const boundary = line.silent ? declaration ?? (actionRows.at(-1) ?? at) + 1 : playbackRows[0] ?? directiveAt;
         if (line.silent && declaration !== undefined) remove.add(declaration);
         insert.set(boundary, [...(insert.get(boundary) ?? []), ...(line.silent ? [standaloneText(isStandaloneNode(node) ? node.name : undefined, line.playback)] : playbackText(line.playback))]);
       }
@@ -369,7 +387,23 @@ export function patchStageSource(before: Project, after: Project, source: string
         const otherLines = new Set(sourceMap.filter(location => !location.reference && location.lineId !== line.id && location.actionCount === undefined).map(location => location.sourceLine - 1));
         while (start >= 0 && !otherLines.has(start) && !/^\s*#/.test(rows[start])) start--;
         for (let row = start + 1; row < at; row++) if (/^\s*[@／/]\s*配音\s*[:：]/.test(rows[row])) remove.add(row);
-        if (line.voiceId) insert.set(at, [...(insert.get(at) ?? []), `@配音：${textReference(after.assets.find(asset => asset.id === line.voiceId)?.name ?? '配音', line.voiceId)}`]);
+        if (line.voiceId) insert.set(directiveAt, [...(insert.get(directiveAt) ?? []), `@配音：${textReference(after.assets.find(asset => asset.id === line.voiceId)?.name ?? '配音', line.voiceId)}`]);
+      }
+      if (!same(prior.textPresentation, line.textPresentation) && !line.silent && dialogue) {
+        // The text look sits directly above its dialogue, after any voice row.
+        let start = at - 1;
+        const otherLines = new Set(sourceMap.filter(location => !location.reference && location.lineId !== line.id && location.actionCount === undefined).map(location => location.sourceLine - 1));
+        while (start >= 0 && !otherLines.has(start) && !/^\s*#/.test(rows[start])) start--;
+        for (let row = start + 1; row < at; row++) if (/^\s*[@／/]\s*文字(?:演出|样式)\s*[:：]/.test(rows[row])) remove.add(row);
+        insert.set(directiveAt, [...(insert.get(directiveAt) ?? []), ...textPresentationText(after, line.textPresentation)]);
+      }
+      if ((!same(prior.textSpans, line.textSpans) || !same(prior.textPauses, line.textPauses)) && !line.silent && dialogue) {
+        // Part-line effects live in the dialogue's own rows; keep how its speaker was written.
+        const wording = locations.filter(location => location.actionCount === undefined).map(location => location.sourceLine - 1).sort((a, b) => a - b);
+        wording.forEach(row => remove.add(row));
+        markupDeclarations.forEach(row => remove.add(row));
+        const speaker = rows[wording[0]].match(/^(\s*[^:：]{1,40}\s*[:：]\s*)/)?.[1] ?? '';
+        insert.set(at, [...(insert.get(at) ?? []), ...dialogueMarkupRows(after, line, speaker)]);
       }
     }
   }
@@ -381,7 +415,7 @@ export function stageEditedProject(project: Project, edit: (project: Project) =>
   const source = project.scriptText?.content ?? projectToText(project);
   const parsed = read(project, source);
   if (parsed.issues.some(issue => issue.severity === 'error')) return;
-  const next = structuredClone(parsed.project);
+  const next = cloneData(parsed.project);
   edit(next);
   if (same(parsed.project, next)) return;
   const editedSource = next.scriptText?.content ?? source;

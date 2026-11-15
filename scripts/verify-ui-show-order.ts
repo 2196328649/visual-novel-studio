@@ -8,6 +8,7 @@ import { createServer } from 'vite';
 import { createProject } from '../src/core/model';
 import { blueprintNodeDefaults, createBlueprintGraph, connectBlueprintPins, synchronizeBlueprintSignatures } from '../src/core/blueprint';
 import { launchDesktopFixture } from './lib/desktop-fixture';
+import { followUiPreviewPage, openUiPreviewForTest } from './lib/ui-preview-window';
 const root=path.resolve('.'), output=path.join(root,'artifacts/ui-show-order',new Date().toISOString().replaceAll(':','-'));
 await fs.mkdir(output,{recursive:true});
 const project=createProject('高级UI编辑验收');
@@ -18,17 +19,18 @@ const components=[{id:'later',layer:2,events:{onShow:add}},{id:'earlier',layer:1
 project.ui.instances=[{id:'scheme',name:'方案',components,blueprintId:initialize}];project.ui.activeInstanceId='scheme';synchronizeBlueprintSignatures(project);
 const projectFile=path.join(output,'project.vns.json');await fs.writeFile(projectFile,JSON.stringify(project));
 const server=await createServer({root,server:{host:'127.0.0.1',port:0,watch:{ignored:['**/artifacts/**','**/resources/**','**/release/**']}}});await server.listen();
-const app=await launchDesktopFixture({root,projectFile,profile:path.join(output,'profile'),devUrl:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port}),page=await app.firstWindow();
+const app=await launchDesktopFixture({root,projectFile,profile:path.join(output,'profile'),devUrl:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port}),editor=await app.firstWindow();let page=editor;
 try {
  await expect(page.locator('.project-title strong')).toHaveText(project.name,{timeout:45000});
- await page.locator('[data-workspace-tab="ui"]').click();await page.getByRole('button',{name:'高级 UI 蓝图',exact:true}).click();
- await expect(page.locator('.dirty-dot')).toHaveCount(0);
+ await page.locator('[data-workspace-tab="ui"]').click();await page.getByLabel('界面编辑模式').getByRole('button',{name:'事件图',exact:true}).click();await page.getByLabel('事件图页面').selectOption('ui:main');
+ await expect(editor.locator('.dirty-dot')).toHaveCount(0);
  const savedBefore=await fs.readFile(projectFile,'utf8');
- await page.locator('.ui-logic-preview > summary').click();
+ page=await openUiPreviewForTest(app,editor);
  const value=page.getByLabel('预演参数 初始化值',{exact:true});await expect(value).toHaveValue('23');await value.fill('99');await expect(value).toHaveValue('99');
- await page.getByRole('button',{name:'返回界面设计',exact:true}).click();await page.getByLabel('设计页面', { exact: true }).selectOption({ label: '对话' });await page.getByRole('button',{name:'高级 UI 蓝图',exact:true}).click();await page.locator('.ui-logic-preview > summary').click();await expect(value).toHaveValue('10');
- await page.getByRole('button',{name:'返回界面设计',exact:true}).click();await page.getByLabel('设计页面', { exact: true }).selectOption({ label: '标题' });await page.getByRole('button',{name:'高级 UI 蓝图',exact:true}).click();await page.locator('.ui-logic-preview > summary').click();await expect(value).toHaveValue('23');
- await expect(page.locator('.dirty-dot')).toHaveCount(0);expect(await fs.readFile(projectFile,'utf8')).toBe(savedBefore);
+ // The preview follows the page chosen in the editor and starts that page afresh.
+ await editor.getByLabel('事件图页面').selectOption('ui:say');await followUiPreviewPage(page,'对话');await expect(value).toHaveValue('10');
+ await editor.getByLabel('事件图页面').selectOption('ui:main');await followUiPreviewPage(page,'标题');await expect(value).toHaveValue('23');
+ await expect(editor.locator('.dirty-dot')).toHaveCount(0);expect(await fs.readFile(projectFile,'utf8')).toBe(savedBefore);
  await fs.writeFile(path.join(output,'report.json'),JSON.stringify({status:'passed',checks:['方案初始化先于组件','组件按层级初始化','同一个显示蓝图只执行一次','切换页面不继承临时预演操作','返回原页重新初始化','工程和磁盘不变']}));console.log(output);
-} catch(error){await page.screenshot({path:path.join(output,'failure.png')});throw error;}
+} catch(error){await page.screenshot({path:path.join(output,'failure.png')}).catch(()=>undefined);throw error;}
 finally {await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().forEach(w=>w.destroy())).catch(()=>undefined);await app.close();await server.close();}

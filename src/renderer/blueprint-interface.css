@@ -1,0 +1,26 @@
+.blueprint-usage-section { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 10px; }
+.blueprint-usage-section ul { list-style: none; padding: 0; max-height: 320px; overflow: auto; }
+.blueprint-usage-section li { padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 12px; overflow-wrap: anywhere; }
+.blueprint-usage-section li button { text-align: left; white-space: normal; max-width: 100%; line-height: 1.6; }
+.blueprint-usage-section small { display: block; color: var(--muted); margin-top: 3px; }
+.blueprint-interface-card textarea { min-height: 48px; resize: vertical; }
+.blueprint-interface-members { min-width: 0; border-top: 1px solid var(--editor-border); margin-top: 14px; padding-top: 5px; }
+.blueprint-properties-scroll > .blueprint-interface-members:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
+.blueprint-interface-members .blueprint-interface-card { --editor-text: var(--editor-raised-text); --editor-muted: var(--editor-raised-muted); margin: 8px 0 0; padding: 8px; border-radius: 4px; }
+.blueprint-graph-settings { margin-top: 16px; border-top: 1px solid var(--editor-border); min-width: 0; }
+.blueprint-graph-settings > summary { padding: 10px 0; color: var(--editor-text); font-size: 12px; cursor: pointer; }
+.blueprint-graph-settings > summary > span { display: block; padding: 4px 0 0 14px; color: var(--editor-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.blueprint-graph-settings > summary:focus-visible { outline: 1px solid var(--editor-accent, #4c9cbb); outline-offset: 2px; }
+.blueprint-interface-dialog { width: min(720px, calc(100vw - 40px)); max-height: calc(100vh - 48px); padding: 0; border: 1px solid var(--border, #37434a); border-radius: 10px; background: var(--panel, #20262b); color: inherit; }
+.blueprint-interface-dialog::backdrop { background: #0008; }
+.blueprint-interface-dialog form { display: flex; flex-direction: column; max-height: calc(100vh - 50px); }
+.blueprint-interface-dialog header, .blueprint-interface-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 16px 20px; flex: 0 0 auto; }
+.blueprint-interface-dialog footer { justify-content: flex-end; border-top: 1px solid var(--border); }
+.blueprint-interface-dialog h2 { font-size: 18px; margin: 0; }
+.blueprint-interface-dialog h3 { font-size: 14px; }
+.blueprint-interface-dialog-body { padding: 0 20px 14px; overflow: auto; }
+.blueprint-interface-dialog-body p { line-height: 1.6; }
+.blueprint-interface-dialog-body ul { list-style: none; padding: 0; }
+.blueprint-interface-dialog-body li { border-left: 3px solid #d9a354; padding: 8px 12px; background: #d9a35412; margin-bottom: 8px; overflow-wrap: anywhere; }
+.blueprint-interface-dialog-body li strong { font-size: 13px; }
+.blueprint-interface-dialog-body li p { margin: 5px 0 0; font-size: 12px; }

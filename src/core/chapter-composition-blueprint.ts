@@ -15,9 +15,17 @@ export function chapterCompositionBlueprint(project: Project, chapter: Parameter
   const timeline = performanceTimeline(project, graph);
   arrangePerformanceTimeline(project, graph, timeline.clips, timeline.tracks);
   const allInputs = performanceInputs(graph);
+  // A chapter can expose hundreds of nested visual fields. Parse each action
+  // and enumerate its fields once, not once per candidate input and binding.
+  const visuals = new Map(graph.nodes.flatMap(node => {
+    const root = rawSavedBlueprintAction(node);
+    if (root?.kind !== 'visual') return [];
+    const fields = visualInputFields(root);
+    return [[node.id, { root, byPin: new Map(fields.map(field => ['object_' + field.key, field])), byPath: new Map(fields.map(field => [JSON.stringify(field.path), field])) }] as const];
+  }));
+  const inputsByPin = new Map(allInputs.map(input => [input.nodeId + ':' + input.pinId, input]));
   const inputs = allInputs.filter(field => {
-    const action = rawSavedBlueprintAction(graph.nodes.find(node => node.id === field.nodeId)!);
-    const leaf = action?.kind === 'visual' ? visualInputFields(action).find(item => 'object_' + item.key === field.pinId)?.path.at(-1) : undefined;
+    const leaf = visuals.get(field.nodeId)?.byPin.get(field.pinId)?.path.at(-1);
     return leaf !== 'color' && leaf !== 'maskAssetId' && (field.pinId === 'object_duration' || field.dataType === 'string' || field.dataType === 'asset');
   });
   const chapterInputs: Record<string,string> = {};
@@ -45,14 +53,12 @@ export function chapterCompositionBlueprint(project: Project, chapter: Parameter
   }
   const bound = new Set<string>();
   for (const group of bindingGroups) {
-    const titleTargets = graph.nodes.flatMap(node => {
-      const root = rawSavedBlueprintAction(node); if (root?.kind !== 'visual') return [];
-      const fields = visualInputFields(root);
+    const titleTargets = [...visuals].flatMap(([nodeId, { root, byPath }]) => {
       return group.bindings.flatMap(binding => {
         const path = visualInstancePath(root, binding.instanceId); if (!path) return [];
         const fieldPath = [...path.flatMap(index => ['children', index]), ...binding.tail];
-        const field = fields.find(field => JSON.stringify(field.path) === JSON.stringify(fieldPath));
-        const input = allInputs.find(input => input.nodeId === node.id && input.pinId === 'object_' + field?.key);
+        const field = byPath.get(JSON.stringify(fieldPath));
+        const input = field && inputsByPin.get(nodeId + ':object_' + field.key);
         return input ? [input] : [];
       });
     });

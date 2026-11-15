@@ -6,8 +6,10 @@ import { editTextDocument, refreshTextReferenceNames, textDocument } from '../sr
 import { textAssistance } from '../src/core/text-completion';
 import { storyMenuEntries } from '../src/core/story-menu';
 import { storyFlowLayout } from '../src/core/story-flow';
-import { flowNodeAppearance, renameFlowStyleReferences } from '../src/core/flow-style';
+import { editPlayerFlowEntry } from '../src/core/player-flow-authoring';
+import { flowNodeAppearance, flowStyleUsages, renameFlowStyleReferences } from '../src/core/flow-style';
 import { compileProject } from '../src/runtime/compiler';
+import { pythonLiteral } from '../src/runtime/literals';
 
 const component: UiComponent = { id: 'flow', page: 'flowchart', kind: 'flowchart', text: '', x: 0, y: 0, width: 1, height: 1, list: { layout: 'flow' } };
 function fixture() {
@@ -71,4 +73,102 @@ test('shared style changes reach every matching entry and compile with state col
   assert.deepEqual(compiled.diagnostics.filter(d => d.severity === 'error'), []);
   assert.ok(compiled.files['game/screens.rpy'].includes('"flowLooks"'));
   assert.ok(compiled.files['game/screens.rpy'].includes('#aabbcc'));
+});
+
+test('flow node letter spacing reaches map and directory markup, including explicit zero', () => {
+  const p = fixture();
+  const component = p.ui.components[0]!;
+  p.ui.components[0] = { ...component, style: { letterSpacing: -4, captionParts: [{ letterSpacing: 1 }, {}] } };
+  p.ui.flowStyles![0].style = { letterSpacing: 2.5, captionParts: [{ letterSpacing: 0 }, { letterSpacing: -1.25 }] };
+  const parsed = applyTextScript(p, '#章节(样式=主线框):归\n旁白：开头');
+  assert.deepEqual(parsed.issues, []);
+  const project = parsed.project;
+  const look = flowNodeAppearance(project, project.ui.components[0]!, { kind: 'passage', styleId: 'main_style' });
+  assert.equal(look.style?.letterSpacing, 2.5);
+  assert.deepEqual(look.style?.captionParts?.map(part => part.letterSpacing), [0, -1.25]);
+
+  const screens = compileProject(project).files['game/screens.rpy'];
+  const flowEntry = storyMenuEntries(project, 'flowchart').find(entry => entry.styleId === 'main_style')!;
+  const flowLooksStart = screens.indexOf('"flowLooks": {');
+  const flowGraphStart = screens.indexOf(', "flowGraph": ', flowLooksStart);
+  assert.ok(flowLooksStart >= 0 && flowGraphStart > flowLooksStart);
+  const flowLooks = screens.slice(flowLooksStart, flowGraphStart);
+  assert.ok(flowLooks.includes(`${pythonLiteral(flowEntry.id)}: {"node": `));
+  assert.ok(flowLooks.includes(`"style": ${pythonLiteral(look.style)}`));
+  const captionParts = look.style?.captionParts?.map(part => Object.fromEntries(Object.entries({
+    size: part.fontSize,
+    color: part.color,
+    gap: part.gap,
+    letterSpacing: part.letterSpacing,
+  }).filter(([, value]) => value !== undefined)));
+  assert.ok(flowLooks.includes(`"captionParts": ${pythonLiteral(captionParts)}`));
+});
+
+test('style usages include base, overridden, inactive, custom-page, and sleeping local references', () => {
+  const project = fixture(), flow = project.ui.components[0]!, nodeId = project.nodes[0]!.id;
+  project.chapters[0]!.flowchart = { styleId: 'main_style' };
+  project.scenes[0]!.flowchart = { styleId: 'main_style' };
+  project.nodes[0]!.flowchart = { styleId: 'main_style' };
+  const withEntry = (id: string, name: string, mode: 'custom' | 'script' = 'custom'): UiComponent => ({
+    ...component,
+    id,
+    list: { layout: 'flow', flowContent: { mode, custom: { entries: [{ nodeId, name, styleId: 'main_style' }] } } },
+  });
+  flow.list!.flowContent = { mode: 'custom', custom: { entries: [
+    { nodeId, owner: { kind: 'node', id: nodeId }, name: '当前自定义标题', styleId: 'main_style' },
+  ] } };
+  project.ui.components.push({ ...component, id: 'flow_sleeping', list: { layout: 'flow', flowContent: { mode: 'script', custom: { entries: [
+    { nodeId: 'missing_node', name: '休眠自定义标题', styleId: 'main_style' },
+  ] } } } });
+  const active = withEntry('flow', '覆盖方案标题');
+  const inactive = withEntry('flow', '未激活标题');
+  const customPage = withEntry('flow', '自定义页标题');
+  project.ui.instances = [
+    { id: 'active_scheme', name: '当前方案', components: [active] },
+    { id: 'inactive_scheme', name: '未激活方案', components: [inactive] },
+  ];
+  project.ui.activeInstanceId = 'active_scheme';
+  project.ui.customPages = [{ id: 'custom_page', name: '附加页', components: [customPage], modal: true }];
+
+  const usages = flowStyleUsages(project, 'main_style');
+  const custom = usages.filter(item => 'componentId' in item);
+
+  assert.equal(usages.length, 8, 'chapter, scene and node metadata counts remain intact alongside five local references');
+  assert.equal(custom.length, 5, 'base, active override, inactive scheme, custom page, and dormant entries all protect their saved style');
+  assert.deepEqual(custom.map(item => item.id), [
+    `theme:${project.id}:flow:${nodeId}`,
+    `theme:${project.id}:flow_sleeping:missing_node`,
+    `instance:active_scheme:flow:${nodeId}`,
+    `instance:inactive_scheme:flow:${nodeId}`,
+    `customPage:custom_page:flow:${nodeId}`,
+  ]);
+  assert.deepEqual(custom.map(item => item.name), [
+    '基础方案 · flow · 当前自定义标题',
+    '基础方案 · flow_sleeping · 休眠自定义标题',
+    '当前方案 · flow · 覆盖方案标题',
+    '未激活方案 · flow · 未激活标题',
+    '附加页 · flow · 自定义页标题',
+  ]);
+  assert.deepEqual(custom.map(item => item.container), [
+    { kind: 'theme', id: project.id },
+    { kind: 'theme', id: project.id },
+    { kind: 'instance', id: 'active_scheme' },
+    { kind: 'instance', id: 'inactive_scheme' },
+    { kind: 'customPage', id: 'custom_page' },
+  ]);
+  assert.equal(usages.filter(item => !('componentId' in item)).length, 3, 'metadata refs are not duplicated by custom controls');
+
+  project.ui.flowStyles![0].name = '改名预设';
+  assert.equal(flowStyleUsages(project, 'main_style').length, 8, 'renaming keeps references keyed by stable styleId');
+  assert.equal(editPlayerFlowEntry(flow, nodeId, { styleId: undefined }), true);
+  const sleeping = project.ui.components.at(-1)!;
+  assert.equal(editPlayerFlowEntry(sleeping, 'missing_node', { styleId: undefined }), true, 'inactive custom entries can still clear their saved preset');
+  assert.equal(editPlayerFlowEntry(active, nodeId, { styleId: undefined }), true, 'overrides retain independent local references');
+  assert.equal(editPlayerFlowEntry(inactive, nodeId, { styleId: undefined }), true, 'inactive schemes retain independent local references');
+  assert.equal(editPlayerFlowEntry(customPage, nodeId, { styleId: undefined }), true, 'custom pages retain independent local references');
+  assert.equal(flowStyleUsages(project, 'main_style').length, 3);
+  delete project.chapters[0]!.flowchart!.styleId;
+  delete project.scenes[0]!.flowchart!.styleId;
+  delete project.nodes[0]!.flowchart!.styleId;
+  assert.deepEqual(flowStyleUsages(project, 'main_style'), [], 'after every exact reference is cleared the preset is removable');
 });

@@ -8,7 +8,7 @@ export const isUiAnimationProperty = (property: string): property is UiAnimation
 export function validUiAnimation(property: string, value: unknown, duration: unknown, easing: string): boolean {
   return isUiAnimationProperty(property) && typeof value === 'number' && Number.isFinite(value)
     && (!['opacity', 'value'].includes(property) || value >= 0 && value <= 1)
-    && typeof duration === 'number' && Number.isFinite(duration) && duration >= 0 && duration <= 3600
+    && typeof duration === 'number' && Number.isFinite(duration) && duration >= 0
     && Object.hasOwn(uiAnimationEasings, easing);
 }
 export function uiAnimationValue(from: number, to: number, progress: number, easing: UiAnimationEasing): number {

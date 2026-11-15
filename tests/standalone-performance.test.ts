@@ -187,7 +187,24 @@ test('独立演出与同段后续台词在文本回写和舞台编辑后仍分�
   const compiled = compileProject(replay.project);
   assert.deepEqual(compiled.diagnostics.filter(issue => issue.severity === 'error'), []);
   const output = Object.values(compiled.files).join('\n');
-  assert.match(output, /vn_performance_begin[\s\S]{0,500}pause 3/);
+  const storyLines = compiled.files['game/story.rpy'].split('\n');
+  const lineCode = (id: string) => storyLines.filter((_, i) => compiled.sourceMap['game/story.rpy:' + (i + 1)]?.lineId === id).join('\n');
+  const silent = lineCode(next[0].id), following = lineCode(next[1].id), withActions = lineCode(next[2].id);
+  const begin = silent.indexOf('$ vn_performance_begin('), wait = silent.indexOf('$ vn_performance_pause(3)'), finish = silent.indexOf('$ vn_performance_finish(');
+  assert.ok(begin >= 0 && wait > begin && finish > wait, '独立演出在自己的行内开始、等待三秒并完成');
+  const followingLabel = following.match(/^label (vn_line_\w+):$/m)?.[1];
+  assert.ok(followingLabel);
+  const followingNode = replay.project.nodes.find(node => node.kind === 'passage' && node.lines.some(line => line.id === next[1].id));
+  assert.ok(followingNode);
+  assert.ok(silent.indexOf(`jump vn_node_${followingNode.id}`) > finish, '独立演出完成后才进入后续对白段落');
+  const followingEntry = storyLines.filter((_, i) => { const origin = compiled.sourceMap['game/story.rpy:' + (i + 1)]; return origin?.nodeId === followingNode.id && !origin.lineId; }).join('\n');
+  assert.ok(followingEntry.includes(`jump ${followingLabel}`), '后续段落从自己的第一句对白继续');
+  assert.match(silent, /\n        pause 3\n/);
+  assert.doesNotMatch(silent, /下一句|配合台词/);
+  assert.match(following, /\n    "下一句" id vn_say_/);
+  assert.doesNotMatch(following, /vn_performance_begin\(|vn_performance_finish\(|pause 3/);
+  assert.match(withActions, /\$ vn_performance_pause\(1\)[\s\S]*\n    "配合台词" id vn_say_/);
+  assert.doesNotMatch(withActions, /vn_performance_begin\(|vn_performance_finish\(/);
   assert.doesNotMatch(output, /window hide/);
 });
 

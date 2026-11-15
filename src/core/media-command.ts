@@ -1,4 +1,4 @@
-import { actorTransitionRuleSchema, visualObjectSchema, type VisualObject, type VisualTransitions } from './model';
+import { actorTransitionRuleSchema, makeId, visualObjectSchema, type VisualObject, type VisualTransitions } from './model';
 import { visualTransitionNames } from './visual-transitions';
 
 export function parseVisualRule(mode?: string, duration?: string) {
@@ -40,7 +40,7 @@ export function withMediaLifetime(object: VisualObject, lifetime: MediaLifetime)
   const { lifetime: _lifetime, ...rest } = object;
   return { ...rest, ...(lifetime === 'line' ? { lifetime: 'line' } : {}), persistent: lifetime !== 'duration', duration: lifetime === 'duration' ? object.duration || 3 : 0, wait: lifetime === 'duration' && object.wait };
 }
-export interface MediaOptions { instanceId?: string; x?: number; y?: number; width?: number; height?: number; scale?: number; scaleX?: number; scaleY?: number; rotation?: number; opacity?: number; lifetime?: MediaLifetime; duration?: number; layer?: number; wait?: boolean; fit?: VisualObject['imageFit']; loop?: boolean; volume?: number; fontSize?: number; color?: string; visualTransitions?: VisualObject['visualTransitions']; transitionWait?: boolean }
+export interface MediaOptions { instanceId?: string; x?: number; y?: number; width?: number; height?: number; scale?: number; scaleX?: number; scaleY?: number; rotation?: number; opacity?: number; lifetime?: MediaLifetime; duration?: number; layer?: number; wait?: boolean; fit?: VisualObject['imageFit']; loop?: boolean; volume?: number; fontSize?: number; color?: string; fontAssetId?: string; textMotion?: VisualObject['textMotion']; textEffects?: VisualObject['textEffects']; textItalic?: boolean; textAlign?: VisualObject['textAlign']; visualTransitions?: VisualObject['visualTransitions']; transitionWait?: boolean }
 export function createMediaVisual(content: MediaContent, source: string, options: MediaOptions = {}): VisualObject {
   const duration = options.duration ?? 0;
   const lifetime = options.lifetime ?? (duration > 0 ? 'duration' : content === 'image' ? 'line' : 'persistent');
@@ -49,6 +49,7 @@ export function createMediaVisual(content: MediaContent, source: string, options
   if (options.wait && duration === 0) throw new Error('等待完成需要指定大于 0 的显示时长；持续显示请关闭等待。');
   return visualObjectSchema.parse({ kind: 'visual', content, instanceId: options.instanceId || content, name: { image: '图片', video: '视频', text: '文字' }[content],
     ...(content === 'text' ? { text: source, fontSize: options.fontSize ?? 60, color: options.color ?? '#ffffff' } : { assetId: source, imageFit: options.fit ?? 'contain' }),
+    ...(content === 'text' ? Object.fromEntries(['fontAssetId', 'textMotion', 'textEffects', 'textItalic', 'textAlign'].filter(key => options[key as keyof MediaOptions] !== undefined).map(key => [key, options[key as keyof MediaOptions]])) : {}),
     width: options.width ?? (content === 'text' ? .8 : 1), height: options.height ?? (content === 'text' ? .2 : 1), layer: options.layer ?? 20,
     duration, persistent: duration === 0, ...(lifetime === 'line' ? { lifetime: 'line' } : {}), wait: options.wait ?? false,
     ...(options.visualTransitions ? { visualTransitions: options.visualTransitions } : {}),
@@ -58,9 +59,15 @@ export function createMediaVisual(content: MediaContent, source: string, options
   });
 }
 
+/** UI insertion creates independent objects; explicit script IDs still replace. */
+export function createFloatingText(text = '新的文字'): VisualObject {
+  return createMediaVisual('text', text, { instanceId: makeId('text') });
+}
+
 /** Complex timeline objects retain their complete serialized performance binding. */
 export function isSimpleMediaVisual(object: VisualObject): boolean {
   const keys = new Set('kind content instanceId name assetId text fontSize color width height layer duration persistent wait lifetime imageFit keyframes loop volume visualTransitions transitionWait'.split(' '));
+  if (object.content === 'text') for (const key of ['fontAssetId', 'textMotion', 'textEffects', 'textItalic', 'textAlign']) keys.add(key);
   const frame = object.keyframes[0];
   return ['image', 'video', 'text'].includes(object.content) && Object.entries(object).every(([key, value]) => value === undefined || keys.has(key))
     && object.keyframes.length === 1 && frame.duration === 0 && (object.content === 'image' || frame.scale === 1 && (frame.scaleX ?? 1) === 1 && (frame.scaleY ?? 1) === 1 && frame.rotation === 0 && frame.opacity === 1) && frame.easing === 'linear'

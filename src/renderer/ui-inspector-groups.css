@@ -1,0 +1,26 @@
+.ui-inspector [data-ui-inspector-group][hidden] { display: none !important; }
+.ui-inspector [data-ui-inspector-group][data-search-match="true"] > summary > .ui-group-title { color: var(--editor-accent); }
+.ui-layout-fields { min-width: 0; container: ui-layout-fields / inline-size; }
+.ui-layout-fields .ui-layout-context { margin: 8px 0; color: var(--editor-muted); font-size: 11px; line-height: 1.6; }
+.ui-layout-fields .ui-layout-context button { padding: 0 3px; font: inherit; }
+.ui-layout-fields .ui-layout-property-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.ui-layout-fields .ui-layout-property-field { position: relative; display: flex; align-items: flex-end; gap: 3px; min-width: 0; }
+.ui-layout-fields .ui-layout-property-field > .field { flex: 1; min-width: 0; margin: 0; }
+.ui-layout-fields .ui-layout-property-grid > .ui-layout-wide { grid-column: 1 / -1; }
+.ui-layout-fields .ui-layout-value { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.ui-layout-fields .ui-layout-value > :is(input, select) { flex: 1; min-width: 0; }
+.ui-layout-fields .ui-layout-value > input[type="checkbox"] { flex: none; }
+.ui-layout-fields .ui-layout-value > small { flex: none; font-size: 10px; color: var(--editor-muted); }
+.ui-layout-fields .ui-layout-reset { flex: none; width: 23px; min-height: 30px; height: 30px; padding: 3px; margin-bottom: 2px; }
+.ui-layout-fields .ui-layout-group-reset { margin: 8px 0 0; font-size: 11px; }
+.ui-layout-fields .ui-layout-note, .ui-child-objects .ui-child-scope { margin: 7px 0; color: var(--editor-muted); font-size: 11px; line-height: 1.6; }
+.ui-layout-fields .ui-layout-problem { padding: 8px; border: 1px solid var(--editor-border); border-radius: 4px; }
+.ui-layout-fields .ui-layout-problem p { margin: 0 0 7px; }
+.ui-layout-fields .ui-layout-output { display: block; margin: 7px 0; font-size: 11px; line-height: 1.6; }
+.ui-child-objects .ui-child-add { margin-top: 8px; }
+.ui-child-objects .ui-child-parent { display: flex; align-items: center; gap: 6px; margin: 0 0 7px; color: var(--editor-muted); font-size: 11px; }
+.ui-child-objects .ui-child-parent > button { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit; }
+.ui-child-objects .ui-child-action-help { color: var(--editor-muted); font-size: 11px; line-height: 1.6; margin: 8px 0 0; }
+@container ui-layout-fields (max-width: 230px) {
+  .ui-layout-fields .ui-layout-property-grid { grid-template-columns: minmax(0, 1fr); }
+}

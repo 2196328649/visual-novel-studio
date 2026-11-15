@@ -6370,6 +6370,27 @@
       "category": "ui",
       "width": 46,
       "height": 48
+    },
+    {
+      "id": "ai_ui_click",
+      "name": "点击1",
+      "kind": "audio",
+      "path": "assets/音效/界面/点击1.ogg",
+      "category": "sound"
+    },
+    {
+      "id": "ai_ui_click_back",
+      "name": "点击2",
+      "kind": "audio",
+      "path": "assets/音效/界面/点击2.ogg",
+      "category": "sound"
+    },
+    {
+      "id": "ai_ui_click_title",
+      "name": "Click_New",
+      "kind": "audio",
+      "path": "assets/音效/界面/Click_New.ogg",
+      "category": "sound"
     }
   ],
   "characters": [
@@ -10469,7 +10490,10 @@
       "asset:ai_ui_1557cc810ffe6d5d": "folder_e4a6dc9fd262408cb9ccdb9e680d0f83",
       "asset:ai_ui_115dcfd0d31b41cf": "folder_e4a6dc9fd262408cb9ccdb9e680d0f83",
       "asset:ai_ui_139727996abeb7fa": "folder_e4a6dc9fd262408cb9ccdb9e680d0f83",
-      "asset:ai_ui_603322bc82a46af6": "folder_e4a6dc9fd262408cb9ccdb9e680d0f83"
+      "asset:ai_ui_603322bc82a46af6": "folder_e4a6dc9fd262408cb9ccdb9e680d0f83",
+      "asset:ai_ui_click": "folder_4d91226e203b454c8c625a8b1447f418",
+      "asset:ai_ui_click_back": "folder_4d91226e203b454c8c625a8b1447f418",
+      "asset:ai_ui_click_title": "folder_4d91226e203b454c8c625a8b1447f418"
     },
     "favorites": [
       "blueprint:ai_bp_caution",
@@ -10480,7 +10504,7 @@
   },
   "scriptText": {
     "format": "vns-text-1",
-    "content": "@入口：开始【start】\n\n# 章节：第一章 · 酒醒城破【ai_chapter_one】\n\n# 小章节：夜宴 · 女儿红【ai_scene_banquet】\n\n@节点标记：开始【start】\n@开始\n\n@节点标记：第一章【ai_title_one】\n@对白标记：ai_title_one_performance\n@章节进入演出【blueprint_85f39dcf904945908a051adbb54a9946】\n@独立演出：第一章，允许点击跳过=否\n\n@节点标记：第一章 · 记录进度【ai_title_one_record_progress】\n@设置：如果 章节进度【ai_chapter_progress】 < 1，章节进度 = 1\n@跳转：兽视与夜宴【opening】\n\n# 段落：兽视与夜宴【opening】\n@对白标记：opening_line_1\n@背景：王家大院 · 夜宴\n@夜宴 · 音乐淡入【ai_bp_banquet】\n旁白：我患了一种病。此病名为“兽视”，是极稀少的怪病。三年前初患此病，我便将人视作走兽。\n@对白标记：opening_line_2\n@显示角色：表情=兽视通常【ai_expression_30357810b0aac35a70c8】\n王生：杨军爷好酒量！来！学生再敬您一杯。\n@对白标记：opening_line_3\n旁白：江南的傍晚从不寂静。我身着布衣，倚墙半躺，拎着酒坛子，微眯着眼望向不远处。\n@对白标记：opening_line_4\n@显示角色：表情=兽视通常【ai_expression_ad5b02400d6d2949855a】\n杨军爷：这酒真不赖！方才你说这是什么酒来着？\n@对白标记：opening_line_5\n@显示角色：表情=微笑【ai_expression_f7a7249abf6e4b9ddb2e】\n王生：军爷，此乃绍兴女儿红，万历四十二年的陈酿。\n@对白标记：opening_line_6\n旁白：他们桌上那坛，哪是什么三十载陈酿，不过是王生几日前从客栈收的便宜货罢了。\n@对白标记：opening_line_7\n@显示角色：表情=使眼色【ai_expression_ec2a1a2847f54ef1d4d9】\n王生：兵爷们连日索钱，昨日竟索千文……还望军爷分说一二。\n@对白标记：opening_line_8\n旁白：酒桌上的笑声未歇，城外的消息却一日紧过一日。王生趁添酒时，低声劝我早些回家。\n\n@节点标记：这一杯酒【ai_choice_wine】\n@选择：杯中倒映着灯火。我该如何回应王生的劝告？\n@选项：记下劝告，放下酒坛 -> 谨慎 +1【ai_gain_caution】\n@选项：借酒压下心事 -> 一个名字【ai_wine_dream】\n\n@节点标记：谨慎 +1【ai_gain_caution】\n@设置：谨慎 += 1\n@跳转：一个名字【ai_wine_dream】\n\n# 段落：一个名字【ai_wine_dream】\n@对白标记：ai_wine_dream_line_1\n@显示角色\n杨军爷：广陵可有一位唤作“苏怜烟”的名妓？咱听闻此女琵琶妙绝。\n@对白标记：ai_wine_dream_line_2\n旁白：苏怜烟……闻得此名，我心口骤然一紧。王生苦笑着瞥我一眼，话到了嘴边，又咽了回去。\n@对白标记：ai_wine_dream_line_3\n旁白：席上的灯火渐渐模糊。恍惚中，那些被我遗失的旧事又近了。\n@跳转：不该如此【ai_memory】\n\n# 小章节：旧忆 · 狮驼国【ai_scene_memory】\n\n# 段落：不该如此【ai_memory】\n@对白标记：ai_memory_line_1\n@旧忆 · 换景与配乐【ai_bp_memory】\n旁白：她倚坐桌畔，眸光流连于香炉、香盒和香丸。小间内只有我们二人。\n@对白标记：ai_memory_line_2\n@显示角色：表情=好奇【ai_expression_507aae646bfd53d99218】\n苏怜烟：“狮驼国”？\n@对白标记：ai_memory_line_3\n@显示角色\n方知宥：正是。我想写的书便叫《狮驼国》。\n@对白标记：ai_memory_line_4\n@显示角色：表情=疑惑【ai_expression_79587804d7410c11974e】\n苏怜烟：你是想把世间的人，写成披着人皮的走兽？\n@对白标记：ai_memory_line_5\n@显示角色\n方知宥：我欲以鲜血、野蛮、残暴，写尽世人悲苦……欲借污秽、混沌、黑暗，映照良善之光。\n@对白标记：ai_memory_line_6\n@显示角色：表情=平静【ai_expression_01501774d115228db64f】\n苏怜烟：我觉得不该如此。\n@对白标记：ai_memory_line_7\n旁白：她合上炉盖，淡然一笑。我愣愣地望着她，咀嚼着“不该如此”这几个字。\n@对白标记：ai_memory_line_8\n@显示角色：表情=微笑【ai_expression_ab71597e11a256270a70】\n苏怜烟：不过，现在写了多少了？\n@对白标记：ai_memory_line_9\n@显示角色\n方知宥：只字未落。\n@对白标记：ai_memory_line_10\n旁白：她以袖掩唇，轻笑出声。那时我以为来日方长，以为总有时间把书写完。\n@对白标记：ai_memory_line_11\n@显示角色：表情=温柔【ai_expression_b5bd9fb9cc346d8204ab】\n苏怜烟：“才子封笔时，佳人赠物日。”\n@对白标记：ai_memory_line_12\n旁白：她又卖了个关子。翠色屏风渐远，香气也散进了雨里。\n@跳转：炮声惊醒【ai_city】\n\n# 小章节：城破 · 归路【ai_scene_city】\n\n# 段落：炮声惊醒【ai_city】\n@对白标记：ai_city_line_1\n@城破 · 战火与急雨【ai_bp_city】\n旁白：——轰！城北传来炮声，一声紧似一声。天飘细雨，阴云低沉，已分不清梦与醒。\n@对白标记：ai_city_line_2\n@显示角色\n方知宥：我不知道这里究竟是广陵，还是那可怕的狮驼国。\n@对白标记：ai_city_line_3\n旁白：昨日还有人售卖粮米的市集，如今只剩凌乱摊位。聚在街口的人，脸上都是惊惶。\n@对白标记：ai_city_line_4\n旁白：城墙上涌出黄、白、蓝、红的影子。在我眼里，它们都化作了形貌各异的群妖。\n@对白标记：ai_city_line_5\n旁白：人群忽然向南奔逃。我被推搡着向前，耳边只剩一句话：回家，快回家！\n\n@节点标记：记住归路【ai_choice_route】\n@选择：熟悉的街道也变得陌生。穿过市集前，我决定——\n@选项：沿墙慢行，辨认废井旁的小路 -> 记住避兵小路【ai_remember_route】\n@选项：随人流奔逃，先离开街口 -> 进入第二章【ai_return_home】\n\n@节点标记：记住避兵小路【ai_remember_route】\n@设置：记得避兵小路 = true\n@跳转：井旁的转角【ai_route_note】\n\n# 段落：井旁的转角【ai_route_note】\n@对白标记：ai_route_note_line_1\n@背景：城破 · 雨中集市\n旁白：我抹去眼前的雨水，认出了废井旁的窄巷。沿墙的这条路不显眼，却能绕开大街。\n@对白标记：ai_route_note_line_2\n@显示角色\n方知宥：记住这里。若再有变故，总得知道往哪里走。\n\n@节点标记：进入第二章【ai_return_home】\n@跳转：第二章【ai_title_two】，淡入淡出，0.6，#000000\n\n# 章节：第二章 · 方院抉择【ai_chapter_two】\n\n# 小章节：方院 · 左屋与右屋【ai_scene_home】\n\n@节点标记：第二章【ai_title_two】\n@对白标记：ai_title_two_performance\n@章节进入演出【blueprint_85f39dcf904945908a051adbb54a9946】：章节题图【input_e8d7c652d80347dca8d47d6b24f60f2c】=章节题字 · 记第二回 遇雁【ai_presentation_title_two】，章节背景【input_eeaf78a572c34404a221e82e95c2a9e8】=章节进场 · 方院【ai_presentation_chapter_two】\n@独立演出：第二章，允许点击跳过=否\n\n@节点标记：第二章 · 记录进度【ai_title_two_record_progress】\n@设置：如果 章节进度【ai_chapter_progress】 < 2，章节进度 = 2\n@跳转：虚挂的铜锁【ai_home】\n\n# 段落：虚挂的铜锁【ai_home】\n@对白标记：ai_home_line_1\n@背景：方院 · 雨天\n@背景音乐：孤风凄雨 循环，淡入=0.6\n旁白：穿过几个街区，绕过废井，我终于找到了方院。无论是在广陵，还是在狮驼国，这都是我住的地方。\n@对白标记：ai_home_line_2\n旁白：铜锁虚挂着。想来是昨日赴宴前忘了锁门。我推门进去，院里静得只剩雨声。\n@对白标记：ai_home_line_3\n旁白：左屋是我平日歇息的地方。右屋堆满旧书、木箱和多年未理的杂物，从小窗正好能看见东城区的大街。\n@对白标记：ai_home_line_4\n@显示角色\n方知宥：安分一点躲起来，还是去看看街上到底怎样了？\n\n@节点标记：左屋与右屋【ai_choice_room】\n@选择：屋外雨势渐急。\n@选项：入左屋，安分守己 -> 雨声中的轻咳【ai_left_room】\n@选项：入右屋，窥视街道 -> 小窗外的队列【ai_right_room】\n\n# 段落：雨声中的轻咳【ai_left_room】\n@对白标记：ai_left_room_line_1\n旁白：我藏进左屋，屏息听着街上的动静。越想要避开，那些模糊的声音便越是钻进耳里。\n@对白标记：ai_left_room_line_2\n旁白：忽然，隔壁传来一声轻咳。我独居多年，这院里本不该有第二个人。\n@对白标记：ai_left_room_line_3\n@显示角色\n方知宥：是谁？……莫怕，我过来了。\n@跳转：酒缸里的小雁儿【ai_child】\n\n# 段落：小窗外的队列【ai_right_room】\n@对白标记：ai_right_room_line_1\n@背景：方院外 · 雨中街道\n@窥窗 · 按谨慎调整停顿【ai_bp_caution】\n旁白：我踩上木箱，双手扒着小窗。街道绵延数百步，由南向北。远处，密密麻麻的黑影正在靠近。\n@对白标记：ai_right_room_line_2\n旁白：先是白甲，其后是红甲、蓝甲。马蹄踏过积水，队列缓缓往前。我的手心开始冒汗。\n@对白标记：ai_right_room_line_3\n@显示角色\n方知宥：一、二、三……先稳住呼吸。\n\n@节点标记：谨慎能否避开目光【ai_check_caution】\n@条件：谨慎【ai_caution】 >= 1\n@满足：记下队列间隙【ai_scout_route】\n@不满足：惊梦【ai_bad_prelude】\n\n@节点标记：记下队列间隙【ai_scout_route】\n@设置：记得避兵小路 = true\n@跳转：及时低头【ai_scout_safe】\n\n# 段落：及时低头【ai_scout_safe】\n@对白标记：ai_scout_safe_line_1\n旁白：我在一名骑兵抬眼之前退下木箱。只看见几眼，已足够认出队列的方向。\n@对白标记：ai_scout_safe_line_2\n旁白：不是所有巷口都被堵住。方才的观察，也许能替我留下一线生路。\n@对白标记：ai_scout_safe_line_3\n旁白：角落里，忽然传出一声很轻的咳嗽。那声音来自一只酒缸。\n@跳转：酒缸里的小雁儿【ai_child】\n\n# 小章节：酒缸 · 旧人【ai_scene_child】\n\n# 段落：酒缸里的小雁儿【ai_child】\n@对白标记：ai_child_line_1\n@背景：方院 · 雨天\n旁白：我一点点接近酒缸，脚步停在缸前。里面蜷缩着一个瘦小的女娃，抱着双膝，抬头凝望着我。\n@对白标记：ai_child_line_2\n@显示角色：表情=疲惫【ai_expression_95c7172fa280801f897e】\n小雁儿：好冷。\n@对白标记：ai_child_line_3\n旁白：一滴酒渍贴在她额前的发丝上。紫色飘带、烟云纹样，还有那双灵动的眼睛……我认识她。\n@对白标记：ai_child_line_4\n@显示角色\n方知宥：雁儿姐？\n@对白标记：ai_child_line_5\n旁白：我与她相识在十三年前。晋地盐池的一家客栈里，九岁的我哭着要爹娘，谁的话也听不进去。\n@对白标记：ai_child_line_6\n旁白：她比我大两岁。那一天，我哭得很厉害，她却没有哭。\n@对白标记：ai_child_line_7\n@显示角色：表情=坚定【ai_expression_72cd565bc9410b828861】\n小雁儿：先别哭，路还长着呢。\n@对白标记：ai_child_line_8\n旁白：旧日的声音与眼前的轻咳叠在一起。我分不清这是不是又一场幻梦，却还是拿来了干布。\n@对白标记：ai_child_line_9\n@显示角色\n方知宥：先暖一暖。外头不太平，别出声。\n\n@节点标记：这一夜之后【ai_choice_future】\n@选择：我攥紧了铜钥匙。身后是旧日，门外是未知的明天。\n@选项：收好盘缠，寻找避兵的小路 -> 是否记得小路【ai_check_route】\n@选项：关好院门，先让她暖过来 -> 灯火暂安【ai_shelter】\n\n@节点标记：是否记得小路【ai_check_route】\n@条件：记得避兵小路【ai_route_known】 == 是\n@满足：远舟的方向【ai_boat】\n@不满足：不再莽撞【ai_no_route】\n\n# 段落：不再莽撞【ai_no_route】\n@对白标记：ai_no_route_line_1\n旁白：我走到院门前，却想不起哪条巷子能避开大街。门外传来马蹄声，我最终停下了手。\n@对白标记：ai_no_route_line_2\n@显示角色\n方知宥：等一等。总得先活过这一夜。\n@跳转：灯火暂安【ai_shelter】\n\n# 小章节：余波 · 三种归宿【ai_scene_endings】\n\n# 段落：灯火暂安【ai_shelter】\n@对白标记：ai_shelter_line_1\n@背景：方院 · 夜色\n@收束 · 音乐淡出【ai_bp_end】\n旁白：我抵住院门，把干布放在酒缸旁，点亮一盏小灯。\n@对白标记：ai_shelter_line_2\n旁白：城里的雨还没有停。明日会怎样，我不知道；至少此刻，我没有把那声轻咳留在黑暗里。\n@对白标记：ai_shelter_line_3\n@显示角色\n方知宥：先活着。等天亮，再想下一步。\n\n@节点标记：灯火暂安 · 记录达成【ai_ending_shelter_record_reached】\n@设置：灯火暂安达成 = true\n\n@节点标记：示例结局 · 灯火暂安【ai_ending_shelter】\n@对白标记：ai_ending_shelter_performance\n@结局演出【builtin_ending_performance】：文字【caption】=\"灯火暂安\\n小小方院容下了一夜风雨，也容下了尚未写完的故事。\\n（两章示例的阶段结局）\"\n@独立演出：示例结局 · 灯火暂安\n\n@节点标记：示例结局 · 灯火暂安 · 返回标题【ai_ending_shelter_return_title】\n@返回标题界面\n\n# 段落：惊梦【ai_bad_prelude】\n@对白标记：ai_bad_prelude_line_1\n@背景：方院外 · 雨中街道\n@收束 · 音乐淡出【ai_bp_end】\n旁白：我看得太久，竟忘了压低身子。木箱发出一声脆响，街上的一道目光转向小窗。\n@对白标记：ai_bad_prelude_line_2\n旁白：我仓皇后退。雨声、马蹄声、自己急促的呼吸，顷刻混成一片。\n@对白标记：ai_bad_prelude_line_3\n旁白：这一次，我没有来得及把窗合上。\n\n@节点标记：惊梦未醒 · 记录达成【ai_ending_dream_record_reached】\n@设置：惊梦未醒达成 = true\n\n@节点标记：示例结局 · 惊梦未醒【ai_ending_dream】\n@对白标记：ai_ending_dream_performance\n@结局演出【builtin_ending_performance】：文字【caption】=\"惊梦未醒\\n仓促的一瞥，断送了最后的隐蔽。\\n重来时，或许可以记住酒席上的劝告。\\n（两章示例结束）\"\n@独立演出：示例结局 · 惊梦未醒\n\n@节点标记：示例结局 · 惊梦未醒 · 返回标题【ai_ending_dream_return_title】\n@返回标题界面\n\n# 段落：远舟的方向【ai_boat】\n@对白标记：ai_boat_line_1\n@背景：远舟 · 船窗\n@背景音乐：青梅竹马【ai_story_music_memory】 循环，淡入=0.8\n旁白：我记得那条巷子，也记得队列驶过的方向。等马蹄声远去，我收紧衣襟，踏入了雨中。\n@对白标记：ai_boat_line_2\n旁白：……日子在奔逃中过去。几番辗转，许多张熟悉的面孔永远留在了广陵。\n@对白标记：ai_boat_line_3\n旁白：许多天后，我随良叔沿江而下，到了杭州。港口停着一艘海船，一名灰蓝衣裙的女子正在等他。\n@对白标记：ai_boat_line_4\n旁白：见到旧友重逢，我由衷替他们欣喜，心底却仍不可抑制地觉得落寞。\n@对白标记：ai_boat_line_5\n@显示角色\n良：知幼，过来吧！\n@对白标记：ai_boat_line_6\n旁白：恍惚间，我看见那些过去认识的人也在船上向我招手。一阵微风吹过，幻影消失，只留下海船、港口和一望无际的远方。\n@对白标记：ai_boat_line_7\n@显示角色\n方知宥：来了！\n@对白标记：ai_boat_line_8\n旁白：我深深吸了一口气，昂首挺胸，迈开脚步走了出去。我走向等待着我的远舟，走向蕴含着无限可能的将来。\n\n@节点标记：远舟 · 记录达成【ai_ending_boat_record_reached】\n@设置：远舟达成 = true\n\n@节点标记：示例结局 · 远舟【ai_ending_boat】\n@对白标记：ai_ending_boat_performance\n@结局演出【builtin_ending_performance】：文字【caption】=\"远舟\\n旧事留在岸上，前路在水天之间。\\n据原作「结局·远舟」节选改编；此示例压缩了抵达结局前的篇章。\"\n@独立演出：示例结局 · 远舟\n\n@节点标记：示例结局 · 远舟 · 返回标题【ai_ending_boat_return_title】\n@返回标题界面\n",
+    "content": "@入口：开始【start】\n\n# 章节：第一章 · 酒醒城破【ai_chapter_one】\n\n# 小章节：夜宴 · 女儿红【ai_scene_banquet】\n\n@节点标记：开始【start】\n@开始\n\n@节点标记：第一章【ai_title_one】\n@对白标记：ai_title_one_performance\n@章节进入演出【blueprint_85f39dcf904945908a051adbb54a9946】\n@独立演出：第一章，允许点击跳过=否\n\n@节点标记：第一章 · 记录进度【ai_title_one_record_progress】\n@设置：如果 章节进度【ai_chapter_progress】 < 1，章节进度【ai_chapter_progress】 = 1\n@跳转：兽视与夜宴【opening】\n\n# 段落：兽视与夜宴【opening】\n@对白标记：opening_line_1\n@背景：王家大院 · 夜宴\n@夜宴 · 音乐淡入【ai_bp_banquet】\n旁白：我患了一种病。此病名为“兽视”，是极稀少的怪病。三年前初患此病，我便将人视作走兽。\n@对白标记：opening_line_2\n@显示角色：表情=兽视通常【ai_expression_30357810b0aac35a70c8】\n王生：杨军爷好酒量！来！学生再敬您一杯。\n@对白标记：opening_line_3\n旁白：江南的傍晚从不寂静。我身着布衣，倚墙半躺，拎着酒坛子，微眯着眼望向不远处。\n@对白标记：opening_line_4\n@显示角色：表情=兽视通常【ai_expression_ad5b02400d6d2949855a】\n杨军爷：这酒真不赖！方才你说这是什么酒来着？\n@对白标记：opening_line_5\n@显示角色：表情=微笑【ai_expression_f7a7249abf6e4b9ddb2e】\n王生：军爷，此乃绍兴女儿红，万历四十二年的陈酿。\n@对白标记：opening_line_6\n旁白：他们桌上那坛，哪是什么三十载陈酿，不过是王生几日前从客栈收的便宜货罢了。\n@对白标记：opening_line_7\n@显示角色：表情=使眼色【ai_expression_ec2a1a2847f54ef1d4d9】\n王生：兵爷们连日索钱，昨日竟索千文……还望军爷分说一二。\n@对白标记：opening_line_8\n旁白：酒桌上的笑声未歇，城外的消息却一日紧过一日。王生趁添酒时，低声劝我早些回家。\n\n@节点标记：这一杯酒【ai_choice_wine】\n@选择：杯中倒映着灯火。我该如何回应王生的劝告？\n@选项：记下劝告，放下酒坛 -> 谨慎 +1【ai_gain_caution】\n@选项：借酒压下心事 -> 一个名字【ai_wine_dream】\n\n@节点标记：谨慎 +1【ai_gain_caution】\n@设置：谨慎【ai_caution】 += 1\n@跳转：一个名字【ai_wine_dream】\n\n# 段落：一个名字【ai_wine_dream】\n@对白标记：ai_wine_dream_line_1\n@显示角色\n杨军爷：广陵可有一位唤作“苏怜烟”的名妓？咱听闻此女琵琶妙绝。\n@对白标记：ai_wine_dream_line_2\n旁白：苏怜烟……闻得此名，我心口骤然一紧。王生苦笑着瞥我一眼，话到了嘴边，又咽了回去。\n@对白标记：ai_wine_dream_line_3\n旁白：席上的灯火渐渐模糊。恍惚中，那些被我遗失的旧事又近了。\n@跳转：不该如此【ai_memory】\n\n# 小章节：旧忆 · 狮驼国【ai_scene_memory】\n\n# 段落：不该如此【ai_memory】\n@对白标记：ai_memory_line_1\n@旧忆 · 换景与配乐【ai_bp_memory】\n旁白：她倚坐桌畔，眸光流连于香炉、香盒和香丸。小间内只有我们二人。\n@对白标记：ai_memory_line_2\n@显示角色：表情=好奇【ai_expression_507aae646bfd53d99218】\n苏怜烟：“狮驼国”？\n@对白标记：ai_memory_line_3\n@显示角色\n方知宥：正是。我想写的书便叫《狮驼国》。\n@对白标记：ai_memory_line_4\n@显示角色：表情=疑惑【ai_expression_79587804d7410c11974e】\n苏怜烟：你是想把世间的人，写成披着人皮的走兽？\n@对白标记：ai_memory_line_5\n@显示角色\n方知宥：我欲以鲜血、野蛮、残暴，写尽世人悲苦……欲借污秽、混沌、黑暗，映照良善之光。\n@对白标记：ai_memory_line_6\n@显示角色：表情=平静【ai_expression_01501774d115228db64f】\n苏怜烟：我觉得不该如此。\n@对白标记：ai_memory_line_7\n旁白：她合上炉盖，淡然一笑。我愣愣地望着她，咀嚼着“不该如此”这几个字。\n@对白标记：ai_memory_line_8\n@显示角色：表情=微笑【ai_expression_ab71597e11a256270a70】\n苏怜烟：不过，现在写了多少了？\n@对白标记：ai_memory_line_9\n@显示角色\n方知宥：只字未落。\n@对白标记：ai_memory_line_10\n旁白：她以袖掩唇，轻笑出声。那时我以为来日方长，以为总有时间把书写完。\n@对白标记：ai_memory_line_11\n@显示角色：表情=温柔【ai_expression_b5bd9fb9cc346d8204ab】\n苏怜烟：“才子封笔时，佳人赠物日。”\n@对白标记：ai_memory_line_12\n旁白：她又卖了个关子。翠色屏风渐远，香气也散进了雨里。\n@跳转：炮声惊醒【ai_city】\n\n# 小章节：城破 · 归路【ai_scene_city】\n\n# 段落：炮声惊醒【ai_city】\n@对白标记：ai_city_line_1\n@城破 · 战火与急雨【ai_bp_city】\n旁白：——轰！城北传来炮声，一声紧似一声。天飘细雨，阴云低沉，已分不清梦与醒。\n@对白标记：ai_city_line_2\n@显示角色\n方知宥：我不知道这里究竟是广陵，还是那可怕的狮驼国。\n@对白标记：ai_city_line_3\n旁白：昨日还有人售卖粮米的市集，如今只剩凌乱摊位。聚在街口的人，脸上都是惊惶。\n@对白标记：ai_city_line_4\n旁白：城墙上涌出黄、白、蓝、红的影子。在我眼里，它们都化作了形貌各异的群妖。\n@对白标记：ai_city_line_5\n旁白：人群忽然向南奔逃。我被推搡着向前，耳边只剩一句话：回家，快回家！\n\n@节点标记：记住归路【ai_choice_route】\n@选择：熟悉的街道也变得陌生。穿过市集前，我决定——\n@选项：沿墙慢行，辨认废井旁的小路 -> 记住避兵小路【ai_remember_route】\n@选项：随人流奔逃，先离开街口 -> 进入第二章【ai_return_home】\n\n@节点标记：记住避兵小路【ai_remember_route】\n@设置：记得避兵小路【ai_route_known】 = true\n@跳转：井旁的转角【ai_route_note】\n\n# 段落：井旁的转角【ai_route_note】\n@对白标记：ai_route_note_line_1\n@背景：城破 · 雨中集市\n旁白：我抹去眼前的雨水，认出了废井旁的窄巷。沿墙的这条路不显眼，却能绕开大街。\n@对白标记：ai_route_note_line_2\n@显示角色\n方知宥：记住这里。若再有变故，总得知道往哪里走。\n\n@节点标记：进入第二章【ai_return_home】\n@跳转：第二章【ai_title_two】，淡入淡出，0.6，#000000\n\n# 章节：第二章 · 方院抉择【ai_chapter_two】\n\n# 小章节：方院 · 左屋与右屋【ai_scene_home】\n\n@节点标记：第二章【ai_title_two】\n@对白标记：ai_title_two_performance\n@章节进入演出【blueprint_85f39dcf904945908a051adbb54a9946】：章节题图【input_e8d7c652d80347dca8d47d6b24f60f2c】=章节题字 · 记第二回 遇雁【ai_presentation_title_two】，章节背景【input_eeaf78a572c34404a221e82e95c2a9e8】=章节进场 · 方院【ai_presentation_chapter_two】\n@独立演出：第二章，允许点击跳过=否\n\n@节点标记：第二章 · 记录进度【ai_title_two_record_progress】\n@设置：如果 章节进度【ai_chapter_progress】 < 2，章节进度【ai_chapter_progress】 = 2\n@跳转：虚挂的铜锁【ai_home】\n\n# 段落：虚挂的铜锁【ai_home】\n@对白标记：ai_home_line_1\n@背景：方院 · 雨天\n@背景音乐：孤风凄雨 循环，淡入=0.6\n旁白：穿过几个街区，绕过废井，我终于找到了方院。无论是在广陵，还是在狮驼国，这都是我住的地方。\n@对白标记：ai_home_line_2\n旁白：铜锁虚挂着。想来是昨日赴宴前忘了锁门。我推门进去，院里静得只剩雨声。\n@对白标记：ai_home_line_3\n旁白：左屋是我平日歇息的地方。右屋堆满旧书、木箱和多年未理的杂物，从小窗正好能看见东城区的大街。\n@对白标记：ai_home_line_4\n@显示角色\n方知宥：安分一点躲起来，还是去看看街上到底怎样了？\n\n@节点标记：左屋与右屋【ai_choice_room】\n@选择：屋外雨势渐急。\n@选项：入左屋，安分守己 -> 雨声中的轻咳【ai_left_room】\n@选项：入右屋，窥视街道 -> 小窗外的队列【ai_right_room】\n\n# 段落：雨声中的轻咳【ai_left_room】\n@对白标记：ai_left_room_line_1\n旁白：我藏进左屋，屏息听着街上的动静。越想要避开，那些模糊的声音便越是钻进耳里。\n@对白标记：ai_left_room_line_2\n旁白：忽然，隔壁传来一声轻咳。我独居多年，这院里本不该有第二个人。\n@对白标记：ai_left_room_line_3\n@显示角色\n方知宥：是谁？……莫怕，我过来了。\n@跳转：酒缸里的小雁儿【ai_child】\n\n# 段落：小窗外的队列【ai_right_room】\n@对白标记：ai_right_room_line_1\n@背景：方院外 · 雨中街道\n@窥窗 · 按谨慎调整停顿【ai_bp_caution】\n旁白：我踩上木箱，双手扒着小窗。街道绵延数百步，由南向北。远处，密密麻麻的黑影正在靠近。\n@对白标记：ai_right_room_line_2\n旁白：先是白甲，其后是红甲、蓝甲。马蹄踏过积水，队列缓缓往前。我的手心开始冒汗。\n@对白标记：ai_right_room_line_3\n@显示角色\n方知宥：一、二、三……先稳住呼吸。\n\n@节点标记：谨慎能否避开目光【ai_check_caution】\n@条件：谨慎【ai_caution】 >= 1\n@满足：记下队列间隙【ai_scout_route】\n@不满足：惊梦【ai_bad_prelude】\n\n@节点标记：记下队列间隙【ai_scout_route】\n@设置：记得避兵小路【ai_route_known】 = true\n@跳转：及时低头【ai_scout_safe】\n\n# 段落：及时低头【ai_scout_safe】\n@对白标记：ai_scout_safe_line_1\n旁白：我在一名骑兵抬眼之前退下木箱。只看见几眼，已足够认出队列的方向。\n@对白标记：ai_scout_safe_line_2\n旁白：不是所有巷口都被堵住。方才的观察，也许能替我留下一线生路。\n@对白标记：ai_scout_safe_line_3\n旁白：角落里，忽然传出一声很轻的咳嗽。那声音来自一只酒缸。\n@跳转：酒缸里的小雁儿【ai_child】\n\n# 小章节：酒缸 · 旧人【ai_scene_child】\n\n# 段落：酒缸里的小雁儿【ai_child】\n@对白标记：ai_child_line_1\n@背景：方院 · 雨天\n旁白：我一点点接近酒缸，脚步停在缸前。里面蜷缩着一个瘦小的女娃，抱着双膝，抬头凝望着我。\n@对白标记：ai_child_line_2\n@显示角色：表情=疲惫【ai_expression_95c7172fa280801f897e】\n小雁儿：好冷。\n@对白标记：ai_child_line_3\n旁白：一滴酒渍贴在她额前的发丝上。紫色飘带、烟云纹样，还有那双灵动的眼睛……我认识她。\n@对白标记：ai_child_line_4\n@显示角色\n方知宥：雁儿姐？\n@对白标记：ai_child_line_5\n旁白：我与她相识在十三年前。晋地盐池的一家客栈里，九岁的我哭着要爹娘，谁的话也听不进去。\n@对白标记：ai_child_line_6\n旁白：她比我大两岁。那一天，我哭得很厉害，她却没有哭。\n@对白标记：ai_child_line_7\n@显示角色：表情=坚定【ai_expression_72cd565bc9410b828861】\n小雁儿：先别哭，路还长着呢。\n@对白标记：ai_child_line_8\n旁白：旧日的声音与眼前的轻咳叠在一起。我分不清这是不是又一场幻梦，却还是拿来了干布。\n@对白标记：ai_child_line_9\n@显示角色\n方知宥：先暖一暖。外头不太平，别出声。\n\n@节点标记：这一夜之后【ai_choice_future】\n@选择：我攥紧了铜钥匙。身后是旧日，门外是未知的明天。\n@选项：收好盘缠，寻找避兵的小路 -> 是否记得小路【ai_check_route】\n@选项：关好院门，先让她暖过来 -> 灯火暂安【ai_shelter】\n\n@节点标记：是否记得小路【ai_check_route】\n@条件：记得避兵小路【ai_route_known】 == 是\n@满足：远舟的方向【ai_boat】\n@不满足：不再莽撞【ai_no_route】\n\n# 段落：不再莽撞【ai_no_route】\n@对白标记：ai_no_route_line_1\n旁白：我走到院门前，却想不起哪条巷子能避开大街。门外传来马蹄声，我最终停下了手。\n@对白标记：ai_no_route_line_2\n@显示角色\n方知宥：等一等。总得先活过这一夜。\n@跳转：灯火暂安【ai_shelter】\n\n# 小章节：余波 · 三种归宿【ai_scene_endings】\n\n# 段落：灯火暂安【ai_shelter】\n@对白标记：ai_shelter_line_1\n@背景：方院 · 夜色\n@收束 · 音乐淡出【ai_bp_end】\n旁白：我抵住院门，把干布放在酒缸旁，点亮一盏小灯。\n@对白标记：ai_shelter_line_2\n旁白：城里的雨还没有停。明日会怎样，我不知道；至少此刻，我没有把那声轻咳留在黑暗里。\n@对白标记：ai_shelter_line_3\n@显示角色\n方知宥：先活着。等天亮，再想下一步。\n\n@节点标记：灯火暂安 · 记录达成【ai_ending_shelter_record_reached】\n@设置：灯火暂安达成【ai_ending_shelter_reached】 = true\n\n@节点标记：示例结局 · 灯火暂安【ai_ending_shelter】\n@对白标记：ai_ending_shelter_performance\n@结局演出【builtin_ending_performance】：文字【caption】=\"灯火暂安\\n小小方院容下了一夜风雨，也容下了尚未写完的故事。\\n（两章示例的阶段结局）\"\n@独立演出：示例结局 · 灯火暂安\n\n@节点标记：示例结局 · 灯火暂安 · 返回标题【ai_ending_shelter_return_title】\n@返回标题界面\n\n# 段落：惊梦【ai_bad_prelude】\n@对白标记：ai_bad_prelude_line_1\n@背景：方院外 · 雨中街道\n@收束 · 音乐淡出【ai_bp_end】\n旁白：我看得太久，竟忘了压低身子。木箱发出一声脆响，街上的一道目光转向小窗。\n@对白标记：ai_bad_prelude_line_2\n旁白：我仓皇后退。雨声、马蹄声、自己急促的呼吸，顷刻混成一片。\n@对白标记：ai_bad_prelude_line_3\n旁白：这一次，我没有来得及把窗合上。\n\n@节点标记：惊梦未醒 · 记录达成【ai_ending_dream_record_reached】\n@设置：惊梦未醒达成【ai_ending_dream_reached】 = true\n\n@节点标记：示例结局 · 惊梦未醒【ai_ending_dream】\n@对白标记：ai_ending_dream_performance\n@结局演出【builtin_ending_performance】：文字【caption】=\"惊梦未醒\\n仓促的一瞥，断送了最后的隐蔽。\\n重来时，或许可以记住酒席上的劝告。\\n（两章示例结束）\"\n@独立演出：示例结局 · 惊梦未醒\n\n@节点标记：示例结局 · 惊梦未醒 · 返回标题【ai_ending_dream_return_title】\n@返回标题界面\n\n# 段落：远舟的方向【ai_boat】\n@对白标记：ai_boat_line_1\n@背景：远舟 · 船窗\n@背景音乐：青梅竹马【ai_story_music_memory】 循环，淡入=0.8\n旁白：我记得那条巷子，也记得队列驶过的方向。等马蹄声远去，我收紧衣襟，踏入了雨中。\n@对白标记：ai_boat_line_2\n旁白：……日子在奔逃中过去。几番辗转，许多张熟悉的面孔永远留在了广陵。\n@对白标记：ai_boat_line_3\n旁白：许多天后，我随良叔沿江而下，到了杭州。港口停着一艘海船，一名灰蓝衣裙的女子正在等他。\n@对白标记：ai_boat_line_4\n旁白：见到旧友重逢，我由衷替他们欣喜，心底却仍不可抑制地觉得落寞。\n@对白标记：ai_boat_line_5\n@显示角色\n良：知幼，过来吧！\n@对白标记：ai_boat_line_6\n旁白：恍惚间，我看见那些过去认识的人也在船上向我招手。一阵微风吹过，幻影消失，只留下海船、港口和一望无际的远方。\n@对白标记：ai_boat_line_7\n@显示角色\n方知宥：来了！\n@对白标记：ai_boat_line_8\n旁白：我深深吸了一口气，昂首挺胸，迈开脚步走了出去。我走向等待着我的远舟，走向蕴含着无限可能的将来。\n\n@节点标记：远舟 · 记录达成【ai_ending_boat_record_reached】\n@设置：远舟达成【ai_ending_boat_reached】 = true\n\n@节点标记：示例结局 · 远舟【ai_ending_boat】\n@对白标记：ai_ending_boat_performance\n@结局演出【builtin_ending_performance】：文字【caption】=\"远舟\\n旧事留在岸上，前路在水天之间。\\n据原作「结局·远舟」节选改编；此示例压缩了抵达结局前的篇章。\"\n@独立演出：示例结局 · 远舟\n\n@节点标记：示例结局 · 远舟 · 返回标题【ai_ending_boat_return_title】\n@返回标题界面\n",
     "standaloneSyntax": "module-names",
     "performanceSyntax": "explicit",
     "playbackSyntax": "inline"
@@ -11901,6 +11925,119 @@
   ],
   "entryId": "start",
   "ui": {
+    "flowStyles": [
+      {
+        "id": "ai_flow_main",
+        "name": "主线框",
+        "skin": {
+          "idle": "ai_ui_37adb4cb2b67d83f",
+          "disabled": "ai_ui_ae60f933b9c28da3",
+          "fit": "stretch",
+          "hideText": false,
+          "brightness": {
+            "hover": 0.46274513006210327,
+            "pressed": 0.7843137383460999,
+            "selected": 1
+          }
+        },
+        "style": {
+          "fontSize": 60,
+          "fontAssetId": "ai_ui_3510f58115c3cc3c",
+          "textColor": "#ffffff",
+          "hoverTextColor": "#ffffff",
+          "outlineWidth": 1,
+          "outlineColor": "#000000",
+          "outlineOpacity": 0.2,
+          "shadowX": 0,
+          "shadowY": 0,
+          "shadowBlur": 14,
+          "shadowSpread": 4,
+          "captionParts": [
+            {
+              "fontAssetId": "ai_ui_e1048c68ae7d4eb5",
+              "fontSize": 30
+            },
+            {}
+          ],
+          "shadowColor": "#000000",
+          "shadowOpacity": 0.9
+        }
+      },
+      {
+        "id": "ai_flow_memory",
+        "name": "回忆框",
+        "skin": {
+          "idle": "ai_ui_b97c86336119f069",
+          "disabled": "ai_ui_ae60f933b9c28da3",
+          "fit": "stretch",
+          "hideText": false,
+          "brightness": {
+            "hover": 0.46274513006210327,
+            "pressed": 0.7843137383460999,
+            "selected": 1
+          }
+        },
+        "style": {
+          "fontSize": 60,
+          "fontAssetId": "ai_ui_3510f58115c3cc3c",
+          "textColor": "#ffffff",
+          "hoverTextColor": "#ffffff",
+          "outlineWidth": 1,
+          "outlineColor": "#000000",
+          "outlineOpacity": 0.2,
+          "shadowX": 0,
+          "shadowY": 0,
+          "shadowBlur": 14,
+          "shadowSpread": 4,
+          "captionParts": [
+            {
+              "fontAssetId": "ai_ui_e1048c68ae7d4eb5",
+              "fontSize": 30
+            },
+            {}
+          ],
+          "shadowColor": "#000000",
+          "shadowOpacity": 0.9
+        }
+      },
+      {
+        "id": "ai_flow_ending",
+        "name": "结局框",
+        "skin": {
+          "idle": "ai_ui_469e3bdcacbe8fd1",
+          "disabled": "ai_ui_ae60f933b9c28da3",
+          "fit": "stretch",
+          "hideText": false,
+          "brightness": {
+            "hover": 0.46274513006210327,
+            "pressed": 0.7843137383460999,
+            "selected": 1
+          }
+        },
+        "style": {
+          "fontSize": 60,
+          "fontAssetId": "ai_ui_3510f58115c3cc3c",
+          "textColor": "#ffffff",
+          "hoverTextColor": "#ffffff",
+          "outlineWidth": 1,
+          "outlineColor": "#000000",
+          "outlineOpacity": 0.2,
+          "shadowX": 0,
+          "shadowY": 0,
+          "shadowBlur": 14,
+          "shadowSpread": 4,
+          "captionParts": [
+            {
+              "fontAssetId": "ai_ui_e1048c68ae7d4eb5",
+              "fontSize": 30
+            },
+            {}
+          ],
+          "shadowColor": "#000000",
+          "shadowOpacity": 0.9
+        }
+      }
+    ],
     "disabledPages": [
       "chapterSelect",
       "voiceSettings",
@@ -11917,6 +12054,7 @@
     "menuMusicId": "ai_presentation_music_main",
     "menuMusicFade": 0.3,
     "hoverSoundId": "ai_ui_hover",
+    "clickSoundId": "ai_ui_click",
     "menuShortcutPage": "preferences",
     "chapterTransition": {
       "effect": "ink",
@@ -12040,6 +12178,7 @@
         },
         "action": "start",
         "hoverSoundId": "ai_ui_hover_highlight",
+        "clickSoundId": "ai_ui_click_title",
         "x": 0.09375,
         "y": 0.8692407396104601,
         "width": 0.14166666666666666,
@@ -12060,6 +12199,7 @@
         },
         "action": "load",
         "hoverSoundId": "ai_ui_hover_highlight",
+        "clickSoundId": "ai_ui_click_title",
         "x": 0.26145833333333335,
         "y": 0.8692407396104601,
         "width": 0.14166666666666666,
@@ -12080,6 +12220,7 @@
         },
         "action": "flowchart",
         "hoverSoundId": "ai_ui_hover_highlight",
+        "clickSoundId": "ai_ui_click_title",
         "x": 0.42916666666666664,
         "y": 0.8692407396104601,
         "width": 0.14166666666666666,
@@ -12100,6 +12241,7 @@
         },
         "action": "gallery",
         "hoverSoundId": "ai_ui_hover_highlight",
+        "clickSoundId": "ai_ui_click_title",
         "x": 0.596875,
         "y": 0.8692407396104601,
         "width": 0.14166666666666666,
@@ -12120,6 +12262,7 @@
         },
         "action": "preferences",
         "hoverSoundId": "ai_ui_hover_highlight",
+        "clickSoundId": "ai_ui_click_title",
         "x": 0.8802083333333334,
         "y": 0.046296296296296294,
         "width": 0.053125,
@@ -12140,6 +12283,7 @@
         },
         "action": "quit",
         "hoverSoundId": "ai_ui_hover_highlight",
+        "clickSoundId": "ai_ui_click_title",
         "x": 0.9348958333333334,
         "y": 0.046296296296296294,
         "width": 0.053125,
@@ -12456,6 +12600,7 @@
         },
         "action": "return",
         "hoverSoundId": "ai_ui_hover",
+        "clickSoundId": "ai_ui_click_back",
         "x": 0.9177083333333333,
         "y": 0.8555555555555555,
         "width": 0.08229166666666667,
@@ -12681,6 +12826,7 @@
         },
         "action": "return",
         "hoverSoundId": "ai_ui_hover",
+        "clickSoundId": "ai_ui_click_back",
         "x": 0.9177083333333333,
         "y": 0.8555555555555555,
         "width": 0.08229166666666667,
@@ -12814,6 +12960,7 @@
         },
         "action": "return",
         "hoverSoundId": "ai_ui_hover",
+        "clickSoundId": "ai_ui_click_back",
         "x": 0.9010416666666666,
         "y": 0.9046296296296297,
         "width": 0.08229166666666667,
@@ -13907,6 +14054,7 @@
         },
         "action": "setPlayerPreference",
         "hoverSoundId": null,
+        "clickSoundId": null,
         "preference": "fullscreen",
         "preferenceValue": true,
         "x": 0.1859375,
@@ -13930,6 +14078,7 @@
         },
         "action": "setPlayerPreference",
         "hoverSoundId": null,
+        "clickSoundId": null,
         "preference": "fullscreen",
         "preferenceValue": false,
         "x": 0.3234375,
@@ -13953,6 +14102,7 @@
         },
         "action": "setPlayerPreference",
         "hoverSoundId": null,
+        "clickSoundId": null,
         "preference": "skipAll",
         "preferenceValue": false,
         "x": 0.1859375,
@@ -13976,6 +14126,7 @@
         },
         "action": "setPlayerPreference",
         "hoverSoundId": null,
+        "clickSoundId": null,
         "preference": "skipAll",
         "preferenceValue": true,
         "x": 0.3234375,
@@ -13999,6 +14150,7 @@
         },
         "action": "setPlayerPreference",
         "hoverSoundId": null,
+        "clickSoundId": null,
         "preference": "voiceSustain",
         "preferenceValue": false,
         "x": 0.575,
@@ -14022,6 +14174,7 @@
         },
         "action": "setPlayerPreference",
         "hoverSoundId": null,
+        "clickSoundId": null,
         "preference": "voiceSustain",
         "preferenceValue": true,
         "x": 0.7125,
@@ -14117,6 +14270,7 @@
       },
       {
         "id": "ai_settings_languagesetting_btnpre",
+        "name": "上一种界面语言",
         "page": "preferences",
         "kind": "button",
         "text": "此示例仅含中文内容",
@@ -14130,7 +14284,6 @@
           "hideText": true
         },
         "disabled": true,
-        "action": "return",
         "x": 0.17057291666666666,
         "y": 0.13462962397822628,
         "width": 0.019791666666666666,
@@ -14138,6 +14291,7 @@
       },
       {
         "id": "ai_settings_languagesetting_btnnext",
+        "name": "下一种界面语言",
         "page": "preferences",
         "kind": "button",
         "text": "此示例仅含中文内容",
@@ -14151,7 +14305,6 @@
           "hideText": true
         },
         "disabled": true,
-        "action": "return",
         "x": 0.44973958333333336,
         "y": 0.13462962397822628,
         "width": 0.019791666666666666,
@@ -14189,6 +14342,7 @@
       },
       {
         "id": "ai_settings_voicelanguagesetting_btnpre",
+        "name": "上一种配音语言",
         "page": "preferences",
         "kind": "button",
         "text": "此示例仅含中文内容",
@@ -14202,7 +14356,6 @@
           "hideText": true
         },
         "disabled": true,
-        "action": "return",
         "x": 0.17057291666666666,
         "y": 0.24740740458170574,
         "width": 0.019791666666666666,
@@ -14210,6 +14363,7 @@
       },
       {
         "id": "ai_settings_voicelanguagesetting_btnnext",
+        "name": "下一种配音语言",
         "page": "preferences",
         "kind": "button",
         "text": "此示例仅含中文内容",
@@ -14223,7 +14377,6 @@
           "hideText": true
         },
         "disabled": true,
-        "action": "return",
         "x": 0.44973958333333336,
         "y": 0.24740740458170574,
         "width": 0.019791666666666666,
@@ -14264,6 +14417,7 @@
         },
         "action": "return",
         "hoverSoundId": "ai_ui_hover",
+        "clickSoundId": "ai_ui_click_back",
         "x": 0.9008476414407293,
         "y": 0.9139815251032511,
         "width": 0.06994791862865289,
@@ -14283,6 +14437,7 @@
         },
         "action": "quit",
         "hoverSoundId": "ai_ui_hover",
+        "clickSoundId": "ai_ui_click_back",
         "x": 0.8905728995179136,
         "y": 0.8006481872664557,
         "width": 0.08942708584169547,
@@ -14303,6 +14458,7 @@
         },
         "action": "mainMenu",
         "hoverSoundId": "ai_ui_hover",
+        "clickSoundId": "ai_ui_click_back",
         "x": 0.8905728995179136,
         "y": 0.8573148564056113,
         "width": 0.08942708584169547,
@@ -14353,6 +14509,7 @@
           "hideText": true
         },
         "action": "confirmYes",
+        "clickSoundId": null,
         "x": 0.32665677070617677,
         "y": 0.5009259259259259,
         "width": 0.15520833333333334,
@@ -14372,6 +14529,7 @@
           "hideText": true
         },
         "action": "confirmNo",
+        "clickSoundId": null,
         "x": 0.5026984373728435,
         "y": 0.5009259259259259,
         "width": 0.15520833333333334,
@@ -14442,6 +14600,7 @@
           "hideText": true
         },
         "action": "return",
+        "clickSoundId": "ai_ui_click_back",
         "x": 0.82,
         "y": 0.86,
         "width": 0.105,
@@ -14530,6 +14689,7 @@
             "hideText": true
           }
         },
+        "clickSoundId": null,
         "style": {
           "fontSize": 30,
           "fontAssetId": "ai_ui_37e66a53a43d9a54",
@@ -14555,6 +14715,7 @@
           "hideText": true
         },
         "action": "return",
+        "clickSoundId": "ai_ui_click_back",
         "x": 0.9085416793823242,
         "y": 0.8751851964879919,
         "width": 0.08229166666666667,
@@ -14681,6 +14842,8 @@
             "thumbHeight": 31
           }
         },
+        "hoverSoundId": "ai_ui_hover_highlight",
+        "clickSoundId": "ai_ui_click_title",
         "style": {
           "fontSize": 60,
           "fontAssetId": "ai_ui_3510f58115c3cc3c",
@@ -14691,9 +14854,17 @@
           "outlineOpacity": 0.2,
           "shadowX": 0,
           "shadowY": 0,
-          "shadowBlur": 7,
+          "shadowBlur": 14,
+          "shadowSpread": 4,
+          "captionParts": [
+            {
+              "fontAssetId": "ai_ui_e1048c68ae7d4eb5",
+              "fontSize": 30
+            },
+            {}
+          ],
           "shadowColor": "#000000",
-          "shadowOpacity": 0.4
+          "shadowOpacity": 0.9
         },
         "x": 0,
         "y": 0,
@@ -14714,6 +14885,8 @@
           "hideText": true
         },
         "action": "return",
+        "hoverSoundId": "ai_ui_hover_highlight",
+        "clickSoundId": "ai_ui_click_title",
         "x": 0.8692708333333333,
         "y": 0.9018518518518519,
         "width": 0.1046875,
@@ -14822,6 +14995,7 @@
           "hideText": true
         },
         "action": "voiceCollection",
+        "hoverSoundId": "ai_ui_hover",
         "x": 0.8130208333333333,
         "y": 0.8555555555555555,
         "width": 0.1046875,
@@ -14842,6 +15016,7 @@
           "hideText": true
         },
         "action": "voiceCollection",
+        "hoverSoundId": "ai_ui_hover",
         "x": 0.8130208333333333,
         "y": 0.8555555555555555,
         "width": 0.1046875,
@@ -14890,6 +15065,7 @@
           "hideText": true
         },
         "action": "gallery",
+        "hoverSoundId": "ai_ui_hover",
         "x": 0.6036458333333333,
         "y": 0.8555555555555555,
         "width": 0.1046875,
@@ -14910,6 +15086,7 @@
           "hideText": true
         },
         "action": "music",
+        "hoverSoundId": "ai_ui_hover",
         "x": 0.7083333333333334,
         "y": 0.8555555555555555,
         "width": 0.1046875,
@@ -14930,6 +15107,7 @@
           "hideText": true
         },
         "action": "voiceCollection",
+        "hoverSoundId": "ai_ui_hover",
         "x": 0.8130208333333333,
         "y": 0.8555555555555555,
         "width": 0.1046875,
@@ -14949,6 +15127,8 @@
           "hideText": true
         },
         "action": "return",
+        "hoverSoundId": "ai_ui_hover",
+        "clickSoundId": "ai_ui_click_back",
         "x": 0.9177083333333333,
         "y": 0.8555555555555555,
         "width": 0.08229166666666667,
@@ -15026,6 +15206,7 @@
             "hideText": true
           }
         },
+        "clickSoundId": "ai_ui_hover_highlight",
         "style": {
           "fontSize": 36,
           "fontAssetId": "ai_ui_e1048c68ae7d4eb5",
@@ -15038,95 +15219,6 @@
         "height": 0.7369398046422888
       }
     ],
-    "customPages": [],
-    "flowStyles": [
-      {
-        "id": "ai_flow_main",
-        "name": "主线框",
-        "skin": {
-          "idle": "ai_ui_37adb4cb2b67d83f",
-          "disabled": "ai_ui_ae60f933b9c28da3",
-          "fit": "stretch",
-          "hideText": false,
-          "brightness": {
-            "hover": 0.46274513006210327,
-            "pressed": 0.7843137383460999,
-            "selected": 1
-          }
-        },
-        "style": {
-          "fontSize": 60,
-          "fontAssetId": "ai_ui_3510f58115c3cc3c",
-          "textColor": "#ffffff",
-          "hoverTextColor": "#ffffff",
-          "outlineWidth": 1,
-          "outlineColor": "#000000",
-          "outlineOpacity": 0.2,
-          "shadowX": 0,
-          "shadowY": 0,
-          "shadowBlur": 7,
-          "shadowColor": "#000000",
-          "shadowOpacity": 0.4
-        }
-      },
-      {
-        "id": "ai_flow_memory",
-        "name": "回忆框",
-        "skin": {
-          "idle": "ai_ui_b97c86336119f069",
-          "disabled": "ai_ui_ae60f933b9c28da3",
-          "fit": "stretch",
-          "hideText": false,
-          "brightness": {
-            "hover": 0.46274513006210327,
-            "pressed": 0.7843137383460999,
-            "selected": 1
-          }
-        },
-        "style": {
-          "fontSize": 60,
-          "fontAssetId": "ai_ui_3510f58115c3cc3c",
-          "textColor": "#ffffff",
-          "hoverTextColor": "#ffffff",
-          "outlineWidth": 1,
-          "outlineColor": "#000000",
-          "outlineOpacity": 0.2,
-          "shadowX": 0,
-          "shadowY": 0,
-          "shadowBlur": 7,
-          "shadowColor": "#000000",
-          "shadowOpacity": 0.4
-        }
-      },
-      {
-        "id": "ai_flow_ending",
-        "name": "结局框",
-        "skin": {
-          "idle": "ai_ui_469e3bdcacbe8fd1",
-          "disabled": "ai_ui_ae60f933b9c28da3",
-          "fit": "stretch",
-          "hideText": false,
-          "brightness": {
-            "hover": 0.46274513006210327,
-            "pressed": 0.7843137383460999,
-            "selected": 1
-          }
-        },
-        "style": {
-          "fontSize": 60,
-          "fontAssetId": "ai_ui_3510f58115c3cc3c",
-          "textColor": "#ffffff",
-          "hoverTextColor": "#ffffff",
-          "outlineWidth": 1,
-          "outlineColor": "#000000",
-          "outlineOpacity": 0.2,
-          "shadowX": 0,
-          "shadowY": 0,
-          "shadowBlur": 7,
-          "shadowColor": "#000000",
-          "shadowOpacity": 0.4
-        }
-      }
-    ]
+    "customPages": []
   }
 }

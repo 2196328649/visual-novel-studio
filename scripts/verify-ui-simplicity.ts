@@ -44,7 +44,7 @@ page.on('pageerror', error => errors.push(error.message));
 const button = (name: string) => page.getByRole('button', { name, exact: true });
 const mode = (name: string) => page.getByLabel('界面编辑模式').getByRole('button', { name, exact: true });
 const tab = (id: string) => page.locator(`[data-workspace-tab="${id}"]`);
-const saveUi = async () => { await button('保存界面').click(); await expect(button('保存界面')).toBeDisabled(); };
+const saveUi = async () => { await button('保存界面').click(); await expect(page.locator('.ui-save-status')).toHaveText('已保存'); await expect(button('保存界面')).toBeDisabled(); };
 const settings = () => page.getByRole('dialog', { name: '作品设置', exact: true });
 const theme = async (light: boolean) => {
   await button('作品设置').click(); await settings().getByRole('button', { name: '编辑器外观', exact: true }).click();
@@ -78,7 +78,7 @@ try {
     await expect(button('导入文本')).toBeHidden(); await files.focus(); await page.keyboard.press('Enter');
     await expect(button('导入文本')).toBeVisible(); await expect(button('导出文本')).toBeVisible();
     await page.keyboard.press('Escape'); await expect(button('导入文本')).toBeHidden(); await expect(files).toBeFocused();
-    await files.click(); await page.locator('.text-source-panel .text-panel-heading strong').click(); await expect(button('导入文本')).toBeHidden();
+    await files.click(); await page.locator('.text-source-panel .text-panel-heading').click({ position: { x: 6, y: 6 } }); await expect(button('导入文本')).toBeHidden();
     await files.click(); await button('导出文本').click();
     await expect(page.getByRole('dialog', { name: '导出文本', exact: true })).toBeVisible();
     await page.getByRole('dialog', { name: '导出文本', exact: true }).getByRole('button', { name: '取消', exact: true }).click();
@@ -102,7 +102,7 @@ try {
     await button('撤销').click(); await expect(page.getByLabel('宽度 %', { exact: true })).toHaveValue('30');
     await button('重做').click(); await expect(page.getByLabel('宽度 %', { exact: true })).toHaveValue('36');
     await openDisclosure(page, '高级事件绑定'); await expect(page.getByLabel('点击事件蓝图', { exact: true })).toBeVisible();
-    await openDisclosure(page, '图片皮肤与详细外观'); await openDisclosure(page, '按钮状态颜色');
+    await openDisclosure(page, '按钮状态颜色');
     await expect(page.getByLabel('按下背景', { exact: true })).toBeVisible(); await saveUi();
     await mode('事件图').click(); await page.locator('[data-ui-component-id="trigger"]').click();
     await expect(button('点击时 · OnClicked')).toBeVisible(); await expect(button('悬停时 · OnHovered')).toBeHidden();
@@ -113,6 +113,7 @@ try {
     assert.ok(await page.locator('[data-component-id="trigger"]').evaluate(el => el.getBoundingClientRect().width > 50));
     await pages.selectOption('say'); await page.locator('[data-hierarchy-id="dialogue_background"]').click();
     const checkbox = page.getByLabel('跟随玩家对话框透明度', { exact: true }); await expect(checkbox).not.toBeChecked();
+    await openDisclosure(page, '外观与状态');
     const help = page.locator('summary[aria-label="跟随玩家对话框透明度说明"]');
     await help.click(); await expect(help.locator('..').locator('small')).toBeVisible(); await expect(checkbox).not.toBeChecked();
     await help.focus(); await page.keyboard.press('Enter'); await expect(help.locator('..').locator('small')).toBeHidden(); await expect(checkbox).not.toBeChecked();
@@ -124,30 +125,36 @@ try {
     checks.push('说明鼠标与键盘展开、标签点击、说明点击不改变复选框');
 
     const browser = page.getByRole('region', { name: '资源管理器', exact: true });
-    await expect(browser.getByLabel('资源类型')).toBeHidden(); await openContentFilters(browser);
-    await browser.getByLabel('资源类型').selectOption('image'); await expect(browser.locator('[data-content-key^="asset:"]')).toHaveCount(1);
-    await browser.getByLabel('资源排序').selectOption('kind'); await browser.locator('.content-filter-toggle').click();
-    await expect(browser.locator('.content-filter-toggle')).toContainText('图片'); await expect(browser.locator('.content-filter-toggle')).toContainText('按类型');
-    await openContentFilters(browser); await browser.getByRole('button', { name: '清除筛选', exact: true }).click();
-    await expect(browser.getByLabel('资源类型')).toHaveValue('all'); await expect(browser.getByLabel('资源排序')).toHaveValue('name');
+    const typeFilters = browser.getByRole('group', { name: '资源类型筛选（可多选）', exact: true });
+    await expect(typeFilters).toBeHidden(); await browser.getByLabel('资源显示范围', { exact: true }).selectOption('all'); await openContentFilters(browser);
+    await typeFilters.getByLabel('筛选图片', { exact: true }).check();
+    // Opening may discover extra bundled images, so check the kind, not a fixed count.
+    await expect(browser.locator('[data-content-key="asset:picture"]')).toBeVisible();
+    await expect(browser.locator('[data-content-key^="asset:"]:not(.image)')).toHaveCount(0);
+    await browser.getByLabel('资源排序').selectOption('kind'); await browser.locator('.content-filter-toggle').click(); await expect(typeFilters).toBeHidden();
+    await expect(browser.locator('.content-filter-toggle')).toHaveAttribute('title', '图片'); await expect(browser.locator('.content-filter-count')).toHaveText('1');
+    await openContentFilters(browser); await typeFilters.getByRole('button', { name: '显示全部类型', exact: true }).click();
+    await expect(typeFilters.getByLabel('筛选图片', { exact: true })).not.toBeChecked(); await expect(browser.locator('.content-filter-count')).toHaveCount(0);
+    await browser.getByLabel('资源排序').selectOption('name'); await expect(browser.getByLabel('资源排序')).toHaveValue('name');
+    await browser.getByLabel('资源显示范围', { exact: true }).selectOption('folder');
     checks.push('素材筛选与排序按需展开、活动筛选提示、实际过滤和恢复');
 
     await tab('characters').click(); await page.locator('[data-character-id="speaker"]').click();
     await expect(page.getByLabel('角色名称', { exact: true })).toBeVisible(); await expect(page.getByLabel('表情名称', { exact: true })).toBeVisible();
     await expect(page.getByLabel('头顶位置 %', { exact: true })).toBeHidden(); await expect(page.getByLabel('基础角色', { exact: true })).toBeHidden();
-    await openDisclosure(page, '默认立绘构图'); await page.getByLabel('头顶位置 %', { exact: true }).fill('18');
-    await openDisclosure(page, '角色站位预设'); await page.getByLabel('默认站位预设', { exact: true }).selectOption('left');
-    await openDisclosure(page, '继承与蓝图'); await expect(page.getByLabel('角色蓝图', { exact: true })).toBeVisible();
-    checks.push('角色名称与表情优先、构图/站位/继承展开后可编辑');
+    await page.getByRole('tablist', { name: '角色编辑分类', exact: true }).getByRole('tab', { name: '构图与站位', exact: true }).click();
+    await page.getByLabel('头顶位置 %', { exact: true }).fill('18');
+    await page.getByLabel('默认站位预设', { exact: true }).selectOption('left');
+    checks.push('角色名称与表情优先显示，构图与站位在独立页签中可编辑');
 
     await tab('variables').click(); await page.locator('.parameter-set-card').filter({ hasText: '故事状态' }).click();
     await page.locator('.parameter-table button').filter({ hasText: '好感度' }).click();
     const parameters = page.getByLabel('参数设置', { exact: true });
-    await parameters.getByLabel('名称', { exact: true }).fill('关系值'); await parameters.getByLabel('状态值', { exact: true }).fill('5');
-    await expect(parameters.getByLabel('跨存档保留', { exact: true })).toBeHidden(); await openDisclosure(page, '分组与存储');
-    await parameters.getByLabel('跨存档保留', { exact: true }).check();
+    await parameters.getByLabel('参数名称', { exact: true }).fill('关系值'); await parameters.getByLabel('初始值', { exact: true }).fill('5');
+    const persistent = parameters.getByRole('group', { name: '参数存储方式', exact: true }).getByRole('button', { name: /本地持久化/ });
+    await persistent.click(); await expect(persistent).toHaveAttribute('aria-pressed', 'true');
     await openDisclosure(page, '参数集设置'); await expect(page.getByLabel('参数集名称', { exact: true })).toBeVisible();
-    checks.push('参数名称和初始值直接编辑、分组与存储展开编辑');
+    checks.push('参数名称、初始值和保存位置直接编辑，参数集设置按需展开');
 
     await button('作品设置').click(); const dialog = settings();
     await expect(dialog.getByText(/普通顺序剧情通常不用手写/)).toBeHidden(); await openDisclosure(page, '入口指令说明');

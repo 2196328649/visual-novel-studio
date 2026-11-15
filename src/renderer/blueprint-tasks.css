@@ -1,0 +1,5 @@
+.blueprint-task-fields { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.blueprint-task-fields > small, .blueprint-task-fields .muted { line-height: 1.5; overflow-wrap: anywhere; }
+.blueprint-task-fields .blueprint-inline-field { min-width: 0; }
+.blueprint-task-fields select { min-width: 0; max-width: 100%; }
+.blueprint-task-fields [role="alert"] { margin: 0; color: var(--warning, #e3b25a); line-height: 1.5; }

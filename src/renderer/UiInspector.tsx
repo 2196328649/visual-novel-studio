@@ -1,318 +1,351 @@
-import { blueprintResources, projectGraphs } from '../core/project-resources';
-import { useEffect, useId, useRef, useState } from 'react';
-import { Eye, EyeOff, RefreshCw, Trash2, Layers, Move, Paintbrush, MousePointer2, Image as ImageIcon, Settings2, List, MessageSquare } from 'lucide-react';
-import { effectiveUiComponents, editableUiComponent, findCustomUiComponent, localUiComponents, uiComponentLimit, type Project, type UiComponent } from '../core/model';
-import { uiActionAvailable } from '../core/ui-availability';
-import { removeUiObject } from '../core/ui-hierarchy-edit';
-import { chapterEffectNames } from '../core/chapter';
-import { playerPreferences } from '../core/preferences';
-import { Field, IconButton } from './components';
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, Box, Eye, Layers, List, MousePointer2, Paintbrush, RotateCcw, Search, Trash2, X } from 'lucide-react';
+import { editableUiComponent, effectiveUiComponents, localUiComponents, uiComponentLimit, type Project, type UiButtonState, type UiComponent } from '../core/model';
+import { applyUiDesignProperty } from '../core/ui-design-properties';
+import { uiPropertyControlDesignSnapshot } from '../core/ui-property-control-snapshot';
+import { uiPropertyControlFor } from '../core/ui-property-control';
+import { uiControlKindName } from '../core/ui-control-authoring';
+import { hideInheritedUiObject, removeUiObject, restoreInheritedUiObject } from '../core/ui-hierarchy-edit';
+import { uiComponentPageId } from '../core/ui-page-settings';
+import { uiInspectorSearchLabels } from '../core/ui-inspector-search';
+import type { CollectionPart } from '../core/ui-collection-layout';
+import { collectionInspectorParts, collectionInspectorPartKeywords, collectionInspectorPartName, collectionInspectorPartScope } from '../core/ui-collection-inspector';
+import { resolveUiLayout, uiLayoutProblem, uiLayoutValues } from '../core/ui-layout';
+import { componentName, componentNames } from './UiNames';
+import { Field } from './components';
 import { NumberInput } from './NumberInput';
-import { UiChildObjects } from './UiChildObjects';
-import { UiFlowStyles } from './UiFlowStyles';
 import { UiPropertyGroup } from './UiPropertyGroup';
-import { UiAppearanceFields, UiAssetSelect } from './UiAppearance';
-import { actionName, componentName, bindingNames } from './UiNames';
-import { PlayerDefaultsFields, UiPreferenceFields } from './PlayerPreferences';
-import { ChapterCompositionFields } from './ChapterFields';
-import { SpinePlaybackFields } from './SpinePreview';
+import { UiPropertyControlProvider } from './UiPropertyControl';
+import { UiInspectorProvider, UiInspectorSearchScope, useUiInspectorGroupActive } from './UiInspectorContext';
+import { UiInspectorBindings, UiInspectorContent, inspectorCollectionKinds, uiInspectorContentSummary } from './UiInspectorContent';
+import { UiCommonAppearance } from './UiCommonAppearance';
+import { UiInspectorOpacity } from './UiInspectorVisibility';
+import { UiInspectorInteraction, UiInspectorVisibilityRule, uiInspectorInteractionSummary } from './UiInspectorInteraction';
+import { UiCollectionInspector, UiCollectionPartInspector } from './UiCollectionInspector';
+import { useCollectionEditing } from './UiCollectionEditing';
+import { UiPreferenceFields } from './PlayerPreferences';
+import { UiLayoutFields } from './UiLayoutFields';
+import { UiChildObjects } from './UiChildObjects';
+import { UiPropertyCapabilities } from './UiPropertyCapabilities';
+import { UiFlowInspector } from './UiFlowInspector';
+import { UiFlowAuthoringStatusContext, UiFlowEditContext, type FlowInspectorTarget } from './UiFlowEditing';
+import { playerFlowAllEntries, playerFlowGroups, playerFlowMode, playerFlowView } from '../core/player-flow-content';
+import type { UiInspectorPageContext } from './UiPageSettings';
 import type { Commit } from './editor';
 import type { AssetUrl } from './StageEditor';
 import './ui-inspector.css';
 
-export function ThemeInspector({
-  selectUi,
-  project,
-  id,
-  selectionRequest,
-  commit,
-  assetUrl,
-}: {
-  project: Project;
-  id?: string;
-  selectionRequest?: string;
-  selectUi?: (id?: string) => void;
-  commit: Commit;
-  assetUrl: AssetUrl;
+type EditComponent = (change: (component: UiComponent) => void, options?: { separate?: boolean }) => void;
+type GeometryUnit = 'percent' | 'pixel';
+/** Common authoring shell. The group session belongs to a task, while field
+ * drafts belong to the selected component. Neither changes project data. */
+export function ThemeInspector({ project, id, selectionRequest, pageContext, commit, assetUrl, selectUi, onParameter }: {
+  project: Project; id?: string; selectionRequest?: string; pageContext?: UiInspectorPageContext;
+  commit: Commit; assetUrl: AssetUrl; selectUi?: (id?: string) => void; onParameter?: (id: string) => void;
 }) {
-  const root = useRef<HTMLDivElement>(null);
-  const panelId = useId();
-  const [section, setSection] = useState<'game' | 'component'>(id ? 'component' : 'game');
-  useEffect(() => { if (id) setSection('component'); root.current?.closest('.inspector-scroll')?.scrollTo({ top: 0 }); }, [id, selectionRequest]);
-  const activeInstance = project.ui.instances?.find(instance => instance.id === project.ui.activeInstanceId);
-  const effectiveComponents = effectiveUiComponents(project.ui);
-  const customComponent = id ? findCustomUiComponent(project, id) : undefined;
-  const customPage = customComponent ? project.ui.customPages?.find(page => page.components.some(item => item.id === customComponent.id)) : undefined;
-  const isCustomComponent = !!customComponent;
-  const component = customComponent ?? effectiveComponents.find(c => c.id === id);
-  const localComponents = isCustomComponent ? customPage?.components ?? [] : localUiComponents(project.ui);
-  const localComponent = isCustomComponent ? customComponent : localComponents.find(c => c.id === id);
-  const inheritedComponent = !isCustomComponent && activeInstance ? effectiveUiComponents({ ...project.ui, activeInstanceId: activeInstance.baseUiId }).find(c => c.id === id) : undefined;
-  const componentPeers = isCustomComponent ? customPage?.components ?? [] : effectiveComponents;
-  const hiddenComponents = !isCustomComponent ? (activeInstance?.hiddenComponentIds?.map(hiddenId => ({
-    id: hiddenId,
-    component: effectiveUiComponents({ ...project.ui, instances: project.ui.instances?.map(instance => instance.id === activeInstance.id ? { ...instance, hiddenComponentIds: [] } : instance) }).find(c => c.id === hiddenId),
-  })) ?? []) : [];
-  const canEditComponent = !!localComponent || localComponents.length < uiComponentLimit;
-  const editComponent = (edit: (c: UiComponent) => void) =>
-    commit("界面组件", (p) => {
-      const c = id ? isCustomComponent ? findCustomUiComponent(p, id) : editableUiComponent(p.ui, id) : undefined;
-      if (c) edit(c);
+  const all = useMemo(() => effectiveUiComponents(project.ui), [project.ui]);
+  const customCandidate = project.ui.customPages.find(page => page.components.some(component => component.id === id));
+  const candidate = customCandidate?.components.find(item => item.id === id) ?? all.find(item => item.id === id);
+  const component = candidate && (!pageContext || uiComponentPageId(project, candidate) === pageContext.pageId) ? candidate : undefined;
+  const custom = component ? customCandidate : undefined;
+  const propertyPreview = useMemo(() => component ? uiPropertyControlDesignSnapshot(project, component) : undefined, [project, component]);
+  const peers = useMemo(() => custom?.components ?? all.filter(item => item.page === component?.page), [custom?.components, all, component?.page]);
+  const instance = custom ? undefined : project.ui.instances?.find(item => item.id === project.ui.activeInstanceId);
+  const local = custom?.components ?? localUiComponents(project.ui);
+  const localComponent = local.find(item => item.id === id);
+  const inherited = useMemo(() => instance ? effectiveUiComponents({ ...project.ui, activeInstanceId: instance.baseUiId }) : [], [project.ui, instance]);
+  const baseComponent = inherited.find(item => item.id === id);
+  const actualKind = component ? uiControlKindName(project, component) || componentNames[component.kind] : '页面';
+  const keywords = useMemo(() => ({
+    content: component ? uiInspectorSearchLabels(project, component, 'content') : [],
+    layout: component ? uiInspectorSearchLabels(project, component, 'layout') : [],
+    appearance: component ? uiInspectorSearchLabels(project, component, 'appearance') : [],
+    interaction: component ? uiInspectorSearchLabels(project, component, 'interaction') : [],
+    visibility: component ? uiInspectorSearchLabels(project, component, 'visibility') : [],
+    children: component ? uiInspectorSearchLabels(project, component, 'children') : [],
+    collectionLayout: component ? uiInspectorSearchLabels(project, component, 'collection-layout') : [],
+  }), [component, project.variables, project.ui, project.assets, project.minigames]);
+  const pageId = pageContext?.pageId || (component ? uiComponentPageId(project, component) : '');
+  const scope = custom ? custom.id : project.ui.activeInstanceId ?? 'base';
+  const taskKey = JSON.stringify([project.id, pageId, scope, actualKind]);
+  const pageTaskKey = JSON.stringify([project.id, pageId, scope, 'page']);
+  const [section, setSection] = useState<'component' | 'page'>(component ? 'component' : 'page');
+  const activeSection = component ? section : 'page';
+  const [searches, setSearches] = useState<Record<string, string>>({});
+  const [units, setUnits] = useState<Record<string, GeometryUnit>>({});
+  const unit = units[taskKey] ?? 'percent';
+  const [localState, setLocalState] = useState<UiButtonState>('idle');
+  const state = pageContext?.previewState ?? localState;
+  const changeState = pageContext?.onPreviewStateChange ?? setLocalState;
+  const [notice, setNotice] = useState('');
+  const root = useRef<HTMLDivElement>(null), header = useRef<HTMLDivElement>(null), scrollPositions = useRef(new Map<string, number>());
+  const status = useContext(UiFlowAuthoringStatusContext), flowEditing = useContext(UiFlowEditContext);
+  const collectionEditing = useCollectionEditing();
+  const availableParts = component ? collectionInspectorParts(component) : [];
+  const requestedPart = collectionEditing?.selection && collectionEditing.selection.componentId === id ? collectionEditing.selection : undefined;
+  const selectedPart = requestedPart && availableParts.includes(requestedPart.part) ? requestedPart : undefined;
+  const part = selectedPart?.part;
+  const flowTarget = component?.kind === 'flowchart' && flowEditing && flowEditing.componentId === id ? flowEditing.inspector : undefined;
+  const flowSubview = flowTarget && flowTarget.kind !== 'map' ? flowTarget : undefined;
+  const flowKey = flowSubview ? JSON.stringify([flowSubview, flowEditing?.groupId, flowEditing?.browseTrail]) : '';
+  const flowNode = useMemo(() => component && flowSubview && 'nodeId' in flowSubview ? playerFlowAllEntries(project, component).find(entry => entry.id === flowSubview.nodeId) : undefined, [project, component, flowKey]);
+  const flowLocal = component && playerFlowMode(component) === 'custom';
+  const flowTitle = flowSubview?.kind === 'node' ? flowNode?.name ?? '剧情节点'
+    : flowSubview?.kind === 'call' && component ? playerFlowView(project, component, flowEditing?.groupId).entries.find(entry => entry.callId === flowSubview.callId)?.name ?? '子剧情'
+    : flowSubview?.kind === 'group' && component ? playerFlowGroups(component).find(group => group.id === flowSubview.groupId)?.name ?? '显示分组'
+    : flowSubview?.kind === 'edge' ? '连线来源'
+    : flowSubview?.kind === 'base' ? '本图基础外观' : flowSubview?.kind === 'preset' ? project.ui.flowStyles?.find(preset => preset.id === flowSubview.presetId)?.name ?? '节点外观预设' : flowLocal ? '本图剧情' : '显示的剧情';
+  const internalView = !!part || !!flowSubview;
+  const currentTaskKey = part ? JSON.stringify([taskKey, 'part', part]) : flowSubview ? JSON.stringify([taskKey, id, 'flow', flowKey]) : taskKey;
+  const query = searches[currentTaskKey] ?? '', rootQuery = searches[taskKey] ?? '';
+  const changeSearch = (value: string, target = currentTaskKey) => setSearches(previous => ({ ...previous, [target]: value }));
+  const identity = JSON.stringify([project.id, scope, pageId, id, component?.kind, component?.kind === 'flowchart' ? playerFlowMode(component) : undefined]);
+  const latest = useRef({ identity, part, flowKey, section: activeSection, saving: status.saving });
+  latest.current = { identity, part, flowKey, section: activeSection, saving: status.saving };
+  const mounted = useRef(true);
+  const searching = activeSection === 'component' && !!query.trim();
+  const scrollKey = activeSection === 'page' ? pageTaskKey : `${currentTaskKey}/${searching ? 'search' : 'component'}`;
+
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => { setSection(component ? 'component' : 'page'); setNotice(''); }, [id, selectionRequest, pageContext?.pageId, !!component]);
+  useLayoutEffect(() => {
+    const scroll = root.current?.closest<HTMLElement>('.inspector-scroll'), element = header.current;
+    if (!scroll || !element) return;
+    const measure = () => scroll.style.setProperty('--ui-inspector-sticky-height', `${element.offsetHeight + 12}px`);
+    const observer = new ResizeObserver(measure); observer.observe(element); measure();
+    return () => { observer.disconnect(); scroll.style.removeProperty('--ui-inspector-sticky-height'); };
+  }, []);
+  useLayoutEffect(() => {
+    const scroll = root.current?.closest<HTMLElement>('.inspector-scroll');
+    if (!scroll) return;
+    scroll.scrollTop = scrollPositions.current.get(scrollKey) ?? 0;
+    const remember = () => scrollPositions.current.set(scrollKey, scroll.scrollTop);
+    scroll.addEventListener('scroll', remember, { passive: true });
+    return () => scroll.removeEventListener('scroll', remember);
+  }, [scrollKey, identity]);
+  useEffect(() => {
+    if (requestedPart && !selectedPart) collectionEditing?.clear();
+  }, [requestedPart, selectedPart, collectionEditing?.clear]);
+  useEffect(() => {
+    if (part) setSection('component');
+  }, [part, collectionEditing?.request]);
+  useEffect(() => {
+    const reveal = selectedPart?.reveal;
+    if (!part || !reveal) return;
+    changeSearch('', currentTaskKey);
+    const frame = requestAnimationFrame(() => {
+      if (latest.current.identity !== identity || latest.current.part !== part) return;
+      const target = root.current?.querySelector<HTMLElement>(`.ui-inspector-view:not([hidden]) [data-ui-inspector-group="part-${reveal}"]`);
+      target?.scrollIntoView({ block: 'start' });
+      target?.querySelector<HTMLElement>(':scope > summary')?.focus({ preventScroll: true });
     });
-  const nameHint = '仅用于编辑器中的查找，不改变游戏内文字。' + (!isCustomComponent && activeInstance && inheritedComponent ? '此控件来自基础界面；修改只作用于当前界面方案，可通过恢复继承撤销覆盖。' : '');
-  const collection = component && ['choiceList', 'saveSlots', 'galleryGrid', 'musicTrackList', 'voiceCollection', 'chapterList', 'historyList', 'flowchart'].includes(component.kind);
-  const hasContent = component && ['image', 'video', 'spine', 'text', 'button', 'preference', 'progress'].includes(component.kind);
-  return <div className="ui-inspector" ref={root}>
-    <div className="ui-inspector-tabs" role="tablist" aria-label="界面属性分类" onKeyDown={event => {
-      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-      event.preventDefault();
-      const next = event.key === 'Home' ? 'component' : event.key === 'End' ? 'game' : section === 'game' ? 'component' : 'game';
-      setSection(next); document.getElementById(panelId + '-' + next + '-tab')?.focus();
-    }}>
-      {(['component', 'game'] as const).map(value => <button key={value} type="button" id={panelId + '-' + value + '-tab'} role="tab" aria-controls={panelId + '-' + value} aria-selected={section === value} tabIndex={section === value ? 0 : -1} className={section === value ? 'active' : ''} onClick={() => setSection(value)}>{value === 'component' ? '组件设置' : '游戏设置'}</button>)}
-    </div>
-    {section === 'component' && <div key={component?.id} role="tabpanel" id={panelId + '-component'} aria-labelledby={panelId + '-component-tab'}>{component ? <>
-      <div className="ui-inspector-selection">
-        <Field label="控件名称" hint={nameHint}><input aria-label="控件显示名称" maxLength={120} value={component.name ?? ''} placeholder={componentName(component)} disabled={!canEditComponent} onChange={event => editComponent(c => { c.name = event.target.value || undefined; })} /></Field>
+    return () => cancelAnimationFrame(frame);
+  }, [identity, part, selectedPart?.reveal, collectionEditing?.request]);
+  useEffect(() => {
+    if (flowEditing && flowEditing.componentId === id && flowEditing.selectionRequest !== undefined) setSection('component');
+  }, [id, flowEditing?.selectionRequest]);
+
+  const canEdit = !!component && (!!localComponent || local.length < uiComponentLimit);
+  const current = (expectedPart?: CollectionPart, expectedFlow = '') => mounted.current && latest.current.identity === identity && latest.current.part === expectedPart && latest.current.flowKey === expectedFlow && latest.current.section === 'component' && !latest.current.saving;
+  const resolveScopedComponent = (draft: Project) => {
+    if (!component) return;
+    const target = custom
+      ? draft.ui.customPages.find(page => page.id === custom.id)?.components.find(item => item.id === component.id)
+      : effectiveUiComponents(draft.ui).find(item => item.id === component.id);
+    if (!target || target.kind !== component.kind || target.page !== component.page || uiComponentPageId(draft, target) !== pageId) return;
+    return target;
+  };
+  const commitInScope = (expectedFlow = ''): Commit => (label, change, options) => {
+    if (!current(undefined, expectedFlow)) return;
+    commit(label, draft => {
+      if (current(undefined, expectedFlow) && draft.id === project.id && (custom || draft.ui.activeInstanceId === project.ui.activeInstanceId) && resolveScopedComponent(draft)) change(draft);
+    }, options);
+  };
+  const scopedCommit = commitInScope(), flowCommit = commitInScope(flowKey);
+  const editInScope = (expectedPart?: CollectionPart, expectedFlow = ''): EditComponent => (change, options) => {
+    if (!component || !canEdit || !current(expectedPart, expectedFlow)) return;
+    try {
+      commit(`界面控件 ${component.id}`, draft => {
+        if (draft.id !== project.id || !current(expectedPart, expectedFlow)) return;
+        if (!custom && draft.ui.activeInstanceId !== project.ui.activeInstanceId) return;
+        const candidate = resolveScopedComponent(draft);
+        if (!candidate) return;
+        const target = custom ? candidate : editableUiComponent(draft.ui, component.id);
+        if (target) change(target);
+      }, options);
+      setNotice('');
+    } catch (error) { setNotice(error instanceof Error ? error.message : String(error)); }
+  };
+  const editComponent = editInScope(), editPart = editInScope(part), editFlow = editInScope(undefined, flowKey);
+  const isCollection = !!component && inspectorCollectionKinds.has(component.kind);
+  const isControl = component?.kind === 'preference' || component?.kind === 'preferenceChoice';
+  const source = custom ? '自定义页面' : instance ? baseComponent ? localComponent ? `${instance.name} · 整控件覆盖` : `沿用${project.ui.instances?.find(item => item.id === instance.baseUiId)?.name ?? '基础界面'}` : `${instance.name} · 本方案控件` : '基础界面';
+  const hidden = instance?.hiddenComponentIds?.map(hiddenId => instance.components.find(item => item.id === hiddenId) ?? inherited.find(item => item.id === hiddenId)).filter((item): item is UiComponent => !!item && uiComponentPageId(project, item) === pageId) ?? [];
+  const partName = component && part ? collectionInspectorPartName(component, part) : '';
+  const previewComponent = propertyPreview?.component ?? component;
+  const visibleControl = component && uiPropertyControlFor(project, component, 'visible');
+  const visibleSummary = visibleControl ? `${visibleControl.control.mode === 'sync' ? '同步' : '跟随'}：${project.variables.find(item => item.id === visibleControl.control.parameterId)?.name ?? '参数已删除'}` : component?.visibleWhen ? '按条件显示' : '始终显示';
+  const partKeywords = component && part ? collectionInspectorPartKeywords(component, part) : { layout: '', appearance: '' };
+  const leavePart = () => {
+    collectionEditing?.clear();
+    requestAnimationFrame(() => header.current?.querySelector<HTMLElement>('[data-ui-inspector-breadcrumb]')?.focus({ preventScroll: true }));
+  };
+  const navigateFlow = (target: FlowInspectorTarget) => {
+    flowEditing?.inspect?.(target);
+    requestAnimationFrame(() => header.current?.querySelector<HTMLElement>('[data-ui-inspector-breadcrumb]')?.focus({ preventScroll: true }));
+  };
+  const layout = component && <>
+    <UiInspectorGeometry project={project} component={component} peers={peers} edit={editComponent} unit={unit} setUnit={value => setUnits(previous => ({ ...previous, [taskKey]: value }))} />
+    <UiLayoutFields project={project} component={component} components={peers} edit={editComponent} select={selectUi} section="object" />
+    <UiChildObjects project={project} component={component} peers={peers} commit={scopedCommit} edit={editComponent} select={selectUi} section="parent" />
+  </>;
+  const interaction = component && <>
+    {isCollection && <UiCollectionInspector project={project} component={component} edit={editComponent} assetUrl={assetUrl} section="interaction" />}
+    <UiInspectorInteraction project={project} component={component} pageId={pageId} edit={editComponent} commit={scopedCommit} assetUrl={assetUrl} onOpenGraph={pageContext?.onOpenGraph} onParameter={onParameter} includeVisibility={false} />
+  </>;
+  return <UiInspectorProvider taskKey={activeSection === 'page' ? pageTaskKey : currentTaskKey} query={activeSection === 'component' ? query : ''}>
+    <div className="ui-inspector" ref={root} data-ui-inspector-kind={component?.kind} data-ui-inspector-part={part} data-ui-flow-view={component?.kind === 'flowchart' ? flowSubview?.kind ?? 'map' : undefined}>
+      <div className="ui-inspector-header" ref={header}>
+      <div className="ui-inspector-tabs" role="tablist" aria-label="界面属性范围" onKeyDown={event => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault(); const next = event.key === 'Home' ? component ? 'component' : 'page' : event.key === 'End' ? 'page' : activeSection === 'component' ? 'page' : component ? 'component' : 'page';
+        setSection(next); event.currentTarget.querySelector<HTMLButtonElement>(`[data-section="${next}"]`)?.focus();
+      }}>
+        {(['component', 'page'] as const).map(tab => <button type="button" role="tab" key={tab} data-section={tab} aria-selected={activeSection === tab} tabIndex={activeSection === tab ? 0 : -1} className={activeSection === tab ? 'active' : undefined} disabled={tab === 'component' && !component} onClick={() => setSection(tab)}>{tab === 'component' ? '组件设置' : '页面设置'}</button>)}
       </div>
-      {!canEditComponent && <p className="ui-component-limit" role="status">本地组件已达 {uiComponentLimit} 个，删除本地组件后可编辑继承组件。</p>}
-      <fieldset className="ui-component-properties" disabled={!canEditComponent}>
-        {hasContent && <UiPropertyGroup title="内容与素材" icon={<ImageIcon size={15} />} defaultOpen>
-          {component.kind === "image" || component.kind === 'video' || component.kind === 'spine' ? (
-            <Field label={component.kind === 'video' ? '视频素材' : component.kind === 'spine' ? '骨骼素材' : '图片素材'}>
-              <UiAssetSelect assetUrl={assetUrl} label={component.kind === 'video' ? '视频素材' : component.kind === 'spine' ? '骨骼素材' : '图片素材'}
-                project={project}
-                kind={component.kind}
-                value={component.assetId}
-                onChange={(value) =>
-                  editComponent((c) => {
-                    c.assetId = value;
-                    if (c.kind === 'spine') c.spine = { ...c.spine, animation: project.assets.find(asset => asset.id === value)?.spine?.animations[0]?.name, skin: undefined };
-                  })
-                }
-              />
-            </Field>
-          ) : (component.kind === "text" || component.kind === "button" || component.kind === "preference") && !component.binding ? (
-            <Field label="文字">
-              <input
-                value={component.text}
-                onChange={(e) =>
-                  editComponent((c) => {
-                    c.text = e.target.value;
-                  })
-                }
-              />
-            </Field>
-          ) : null}
-          {component.kind === 'video' && <>
-            <Field label="循环播放"><input type="checkbox" checked={component.loop ?? true} onChange={event => editComponent(c => { c.loop = event.target.checked; })} /></Field>
-            <Field label="加载时显示图片"><UiAssetSelect assetUrl={assetUrl} project={project} kind="image" value={component.posterId} onChange={value => editComponent(c => { c.posterId = value; })} /></Field>
+      {activeSection === 'component' && component && <nav className="ui-inspector-breadcrumb" aria-label="当前编辑对象" data-ui-inspector-breadcrumb tabIndex={-1}>
+        {part ? <><button type="button" className="text-button" aria-label="返回整个控件" title={`返回${componentName(component)}的整体设置`} onClick={leavePart}><ArrowLeft size={14} aria-hidden="true" /><span>{componentName(component)}</span></button><span aria-hidden="true">›</span><strong>{partName}</strong></> : flowSubview ? <><button type="button" className="text-button" aria-label="返回整张图设置" onClick={() => navigateFlow({ kind: 'map' })}><ArrowLeft size={14} aria-hidden="true" /><span>{componentName(component)}</span></button><span aria-hidden="true">›</span>{flowSubview.kind !== 'node' && flowNode && <><button type="button" className="text-button" aria-label="返回当前节点内容" onClick={() => navigateFlow({ kind: 'node', nodeId: flowNode.id })}>{flowNode.name}</button><span aria-hidden="true">›</span></>}<strong>{flowTitle}</strong></> : <><strong>{componentName(component)}</strong><span>{component.kind === 'flowchart' ? '整张图' : '整个控件'}</span></>}
+      </nav>}
+      </div>
+      {activeSection === 'component' ? component ? <>
+        <div className="ui-inspector-selection">
+          <div className="ui-inspector-object"><strong>{part ? partName : flowSubview ? flowSubview.kind === 'preset' ? '节点外观预设' : flowTitle : actualKind}</strong><span title={instance && baseComponent && !localComponent ? `${source}。修改后在当前方案保存整个控件的副本。` : source}>{flowSubview?.kind === 'preset' ? '整个工程共用' : flowSubview?.kind === 'edge' || flowSubview?.kind === 'call' ? '由真实剧情生成' : flowSubview?.kind === 'group' || flowLocal && (flowSubview?.kind === 'sources' || flowSubview?.kind === 'node') ? '只影响本图' : flowSubview?.kind === 'sources' ? '整个工程共用' : flowSubview?.kind === 'node' ? '剧情入口' : source}</span></div>
+          {part ? <><Field label="编辑部件"><select aria-label="当前列表部件" value={part} onChange={event => collectionEditing?.select(component.id, event.target.value as CollectionPart)}>{availableParts.map(value => <option key={value} value={value}>{collectionInspectorPartName(component, value)}</option>)}</select></Field><p className="ui-inspector-part-scope" role="note">{collectionInspectorPartScope(component, part)}</p></> : !flowSubview && <Field label="名称"><input aria-label="控件显示名称" maxLength={120} disabled={status.saving || !canEdit} value={component.name ?? ''} placeholder={componentName(component)} onChange={event => editComponent(c => { c.name = event.target.value || undefined; })} /></Field>}
+        </div>
+        <div className="ui-inspector-search"><Search size={14} aria-hidden="true" /><input type="search" aria-label="搜索控件属性" placeholder={part ? `搜索${partName}属性` : flowSubview ? `搜索${flowTitle}的属性` : '搜索属性，例如字体、点击'} value={query} onChange={event => changeSearch(event.target.value)} />{query && <button type="button" className="icon-button" aria-label="清除属性搜索" onClick={() => changeSearch('')}><X size={13} /></button>}</div>
+        {!canEdit && <p className="ui-inspector-source" role="status">当前方案的控件数量已达上限，暂时不能创建此继承控件的覆盖。</p>}
+        {notice && <p className="ui-inspector-notice" role="alert">{notice}</p>}
+        <fieldset className="ui-inspector-fields" key={identity} disabled={status.saving || !canEdit}>
+          <UiInspectorProvider taskKey={taskKey} query={rootQuery}>
+          <UiInspectorSearchScope matched={false} active={!internalView}>
+          <UiPropertyControlProvider project={project} component={component} pageId={pageId} commit={scopedCommit} disabled={internalView || status.saving || !canEdit} onOpenGraph={pageContext?.onOpenGraph} onParameter={onParameter}>
+          <div className="ui-inspector-view" data-ui-inspector-view="component" data-searching={!!rootQuery.trim()} hidden={internalView} inert={internalView}>
+          <p className="ui-property-control-hint">右键属性名称或输入框可设置参数控制，默认设置允许蓝图临时修改。</p>
+          <section className="ui-inspector-region" data-ui-inspector-region="common" aria-label="通用属性">
+            <h3 className="ui-inspector-region-title">通用属性 <span>{component.kind === 'flowchart' ? '作用于整张图' : '作用于整个控件'}</span></h3>
+            <UiPropertyGroup id="layout" title="位置与大小" icon={<Box size={15} />} summary={`${Math.round(previewComponent!.width * 100)}% × ${Math.round(previewComponent!.height * 100)}%`} searchKeywords={keywords.layout} defaultOpen>{layout}</UiPropertyGroup>
+            <UiPropertyGroup id="visibility" title="显示" icon={<Eye size={15} />} summary={`${visibleSummary} · ${Math.round((previewComponent?.style?.opacity ?? 1) * 100)}%`} searchKeywords={keywords.visibility}>
+              <UiInspectorOpacity project={project} component={component} edit={editComponent} />
+              <UiInspectorVisibilityRule project={project} component={component} edit={editComponent} />
+            </UiPropertyGroup>
+            <UiPropertyGroup id="children" title="子对象" icon={<Layers size={15} />} summary={`${peers.filter(item => item.parentId === component.id).length} 个子对象`} searchKeywords={keywords.children}>
+              <UiChildObjects project={project} component={component} peers={peers} commit={scopedCommit} edit={editComponent} select={selectUi} section="children" embedded />
+              <UiLayoutFields project={project} component={component} components={peers} edit={editComponent} select={selectUi} section="children" />
+            </UiPropertyGroup>
+          </section>
+          <section className="ui-inspector-region" data-ui-inspector-region="function" aria-label={`${actualKind}功能`}>
+            <h3 className="ui-inspector-region-title"><span>控件功能</span><strong data-ui-inspector-function-title>{actualKind}</strong></h3>
+          {component.kind === 'flowchart' ? <UiFlowInspector project={project} component={component} previewComponent={pageContext?.previewComponent} commit={scopedCommit} edit={editComponent} assetUrl={assetUrl} target={{ kind: 'map' }} active={!internalView && activeSection === 'component'} onNavigate={navigateFlow} /> : <>
+            <UiPropertyGroup id="content" title="内容" icon={<List size={15} />} summary={uiInspectorContentSummary(project, component)} searchKeywords={keywords.content} defaultOpen>
+              <UiInspectorContent project={project} component={component} peers={peers} edit={editComponent} commit={scopedCommit} assetUrl={assetUrl} pageId={pageId} onOpenGraph={pageContext?.onOpenGraph} onParameter={onParameter} includeBindings={false} />
+            </UiPropertyGroup>
+            {isCollection && <UiPropertyGroup id="collection-layout" title="列表排列" icon={<List size={15} />} summary="行列、间距与浏览方式" searchKeywords={keywords.collectionLayout}>
+              <UiCollectionInspector project={project} component={component} edit={editComponent} assetUrl={assetUrl} section="layout" />
+            </UiPropertyGroup>}
+            <UiPropertyGroup id="appearance" title="外观" icon={<Paintbrush size={15} />} summary={isCollection ? '条目默认外观与部件' : component.kind === 'button' ? '按状态编辑' : '文字、图片与底色'} searchKeywords={keywords.appearance} defaultOpen={isCollection}>
+              {isCollection ? <>
+                <UiCollectionInspector project={project} component={component} edit={editComponent} assetUrl={assetUrl} section="appearance" />
+                <UiPropertyGroup id="collection-common-appearance" title="条目默认外观" summary="列表共用基础值" searchKeywords="基础 字体 字号 颜色 背景 底图">
+                  <p className="ui-inspector-source">此列表的条目共用这些基础值；内部部件单独设置的样式优先。</p>
+                  <UiCommonAppearance project={project} component={component} edit={editComponent} assetUrl={assetUrl} state={state} onStateChange={changeState} includeVisibility={false} />
+                </UiPropertyGroup>
+              </> : <UiCommonAppearance project={project} component={component} edit={editComponent} assetUrl={assetUrl} state={state} onStateChange={changeState} includeVisibility={false} />}
+              {isControl && <UiPreferenceFields project={project} component={component} edit={editComponent} assetUrl={assetUrl} section="appearance" onParameter={onParameter} />}
+            </UiPropertyGroup>
           </>}
-          {component.kind === 'spine' && <><Field label="组件名称"><input value={component.text} onChange={event => editComponent(c => { c.text = event.target.value; })} /></Field><SpinePlaybackFields asset={project.assets.find(asset => asset.id === component.assetId)} value={component.spine} onChange={settings => editComponent(c => { c.spine = settings; })} /></>}
-          {component.kind === "text" && (['main', 'say', 'messageBox', 'custom'].includes(component.page)) && <Field label="文字内容"><select value={component.binding ?? ""} onChange={event => editComponent(changed => { changed.binding = event.target.value as UiComponent['binding'] || undefined; })}><option value="">固定文字</option>{(component.page === "main" ? ['title'] as const : component.page === 'messageBox' ? ['confirmation'] as const : component.page === 'custom' ? ['minigameTitle', 'minigamePrompt', 'minigameStatus'] as const : ['speaker', 'dialogue'] as const).map(binding => <option key={binding} value={binding} disabled={componentPeers.some(other => other.id !== component.id && other.binding === binding)}>{bindingNames[binding]}</option>)}</select></Field>}
-          {component.kind === 'progress' && <Field label={`初始进度 ${Math.round((component.value ?? 0) * 100)}%`}><input aria-label="进度条初始值" type="range" min="0" max="100" value={(component.value ?? 0) * 100} onChange={event => editComponent(c => { c.value = Number(event.target.value) / 100; })} /></Field>}
-
-          {component.kind === 'button' && <Field label="按钮图片" hint="按钮普通状态的图片；其他状态在「外观与状态」中设置。"><UiAssetSelect project={project} assetUrl={assetUrl} kind="image" label="按钮图片" value={component.skin?.idle} empty="使用背景色" onChange={value => editComponent(c => { c.skin = { ...c.skin, idle: value }; })} /></Field>}
-          {component.kind === 'image' && <Field label="图片缩放"><select aria-label="图片缩放" value={component.style?.imageFit ?? 'contain'} onChange={event => editComponent(c => { c.style = { ...c.style, imageFit: event.target.value as 'contain' | 'cover' | 'stretch' }; })}><option value="contain">完整容纳</option><option value="cover">裁切填满</option><option value="stretch">拉伸铺满</option></select></Field>}
-          {component.kind !== 'button' && <UiPreferenceFields assetUrl={assetUrl} project={project} component={component} edit={editComponent} />}
+          <UiPropertyGroup id="interaction" title={component.kind === 'flowchart' ? '整图事件与反馈' : '交互'} icon={<MousePointer2 size={15} />} summary={uiInspectorInteractionSummary(project, component, pageId, false)} searchKeywords={keywords.interaction}>{interaction}</UiPropertyGroup>
+          <UiInspectorBindings project={project} component={component} peers={peers} commit={scopedCommit} pageId={pageId} onOpenGraph={pageContext?.onOpenGraph} />
+          <UiPropertyGroup id="capabilities" title="控件能力参考" icon={<Layers size={15} />} summary="蓝图可用属性" searchKeywords="蓝图 能力 操作 属性 读写 动画">
+            <UiPropertyCapabilities project={project} component={component} embedded />
+          </UiPropertyGroup>
+          </section>
+          {rootQuery.trim() && <p className="ui-inspector-no-matches" role="status">没有匹配的属性，试试“字体”“位置”或“点击”。</p>}
+          </div>
+          </UiPropertyControlProvider>
+          </UiInspectorSearchScope>
+          </UiInspectorProvider>
+          {flowSubview && <div className="ui-inspector-view" data-ui-inspector-view="flow" data-searching={searching} key={flowKey}>
+            <UiFlowInspector project={project} component={component} previewComponent={pageContext?.previewComponent} commit={flowCommit} edit={editFlow} assetUrl={assetUrl} target={flowSubview} active={activeSection === 'component'} onNavigate={navigateFlow} />
+            {query.trim() && <p className="ui-inspector-no-matches" role="status">当前编辑对象没有匹配的属性。返回整张图可查找布局和玩家操作。</p>}
+          </div>}
+          {part && <div className="ui-inspector-view" data-ui-inspector-view="part" data-searching={searching} key={part}>
+            <section className="ui-inspector-region" data-ui-inspector-region="common" aria-label="部件通用属性">
+              <h3 className="ui-inspector-region-title">通用属性 <span>当前部件</span></h3>
+              <UiPropertyGroup id="part-layout" title="位置与大小" icon={<Box size={15} />} summary={partName} searchKeywords={partKeywords.layout} defaultOpen revealOn={selectedPart?.reveal === 'layout' ? String(collectionEditing?.request) : undefined}>
+                <UiCollectionPartInspector project={project} component={component} part={part} edit={editPart} assetUrl={assetUrl} section="layout" />
+              </UiPropertyGroup>
+            </section>
+            <section className="ui-inspector-region" data-ui-inspector-region="function" aria-label={`${partName}功能`}>
+              <h3 className="ui-inspector-region-title"><span>部件功能</span><strong data-ui-inspector-function-title>{partName}</strong></h3>
+              <UiPropertyGroup id="part-appearance" title="外观" icon={<Paintbrush size={15} />} searchKeywords={partKeywords.appearance} defaultOpen revealOn={selectedPart?.reveal === 'appearance' ? String(collectionEditing?.request) : undefined}>
+                <UiCollectionPartInspector project={project} component={component} part={part} edit={editPart} assetUrl={assetUrl} section="appearance" />
+              </UiPropertyGroup>
+            </section>
+            {query.trim() && <p className="ui-inspector-no-matches" role="status">当前部件没有匹配的属性。可返回整个控件继续查找。</p>}
+          </div>}
+        </fieldset>
+        {!internalView && <div className="ui-inspector-footer">
+          {instance && baseComponent && localComponent && <button type="button" className="text-button" disabled={status.saving} title="移除当前方案对整个控件的覆盖，恢复上级控件的内容、布局、外观和交互。子对象各自的覆盖保留。" onClick={() => {
+            try {
+              scopedCommit('恢复整个继承控件', draft => { if (draft.ui.activeInstanceId === instance.id) restoreInheritedUiObject(draft, component.id); }, { separate: true });
+              setNotice('');
+            } catch (error) { setNotice(error instanceof Error ? error.message : String(error)); }
+          }}><RotateCcw size={13} />恢复整个继承控件</button>}
+          <button type="button" className="text-button danger-text" disabled={status.saving} onClick={() => {
+            try {
+              scopedCommit(baseComponent ? '隐藏继承控件' : '删除界面控件', draft => {
+                if (baseComponent) hideInheritedUiObject(draft, component.id);
+                else removeUiObject(draft, component.id);
+              }, { separate: true });
+              selectUi?.(undefined);
+            } catch (error) { setNotice(error instanceof Error ? error.message : String(error)); }
+          }}><Trash2 size={13} />{baseComponent ? '在本方案隐藏' : '删除控件'}</button>
+        </div>}
+      </> : <div className="ui-inspector-empty"><Box size={27} /><strong>选择一个控件</strong><p>点击画布或左侧列表，编辑它的内容、位置、外观和交互。</p><button type="button" className="text-button" onClick={() => setSection('page')}>查看页面设置</button></div> : <>
+        <fieldset className="ui-inspector-fields" disabled={status.saving}>{pageContext?.settings ?? <div className="ui-inspector-empty"><strong>先选择一个页面</strong><p>页面设置用于修改此页的默认外观和打开行为。</p></div>}</fieldset>
+        {!!hidden.length && <UiPropertyGroup id="hidden-components" title="本方案隐藏的控件" summary={`${hidden.length} 个`}>
+          <p className="ui-inspector-source">恢复显示会同时恢复随它隐藏的子对象。</p>
+          {hidden.map(item => <button key={item.id} type="button" className="text-button" disabled={status.saving} onClick={() => commit('恢复隐藏控件', draft => {
+            if (draft.id !== project.id || draft.ui.activeInstanceId !== instance?.id) return;
+            const target = draft.ui.instances?.find(value => value.id === instance?.id);
+            if (target) target.hiddenComponentIds = target.hiddenComponentIds?.filter(hiddenId => hiddenId !== item.id);
+          }, { separate: true })}>恢复显示：{componentName(item)}</button>)}
         </UiPropertyGroup>}
-        <UiPropertyGroup title="位置与大小" icon={<Move size={15} />} summary={component.parentId ? '相对父对象 · %' : '相对页面 · %'} defaultOpen>
-          <div className="ui-inspector-transform">{(['x', 'y', 'width', 'height'] as const).map(key => <Field key={key} label={{ x: '横向位置', y: '纵向位置', width: '宽度', height: '高度' }[key]}>
-            <div className="ui-inspector-number"><span aria-hidden="true">{{ x: 'X', y: 'Y', width: 'W', height: 'H' }[key]}</span><NumberInput aria-label={(component.parentId ? '相对父级' : '') + ({ x: '横向位置', y: '纵向位置', width: '宽度', height: '高度' }[key]) + ' %'} step={.01} value={Number((component[key] * 100).toFixed(2))} onChange={event => editComponent(c => { c[key] = Number(event.target.value) / 100; })} /></div>
-          </Field>)}</div>
-        </UiPropertyGroup>
-        <UiPropertyGroup title="外观与状态" icon={<Paintbrush size={15} />} summary={component.kind === 'button' ? '图片 · 文字 · 边框' : '颜色 · 文字 · 边框'}>
-          <UiAppearanceFields assetUrl={assetUrl} project={project} component={component} edit={editComponent} section="appearance" omitIdle={component.kind === 'button' || component.kind === 'image'} />
+      </>}
+    </div>
+  </UiInspectorProvider>;
+}
 
-          {!['image', 'video', 'spine', 'panel', 'progress'].includes(component.kind) && <Field label="组件字号"><NumberInput type="number"   value={component.style?.fontSize ?? project.ui.fontSize} onChange={event => editComponent(changed => { changed.style = { ...changed.style, fontSize: Math.round(Number(event.target.value)) }; })} /></Field>}
-          <div className="field-row">{!['image', 'video', 'spine', 'panel', 'progress'].includes(component.kind) && <Field label="组件文字色"><input type="color" value={component.style?.textColor ?? project.ui.textColor} onChange={event => editComponent(changed => { changed.style = { ...changed.style, textColor: event.target.value }; })} /></Field>}<Field label="组件背景色"><input type="color" value={component.style?.background ?? '#283133'} onChange={event => editComponent(changed => { changed.style = { ...changed.style, background: event.target.value }; })} /></Field></div>
-          {component.kind === "button" && <details key={"colors:" + component.id} className="ui-property-group"><summary>按钮状态颜色</summary>
-            <div className="field-row"><Field label="悬停背景"><input type="color" value={component.style?.hoverBackground ?? project.ui.accent} onChange={event => editComponent(changed => { changed.style = { ...changed.style, hoverBackground: event.target.value }; })} /></Field><Field label="按下背景"><input type="color" value={component.style?.pressedBackground ?? project.ui.accent} onChange={event => editComponent(changed => { changed.style = { ...changed.style, pressedBackground: event.target.value }; })} /></Field></div>
-            <Field label="禁用背景"><input type="color" value={component.style?.disabledBackground ?? '#22282a'} onChange={event => editComponent(changed => { changed.style = { ...changed.style, disabledBackground: event.target.value }; })} /></Field>
-            <Field label="选中背景"><input type="color" value={component.style?.selectedBackground ?? project.ui.accent} onChange={event => editComponent(changed => { changed.style = { ...changed.style, selectedBackground: event.target.value }; })} /></Field>
-          </details>}
-          <div className="field-row"><Field label="边框颜色"><input type="color" value={component.style?.borderColor ?? project.ui.accent} onChange={event => editComponent(changed => { changed.style = { ...changed.style, borderColor: event.target.value }; })} /></Field><Field label="边框宽度"><NumberInput type="number"   value={component.style?.borderWidth ?? 0} onChange={event => editComponent(changed => { changed.style = { ...changed.style, borderWidth: Number(event.target.value) }; })} /></Field></div>
-          <Field label="圆角"><NumberInput type="number"   value={component.style?.radius ?? 0} onChange={event => editComponent(changed => { changed.style = { ...changed.style, radius: Number(event.target.value) }; })} /></Field>
-          <Field label={`组件不透明度 ${Math.round((component.style?.opacity ?? 1) * 100)}%`}><input aria-label="组件不透明度" type="range" min="0" max="100" value={(component.style?.opacity ?? 1) * 100} onChange={event => editComponent(changed => { changed.style = { ...changed.style, opacity: Number(event.target.value) / 100 }; })} /></Field>
-          {component.page === 'say' && <Field label="跟随玩家对话框透明度" hint="用于对话底图或装饰；文字组件通常保持关闭。"><input aria-label="跟随玩家对话框透明度" type="checkbox" checked={component.style?.playerOpacity ?? false} onChange={event => editComponent(c => { c.style = { ...c.style, playerOpacity: event.target.checked }; })} /></Field>}
-          {!['image', 'video', 'spine', 'panel', 'progress'].includes(component.kind) && <Field label="文字对齐"><select value={component.style?.align ?? (component.kind === 'text' ? 'left' : 'center')} onChange={event => editComponent(changed => { changed.style = { ...changed.style, align: event.target.value as 'left' | 'center' | 'right' }; })}><option value="left">左对齐</option><option value="center">居中</option><option value="right">右对齐</option></select></Field>}
-          <button className="text-button" disabled={!component.style} onClick={() => editComponent(changed => { changed.style = undefined; })}>恢复主题样式</button>
-
-        </UiPropertyGroup>
-        {collection && <UiPropertyGroup title="列表与内容" icon={<List size={15} />}><UiAppearanceFields assetUrl={assetUrl} project={project} component={component} edit={editComponent} section="content" /></UiPropertyGroup>}
-        {component.kind === 'flowchart' && <UiPropertyGroup title="流程图框样式" icon={<Layers size={15} />}><UiFlowStyles project={project} component={component} commit={commit} assetUrl={assetUrl} /></UiPropertyGroup>}
-        <UiPropertyGroup title={component.kind === 'button' ? '点击与交互' : '显示与事件'} icon={<MousePointer2 size={15} />} summary={component.kind === 'button' ? component.action ? actionName(component.action) : '未绑定行为' : component.visibleWhen ? '按条件显示' : '始终显示'}>
-          {component.kind === "button" && (
-            <Field label="点击行为">
-              <select
-                aria-label="点击行为"
-                value={component.action ?? ''}
-                onChange={(e) =>
-                  editComponent((c) => {
-                    c.action = e.target.value ? e.target.value as UiComponent["action"] : undefined;
-                    if (c.action === 'setPlayerPreference') { c.preference ??= 'musicVolume'; c.preferenceValue ??= playerPreferences[c.preference].initial; }
-                  })
-                }
-              >
-                <option value="">{component.events?.onClick || projectGraphs(project).some(graph => graph.nodes.some(node => node.type === 'eventClick' && node.properties.componentId === component.id)) ? '仅执行点击事件' : '未绑定点击行为'}</option>{((
-                  isCustomComponent ? ["minigameSuccess", "minigameFailure", "minigameCancel", "blueprint", "return"] : [
-                    "start",
-                    "load",
-                    "preferences",
-                    "gallery",
-                    "music",
-                    "quit",
-                    "save",
-                    "history",
-                    "auto",
-                    "skip",
-                    "return", "mainMenu", "rollback", "window", "fullscreen", "mute", "skipSeen", "skipAll", "transitions", "pause", "chapterSelect", "voiceCollection", "flowchart", "staff", "blueprint", "hideInterface", "musicPrevious", "musicNext", "musicPlayPause", "musicStop", "musicLoop", "musicShuffle", "setPlayerPreference", "resetPreferences", "voiceSettings", ...(component.page === 'messageBox' ? ['confirmYes', 'confirmNo'] as const : []),
-                  ]) as readonly NonNullable<UiComponent['action']>[]).filter(a => uiActionAvailable(project.ui, a)).map((a) => (
-                  <option value={a} key={a}>
-                    {actionName(a)}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          )}
-          {component.kind === "button" && component.action === "blueprint" && <Field label="调用蓝图"><select value={component.blueprintId ?? ""} onChange={event => editComponent(changed => { changed.blueprintId = event.target.value || undefined; })}><option value="">选择蓝图</option>{blueprintResources(project).map(graph => <option key={graph.id} value={graph.id}>{graph.name}</option>)}</select></Field>}
-
-          {component.kind === 'button' && <UiPreferenceFields assetUrl={assetUrl} project={project} component={component} edit={editComponent} />}
-          <UiAppearanceFields assetUrl={assetUrl} project={project} component={component} edit={editComponent} section="interaction" />
-          <details key={"events:" + component.id} className="ui-property-group" open={!!(component.events?.onClick || component.events?.onShow)}><summary>高级事件绑定</summary>
-          {component.kind === 'button' && <Field label="点击事件蓝图" hint="先执行事件蓝图，再执行上方点击行为。"><select value={component.events?.onClick ?? ''} onChange={event => editComponent(changed => { changed.events = { ...changed.events, onClick: event.target.value || undefined }; })}><option value="">不执行</option>{blueprintResources(project).map(graph => <option key={graph.id} value={graph.id}>{graph.name}</option>)}</select></Field>}
-          <Field label="显示事件蓝图" hint="控件所在屏幕显示时执行一次。"><select value={component.events?.onShow ?? ''} onChange={event => editComponent(changed => { changed.events = { ...changed.events, onShow: event.target.value || undefined }; })}><option value="">不执行</option>{blueprintResources(project).map(graph => <option key={graph.id} value={graph.id}>{graph.name}</option>)}</select></Field>
-          </details>
-
-        </UiPropertyGroup>
-        <UiChildObjects project={project} component={component} peers={componentPeers.filter(c => c.page === component.page)} commit={commit} edit={editComponent} select={selectUi} />
-      </fieldset>
-      <div className="ui-inspector-footer">
-          {!isCustomComponent && activeInstance && localComponent && inheritedComponent && <button className="small-button" onClick={() => commit('恢复继承组件', p => {
-            const active = p.ui.instances?.find(instance => instance.id === activeInstance.id);
-            if (active) active.components = active.components.filter(c => c.id !== id);
-          })}><RefreshCw size={14} />恢复继承</button>}
-          <button
-            className="danger-text small-button"
-            disabled={!isCustomComponent && !!activeInstance && !localComponent && (activeInstance.hiddenComponentIds?.length ?? 0) >= uiComponentLimit}
-            onClick={() =>
-              commit(!isCustomComponent && activeInstance && !localComponent ? '隐藏界面组件' : '删除界面组件', (p) => {
-                if (!id) return;
-                removeUiObject(p, id);
-              })
-            }
-          >
-            {!isCustomComponent && activeInstance && !localComponent ? <EyeOff size={14} /> : <Trash2 size={14} />}
-            {!isCustomComponent && activeInstance && !localComponent ? '隐藏组件' : localComponent && inheritedComponent ? '删除本地覆盖' : '删除组件'}
-          </button>
-
-      </div>
-    </> : <div className="ui-inspector-empty"><MousePointer2 size={26} /><strong>选择一个控件</strong><p>点击画布或左侧层级，调整它的内容、外观与交互。</p></div>}</div>}
-      {section === 'game' && <div role="tabpanel" id={panelId + '-game'} aria-labelledby={panelId + '-game-tab'}>
-      {hiddenComponents.length > 0 && <>
-        <UiPropertyGroup title="已隐藏组件" icon={<EyeOff size={15} />} summary={String(hiddenComponents.length)}>
-        <div className="ui-hidden-components">{hiddenComponents.map(hidden => <div key={hidden.id}><span>{hidden.component ? componentName(hidden.component) : '已移除的组件'}</span><IconButton title="显示组件" onClick={() => commit('显示界面组件', p => {
-          const active = p.ui.instances?.find(instance => instance.id === activeInstance?.id);
-          if (active) active.hiddenComponentIds = active.hiddenComponentIds?.filter(hiddenId => hiddenId !== hidden.id);
-        })}><Eye size={14} /></IconButton></div>)}</div>
-      </UiPropertyGroup></>}
-      <UiPropertyGroup title="玩家与菜单" icon={<Settings2 size={15} />} defaultOpen>
-      <PlayerDefaultsFields project={project} commit={commit} />
-      <Field label="菜单快捷键打开" hint="游戏中按 Esc 或鼠标右键时打开的页面，再按一次返回剧情。"><select aria-label="菜单快捷键打开" value={project.ui.menuShortcutPage ?? 'save'} onChange={event => commit('菜单快捷键页面', p => { p.ui.menuShortcutPage = event.target.value as NonNullable<Project['ui']['menuShortcutPage']>; })}><option value="preferences">设置</option><option value="save">存档</option><option value="load">读档</option><option value="pause">暂停菜单</option></select></Field>
-      </UiPropertyGroup>
-      <UiPropertyGroup title="主题颜色与文字" icon={<Paintbrush size={15} />}>
-      <div className="color-fields">
-        {(["accent", "background", "textColor"] as const).map((key) => (
-          <Field
-            key={key}
-            label={
-              { accent: "强调色", background: "背景色", textColor: "文字色" }[
-                key
-              ]
-            }
-          >
-            <input
-              type="color"
-              value={project.ui[key]}
-              onChange={(e) =>
-                commit(`界面颜色 ${key}`, (p) => {
-                  p.ui[key] = e.target.value;
-                })
-              }
-            />
-          </Field>
-        ))}
-      </div>
-      <Field label="主题字体"><UiAssetSelect assetUrl={assetUrl} project={project} kind="font" value={project.ui.fontAssetId} onChange={value => commit('主题字体', p => { p.ui.fontAssetId = value; })} /></Field>
-      <Field label="对白等待图标" hint="文字显示完毕后，在句末提示点击继续。"><UiAssetSelect assetUrl={assetUrl} project={project} kind="image" value={project.ui.continueIndicatorId} onChange={value => commit('对白等待图标', p => { p.ui.continueIndicatorId = value; })} /></Field>
-      {project.ui.continueIndicatorId && <Field label="等待图标宽度"><NumberInput type="number"   value={project.ui.continueIndicatorWidth ?? project.assets.find(asset => asset.id === project.ui.continueIndicatorId)?.width ?? 32} onChange={event => commit('等待图标大小', p => { p.ui.continueIndicatorWidth = Number(event.target.value); })} /></Field>}
-      <Field label={`字号 ${project.ui.fontSize}`}>
-        <input
-          type="range"
-          min="16"
-          max="64"
-          value={project.ui.fontSize}
-          onChange={(e) =>
-            commit("界面字号", (p) => {
-              p.ui.fontSize = Number(e.target.value);
-            })
-          }
-        />
-      </Field>
-      </UiPropertyGroup>
-      <UiPropertyGroup title="标题与声音" icon={<ImageIcon size={15} />}>
-      <Field label="标题背景">
-        <UiAssetSelect assetUrl={assetUrl} label="标题背景"
-          project={project}
-          kind="image"
-          value={project.ui.menuBackgroundId}
-          onChange={(value) =>
-            commit("标题背景", (p) => {
-              p.ui.menuBackgroundId = value;
-            })
-          }
-        />
-      </Field>
-      <Field label="按钮悬停音效" hint="用于标题和各个菜单的按钮，跟随玩家音效音量。单个按钮可在属性中覆盖或关闭。"><UiAssetSelect project={project} kind="audio" assetUrl={assetUrl} label="默认按钮悬停音效" empty="不播放音效" value={project.ui.hoverSoundId} onChange={value => commit('按钮悬停音效', p => { p.ui.hoverSoundId = value; })} /></Field>
-      <Field label="标题音乐" hint="进入标题页后循环播放，剧情配乐仍由演出动作或蓝图控制。"><UiAssetSelect project={project} kind="audio" assetUrl={assetUrl} label="标题音乐" empty="不播放音乐" value={project.ui.menuMusicId} onChange={value => commit('标题音乐', p => { p.ui.menuMusicId = value; })} /></Field>
-      {project.ui.menuMusicId && <><audio aria-label="试听标题音乐" controls preload="metadata" src={assetUrl(project.ui.menuMusicId)} /><Field label="标题音乐淡入（秒）"><NumberInput type="number"   step={0.1} value={project.ui.menuMusicFade ?? 0.3} onChange={event => commit('标题音乐淡入', p => { p.ui.menuMusicFade = Number(event.target.value); })} /></Field></>}
-      </UiPropertyGroup>
-      <UiPropertyGroup title="章节进场" icon={<Layers size={15} />}>
-        <Field label="默认章节效果"><select aria-label="主题章节效果" value={project.ui.chapterTransition?.effect ?? 'fade'} onChange={event => commit('章节效果', p => { p.ui.chapterTransition = { ...p.ui.chapterTransition, effect: event.target.value as 'none' | 'fade' | 'ink' }; })}>{Object.entries(chapterEffectNames).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></Field>
-        <ChapterCompositionFields project={project} commit={commit} assetUrl={assetUrl} />
-      </UiPropertyGroup>
-      <UiPropertyGroup title="对白框" icon={<MessageSquare size={15} />}>
-      <Field
-        label={`对话框高度 ${Math.round(project.ui.dialogueHeight * 100)}%`}
-      >
-        <input
-          type="range"
-          min="15"
-          max="60"
-          value={project.ui.dialogueHeight * 100}
-          onChange={(e) =>
-            commit("对话框高度", (p) => {
-              p.ui.dialogueHeight = Number(e.target.value) / 100;
-            })
-          }
-        />
-      </Field>
-      <Field
-        label={`对话框不透明度 ${Math.round(project.ui.dialogueOpacity * 100)}%`}
-      >
-        <input
-          type="range"
-          min="0"
-          max="100"
-          value={project.ui.dialogueOpacity * 100}
-          onChange={(e) =>
-            commit("对话框透明度", (p) => {
-              p.ui.dialogueOpacity = Number(e.target.value) / 100;
-            })
-          }
-        />
-      </Field>
-
-      </UiPropertyGroup></div>}
+function UiInspectorGeometry({ project, component, peers, edit, unit, setUnit }: { project: Project; component: UiComponent; peers: UiComponent[]; edit: EditComponent; unit: GeometryUnit; setUnit: (unit: GeometryUnit) => void }) {
+  const active = useUiInspectorGroupActive();
+  const geometry = useMemo(() => {
+    if (!active || unit !== 'pixel') return;
+    const snapshots = peers.map(item => uiPropertyControlDesignSnapshot(project, item));
+    const hidden = new Set(snapshots.filter(snapshot => snapshot.values.visible === false).map(snapshot => snapshot.component.id));
+    return resolveUiLayout(snapshots.map(snapshot => snapshot.component), project, item => !hidden.has(item.id)).get(component.id);
+  }, [active, unit, peers, project, component.id]);
+  const authoredParent = peers.find(item => item.id === component.parentId);
+  const parent = useMemo(() => authoredParent ? uiPropertyControlDesignSnapshot(project, authoredParent).component : undefined, [project, authoredParent]);
+  const arranged = !!parent && component.childLayer !== 'background' && uiLayoutValues(parent).flow !== 'absolute';
+  const problem = uiLayoutProblem(component);
+  const unitLabel = unit === 'pixel' ? 'px' : '%';
+  return <div className="ui-inspector-geometry">
+    <div className="ui-inspector-unit"><span>{arranged ? '排列中的附加偏移与尺寸' : parent ? component.childLayer === 'background' ? '相对父对象外框' : '相对父内容区' : '相对画面'}</span><select aria-label="位置尺寸单位" value={unit} onChange={event => setUnit(event.target.value as GeometryUnit)}><option value="percent">百分比 %</option><option value="pixel">像素 px</option></select></div>
+    <div className="ui-inspector-transform">{(['x', 'y', 'width', 'height'] as const).map(property => {
+      const horizontal = property === 'x' || property === 'width';
+      const factor = unit === 'percent' ? 100 : (horizontal ? geometry?.basis.width : geometry?.basis.height) ?? 0;
+      const label = { x: arranged ? '横向附加偏移' : '横向位置', y: arranged ? '纵向附加偏移' : '纵向位置', width: '宽度', height: '高度' }[property];
+      return <Field key={property} label={label} uiProperty={property}><div className="ui-inspector-number"><NumberInput aria-label={`${label} ${unitLabel}`} disabled={!!problem || factor === 0} min={property === 'width' || property === 'height' ? 0 : undefined} step={unit === 'percent' ? .1 : 1} value={Number((component[property] * factor).toFixed(4))} onChange={event => edit(c => { applyUiDesignProperty(project, c, property, Number(event.target.value) / factor); })} /><small aria-hidden="true">{unitLabel}</small></div></Field>;
+    })}</div>
   </div>;
 }

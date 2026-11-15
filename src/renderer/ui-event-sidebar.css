@@ -1,0 +1,32 @@
+.ui-event-detail-host { min-width: 0; min-height: 100%; }
+.ui-event-detail { min-width: 0; }
+.ui-event-detail-heading { display: flex; align-items: baseline; gap: 8px; padding: 11px 12px; border-bottom: 1px solid var(--border); }
+.ui-event-detail-heading strong { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
+.ui-event-detail-heading small { flex-shrink: 0; color: var(--muted); font-size: 11px; }
+.ui-event-detail-body { min-width: 0; padding: 10px 12px; }
+.ui-event-detail-empty { padding: 12px; color: var(--muted); }
+.ui-event-detail-body p { line-height: 1.6; }
+.ui-event-detail-body .ui-event-component-actions { border: 0; margin: 0; padding: 0; }
+.ui-event-directory-search { margin: 8px 10px; }
+.ui-event-directory-links { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.ui-event-directory-links button { flex: 1; white-space: nowrap; }
+.ui-event-event-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 0; }
+.ui-event-event-row > span { min-width: 0; }
+.ui-event-event-row button { flex-shrink: 0; }
+.ui-event-detail-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.ui-event-detail-help { margin-top: 8px; color: var(--muted); font-size: 12px; }
+.ui-event-detail-help summary { cursor: pointer; }
+.ui-event-detail-body .ui-parameter-bindings { margin: 0; padding: 0; border: 0; }
+.ui-event-workspace .ui-event-library { height: auto; overflow: visible; }
+.ui-event-workspace .ui-event-components { max-height: none; overflow: visible; }
+.ui-event-workspace .ui-event-library > section > h3 { position: static; }
+.ui-event-sidebar .ui-event-directory-content .search { display: flex; flex-wrap: nowrap; }
+.ui-event-sidebar .ui-event-directory-content .search input { flex: 1; }
+.ui-event-sidebar .ui-event-directory-content .search button { flex: none; }
+.ui-event-sidebar .ui-event-detail-body h4 { font-size: 12px; margin: 14px 0 7px; }
+.ui-event-sidebar .ui-event-detail-body h4:first-child { margin-top: 0; }
+.ui-event-sidebar .ui-event-detail-body button { max-width: 100%; }
+.ui-event-sidebar .ui-event-detail-actions .small-button { white-space: normal; }
+.ui-event-sidebar .ui-event-directory-content [aria-pressed="true"] { color: var(--editor-selection-text, var(--editor-text)); background: var(--editor-selection); }
+.ui-event-canvas > .ui-event-empty { display: flex; align-items: center; justify-content: center; }
+.ui-event-canvas > .ui-event-empty > main { width: min(600px, 100%); padding: 20px; }

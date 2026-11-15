@@ -74,7 +74,7 @@ test('a custom confirmation page requires a live prompt and both response action
   const project = createProject();
   project.ui.pages = { messageBox: { layout: 'custom' } };
   const before = compileProject(project).diagnostics.filter(d => d.severity === 'error');
-  assert.equal(before.filter(d => d.message.includes('自定义消息框')).length, 3);
+  assert.equal(before.filter(d => d.message.includes('自定义确认对话框')).length, 3);
   project.ui.components = [
     { id: 'prompt', kind: 'text', page: 'messageBox', binding: 'confirmation', text: '', x: 0.2, y: 0.3, width: 0.6, height: 0.2 },
     ...(['confirmYes', 'confirmNo'] as const).map((action, index): UiComponent => ({ id: `response_${index}`, kind: 'button', page: 'messageBox', text: action, action, x: 0.2 + index * 0.4, y: 0.6, width: 0.2, height: 0.1 })),

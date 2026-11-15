@@ -8,6 +8,7 @@ import { createServer } from 'vite';
 import { createProject } from '../src/core/model';
 import { blueprintNodeDefaults, createBlueprintGraph, connectBlueprintPins, synchronizeBlueprintSignatures } from '../src/core/blueprint';
 import { launchDesktopFixture } from './lib/desktop-fixture';
+import { openUiPreviewForTest } from './lib/ui-preview-window';
 const root=path.resolve('.'), output=path.join(root,'artifacts/ui-button-shortcuts',new Date().toISOString().replaceAll(':','-'));
 await fs.mkdir(output,{recursive:true});
 const project=createProject('高级UI编辑验收');
@@ -33,13 +34,13 @@ for(const [pageId,scope,text] of [['ui:main','base','按键标题'],['ui:say','b
 synchronizeBlueprintSignatures(project);
 const projectFile=path.join(output,'project.vns.json');await fs.writeFile(projectFile,JSON.stringify(project));
 const server=await createServer({root,server:{host:'127.0.0.1',port:0,watch:{ignored:['**/artifacts/**','**/resources/**','**/release/**']}}});await server.listen();
-const app=await launchDesktopFixture({root,projectFile,profile:path.join(output,'profile'),devUrl:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port}),page=await app.firstWindow();
+const app=await launchDesktopFixture({root,projectFile,profile:path.join(output,'profile'),devUrl:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port}),editor=await app.firstWindow();let page=editor;
 try {
  await expect(page.locator('.project-title strong')).toHaveText(project.name,{timeout:45000});
- await page.locator('[data-workspace-tab="ui"]').click();await page.getByRole('button',{name:'高级 UI 蓝图',exact:true}).click();
- await expect(page.locator('.dirty-dot')).toHaveCount(0);
+ await page.locator('[data-workspace-tab="ui"]').click();await page.getByLabel('界面编辑模式').getByRole('button',{name:'事件图',exact:true}).click();await page.getByLabel('事件图页面').selectOption('ui:main');
+ await expect(editor.locator('.dirty-dot')).toHaveCount(0);
  const savedBefore=await fs.readFile(projectFile,'utf8');
- await page.locator('.ui-logic-preview > summary').click();
+ page=await openUiPreviewForTest(app,editor);
  const object=page.locator('[data-preview-component="title_probe"]');
  await expect(object).toContainText('默认标题');
  const frame=page.getByLabel('参数联动预演画面',{exact:true});await frame.focus();await page.keyboard.press('e');await expect(object).toHaveCount(0);await page.keyboard.press('e');await expect(object).toContainText('默认标题');
@@ -47,7 +48,7 @@ try {
  await page.getByLabel('预演参数 显示按钮',{exact:true}).selectOption('false');await frame.focus();await page.keyboard.press('e');await expect(object).toContainText('按键标题');
  await page.getByRole('button',{name:'恢复测试值',exact:true}).click();await page.getByRole('button',{name:'触发 E',exact:true}).click();await expect(object).toHaveCount(0);
  await page.getByRole('button',{name:'恢复测试值',exact:true}).click();await expect(object).toContainText('默认标题');
- await expect(page.locator('.dirty-dot')).toHaveCount(0);expect(await fs.readFile(projectFile,'utf8')).toBe(savedBefore);
+ await expect(editor.locator('.dirty-dot')).toHaveCount(0);expect(await fs.readFile(projectFile,'utf8')).toBe(savedBefore);
  await fs.writeFile(path.join(output,'report.json'),JSON.stringify({status:'passed',checks:['按钮快捷键执行点击蓝图','按钮优先于同键页面事件','禁用按钮捕获按键而不执行','隐藏按钮允许页面事件','显式触发按钮使用同一规则','恢复及无工程修改']}));console.log(output);
-} catch(error){await page.screenshot({path:path.join(output,'failure.png')});throw error;}
+} catch(error){await page.screenshot({path:path.join(output,'failure.png')}).catch(()=>undefined);throw error;}
 finally {await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().forEach(w=>w.destroy())).catch(()=>undefined);await app.close();await server.close();}

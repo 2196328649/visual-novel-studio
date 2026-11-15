@@ -5,6 +5,9 @@ import { loadProject } from '../src/desktop/project-store';
 import { buildProject, runRenpy } from '../src/runtime/service';
 import { uiSkinData } from '../src/runtime/ui-runtime';
 import { pythonLiteral } from '../src/runtime/literals';
+import { storyMenuEntries } from '../src/core/story-menu';
+import { isStandaloneNode } from '../src/core/standalone-performance';
+import { isolateRenpySaves } from './lib/renpy-saves';
 
 const root = path.resolve('.'), source = path.join(root, 'resources/templates/aihong');
 const output = path.join(root, 'artifacts/game-flow', new Date().toISOString().replaceAll(':', '-'));
@@ -17,9 +20,17 @@ if (generic) {
   delete flow.list!.flowViewport; delete flow.list!.flowScrollbar;
   delete flow.list!.flowShowControls; delete flow.list!.flowShowVerticalScrollbar;
 }
+// By default the flowchart lists only chapters. Opt the dialogue passages and choices in so
+// the map scrolls and node captions are covered; standalone title performances and the
+// nodes already listed as chapter entries keep their defaults.
+const chapterEntries = storyMenuEntries(project, 'flowchart').map(entry => entry.id);
+for (const node of project.nodes) if ((node.kind === 'choice' || node.kind === 'passage') && !isStandaloneNode(node) && !chapterEntries.includes(node.id)) node.flowchart = { ...node.flowchart, visible: true };
+const flowEntries = storyMenuEntries(project, 'flowchart').map(entry => entry.id);
+const [firstChapterEntry, secondChapterEntry] = chapterEntries;
+assert.equal(chapterEntries.length, project.chapters.length); assert.ok(flowEntries.includes('opening'));
 const flowFont = project.assets.find(asset => asset.id === flow.style?.fontAssetId)!.path;
 const compactOptions = pythonLiteral({ flowGraph: { width: 300, height: 200, nodes: [], edges: [] }, flowViewport: { x: 0, y: 0, width: 1, height: .8 }, flowShowControls: false, flowShowVerticalScrollbar: false, flowScrollbar: { rect: { x: .1, y: .85, width: .8, height: .1 }, trackHeight: 4.5, thumbHeight: 20.5, thumb: uiSkinData(project, { idle: 'ai_ui_a441471ec430d257', brightness: { disabled: .4 } }) } });
-await fs.mkdir(output, { recursive: true });
+await fs.mkdir(output, { recursive: true }); await isolateRenpySaves(output);
 const built = await buildProject({ project, projectDir: source, outputDir: game, sdkRoot: sdk });
 assert.equal(built.ok, true, JSON.stringify(built));
 await fs.writeFile(path.join(game, 'game/testcases.rpy'), `
@@ -46,13 +57,18 @@ init python:
         renpy.get_screen("voice_collection").visit_all(lambda d: texts.append(d.get_all_text()) if isinstance(d, renpy.text.text.Text) else None)
         return texts
 
+    def qa_flow_label(entry):
+        return renpy.get_widget("flowchart", "vn_component_ai_flowchart_items_" + entry + "_label")
+
     def qa_flow_text_sizes():
+        # Captions by widget id: the blurred shadow is a second Text with the same words.
         sizes = []
-        for text in qa_flow_texts():
-            if text.get_all_text() not in ${JSON.stringify(project.nodes.map(node => node.name))}:
+        for entry in ${JSON.stringify(flowEntries)}:
+            text = qa_flow_label(entry)
+            if text is None:
                 continue
             face = Text(text.get_all_text(), font=text.style.font, size=text.style.size, layout="nobreak", substitute=False, outlines=[])
-            sizes.append(dict(caption=text.get_all_text(), face=renpy.render(face, 32768, 32768, 0, 0).get_size(), painted=renpy.render(text, 32768, 32768, 0, 0).get_size(), halo=max(o[0] for o in text.style.outlines)))
+            sizes.append(dict(caption=text.get_all_text(), face=renpy.render(face, 32768, 32768, 0, 0).get_size(), painted=renpy.render(text, 32768, 32768, 0, 0).get_size(), halo=max([o[0] for o in text.style.outlines] or [0])))
         return sizes
 
 screen qa_flow_short():
@@ -70,6 +86,8 @@ testsuite global:
         $ _test.screenshot_directory = "tests/screenshots"
         $ preferences.set_mute("music", True)
         $ preferences.text_cps = 0
+        # A cross-line stage dissolve keeps Ren'Py's click waiting (RecursionError), as in verify-aihong-ui.
+        $ preferences.transitions = 0
         $ persistent.vn_seen_nodes = []
     teardown:
         exit
@@ -85,19 +103,24 @@ testcase flow_visuals:
     assert eval not vn_story_unlocked("flowchart", "opening", True)
     assert eval "兽视与夜宴" not in [t.get_all_text() for t in qa_flow_texts()]
     assert eval not VnStoryStart("flowchart", "opening", "vn_node_opening", "兽视与夜宴", True).get_sensitive()
+    # The story entry is always open; a later chapter unlocks once it is reached.
+    assert eval vn_story_unlocked("flowchart", ${JSON.stringify(firstChapterEntry)}, True) and qa_flow_label(${JSON.stringify(firstChapterEntry)}) is not None
+    assert eval not vn_story_unlocked("flowchart", ${JSON.stringify(secondChapterEntry)}, True) and qa_flow_label(${JSON.stringify(secondChapterEntry)}) is None
     screenshot "01-locked.png"
     $ persistent.vn_seen_nodes = ${JSON.stringify(project.nodes.map(node => node.id))}
     $ renpy.restart_interaction()
     pause 0.3
     assert eval not any("已读" in t.get_all_text() or " · 当前" in t.get_all_text() for t in qa_flow_texts())
     assert eval any(t.get_all_text() == "兽视与夜宴" and t.style.font == ${JSON.stringify(flowFont)} for t in qa_flow_texts())
-    assert eval any(t.get_all_text() == "兽视与夜宴" and len(t.style.outlines) > 4 and all(o[2] == 0 and o[3] == 0 for o in t.style.outlines) and len(set(str(o[1]) for o in t.style.outlines)) > 4 for t in qa_flow_texts())
+    # One sharp outline on the caption; the soft shadow is a separately blurred copy.
+    assert eval len(qa_flow_label("opening").style.outlines) == 1 and tuple(qa_flow_label("opening").style.outlines[0][2:]) == (0, 0)
+    assert eval renpy.get_widget("flowchart", "vn_component_ai_flowchart_items_opening_shadow") is not None
     assert eval qa_flow_bar().style.thumb.skin["fit"] == "nineSlice"
     assert eval qa_flow_bar().style.thumb.skin["borders"] == dict(left=24, top=0, right=24, bottom=0)
-    assert eval len(qa_thumb_frames()) == 1 and qa_thumb_frames()[0].left == 24 and qa_thumb_frames()[0].right == 24
+    assert eval len(qa_thumb_frames()) == 1 and qa_thumb_frames()[0].left == 24 and qa_thumb_frames()[0].right == 23
     screenshot "02-unlocked.png"
     $ open(config.basedir + "/text-sizes.json", "w").write(__import__("json").dumps(qa_flow_text_sizes()))
-    assert eval all(item["face"][1] <= 74 and item["painted"][1] <= item["face"][1] + 2 * item["halo"] + 2 for item in qa_flow_text_sizes())
+    assert eval len(qa_flow_text_sizes()) == ${flowEntries.length} and all(item["face"][1] <= 74 and item["painted"][1] <= item["face"][1] + 2 * item["halo"] + 2 for item in qa_flow_text_sizes())
     assert eval renpy.get_widget("flowchart", "vn_component_ai_flowchart_items_opening_current_marker") is None
     move id "vn_component_ai_flowchart_items_opening"
     pause 0.3
@@ -133,7 +156,7 @@ ${generic ? `    assert id "vn_component_ai_flowchart_items_scroll_y"
 ${generic ? `    click id "vn_component_ai_flowchart_items_locate"` : `    drag id "vn_component_ai_flowchart_items_scroll_x" pos (0.95, 0.5) to id "vn_component_ai_flowchart_items_scroll_x" pos (0.0, 0.5) steps 20`}
     pause 0.3
     assert eval vp.xadjustment.value == 0
-    move id "vn_component_ai_flowchart_items_ai_title_one"
+    move id "vn_component_ai_flowchart_items_${firstChapterEntry}"
     pause 0.3
     screenshot "06-chapter-hover.png"
     click id "vn_component_ai_flowchart_items_opening"

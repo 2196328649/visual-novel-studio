@@ -6,6 +6,7 @@ import { expect, type Page } from '@playwright/test';
 import { createProject, projectSchema } from '../src/core/model';
 import { blueprintCatalog } from '../src/core/blueprint';
 import { performanceTimeline } from '../src/core/performance-timeline';
+import { projectGraphs } from '../src/core/project-resources';
 import { launchDesktopFixture } from './lib/desktop-fixture';
 
 const root = path.resolve('.'), output = path.join(root, 'artifacts/ui-event-timeline', new Date().toISOString().replaceAll(':', '-'));
@@ -44,11 +45,11 @@ try {
   const opened = app.waitForEvent('window'); await button('AI 助手').click(); assistant = await opened;
   await selectComponent('trigger'); await button('点击时 · OnClicked').click();
   await button('添加时间轴').click();
-  await expect.poll(async () => (await context())?.project.blueprints.some(g => g.timelineComponent)).toBe(true);
+  await expect.poll(async () => projectGraphs((await context())?.project).some(g => g.timelineComponent)).toBe(true);
   let current = (await context())!;
-  const ownerId = current.project.blueprints.find(g => g.uiPageId === 'ui:main')!.id;
-  const timelineId = current.project.blueprints.find(g => g.timelineComponent)!.id;
-  const callId = current.project.blueprints.find(g => g.id === ownerId)!.nodes.find(n => n.properties.graphId === timelineId)!.id;
+  const ownerId = projectGraphs(current.project).find(g => g.uiPageId === 'ui:main')!.id;
+  const timelineId = projectGraphs(current.project).find(g => g.timelineComponent)!.id;
+  const callId = projectGraphs(current.project).find(g => g.id === ownerId)!.nodes.find(n => n.properties.graphId === timelineId)!.id;
   const callNode = () => page.locator('.react-flow__node[data-id="' + callId + '"]');
   await arrange(); await callNode().locator('.graph-node-title').dblclick();
   await expect(page.getByLabel('界面事件的演出时间轴')).toBeVisible();
@@ -59,18 +60,19 @@ try {
   await page.locator('.visual-clip-inspector').getByRole('tab', { name: '可替换参数', exact: true }).click();
   const parameter = page.locator('.visual-parameter-row[data-parameter-key="assetId"]');
   await parameter.getByRole('button', { name: '公开到时间轴', exact: true }).click();
-  await expect.poll(async () => (await context())?.project.blueprints.find(g => g.id === timelineId)?.exposedInputs.length).toBe(1);
+  await expect.poll(async () => projectGraphs((await context())?.project).find(g => g.id === timelineId)?.exposedInputs.length).toBe(1);
   current = (await context())!;
-  const inputId = current.project.blueprints.find(g => g.id === timelineId)!.exposedInputs[0].id;
-  assert.ok(current.project.blueprints.find(g => g.id === ownerId)!.nodes.find(n => n.id === callId)!.pins.some(p => p.id === 'arg_' + inputId && p.dataType === 'asset'));
+  const inputId = projectGraphs(current.project).find(g => g.id === timelineId)!.exposedInputs[0].id;
+  assert.ok(projectGraphs(current.project).find(g => g.id === ownerId)!.nodes.find(n => n.id === callId)!.pins.some(p => p.id === 'arg_' + inputId && p.dataType === 'asset'));
   await expect(page.locator('.performance-preview-context, .timeline-playback-settings')).toHaveCount(0);
+  // An idle preview shows the finished timeline, so the playhead sits at its end (after this 3 s clip); step into the clip from its start.
   await page.getByRole('slider', { name: '时间轴播放头', exact: true }).focus();
-  await page.keyboard.press('Shift+ArrowRight');
+  await page.keyboard.press('Home'); await page.keyboard.press('Shift+ArrowRight');
   await checkPreviewImage('red');
   await page.getByRole('tab', { name: '时间轴组件', exact: true }).click();
   const defaultInput = page.locator('.timeline-public-parameter').getByRole('combobox');
   await defaultInput.fill('测试蓝图'); await page.getByRole('option').filter({ hasText: '测试蓝图' }).click();
-  await expect.poll(async () => (await context())!.project.blueprints.find(g => g.id === timelineId)!.exposedInputs[0].defaultValue).toBe('override_image');
+  await expect.poll(async () => projectGraphs((await context())!.project).find(g => g.id === timelineId)!.exposedInputs[0].defaultValue).toBe('override_image');
   await checkPreviewImage('blue');
   await defaultInput.fill('默认红图'); await page.getByRole('option').filter({ hasText: '默认红图' }).click();
   await checkPreviewImage('red');
@@ -123,11 +125,11 @@ try {
   await callNode().locator('.react-flow__handle[data-handleid="exec_out"]').click(); await setter.locator('.react-flow__handle[data-handleid="exec_in"]').click();
   await button('保存界面').click(); await expect(page.locator('.workspace-toolbar').getByText('已保存', {exact:true})).toBeVisible();
   let stored = projectSchema.parse(JSON.parse(await fs.readFile(projectFile, 'utf8')));
-  const owner = stored.blueprints.find(g => g.id === ownerId)!;
+  const owner = projectGraphs(stored).find(g => g.id === ownerId)!;
   assert.ok(owner.links.some(l => l.fromNodeId === callId && l.toNodeId === owner.nodes.find(n => n.type === 'setUiProperty')!.id));
-  assert.equal(stored.blueprints.find(g => g.id === timelineId)!.exposedInputs[0].defaultValue, 'default_image');
-  assert.ok(stored.blueprints.some(g => g.id === nestedId));
-  assert.ok([...performanceTimeline(stored, stored.blueprints.find(g => g.id === timelineId)!).actionsByNode.values()].flat().some(action => action.kind === 'visual' && action.text === '按钮触发的演出'));
+  assert.equal(projectGraphs(stored).find(g => g.id === timelineId)!.exposedInputs[0].defaultValue, 'default_image');
+  assert.ok(projectGraphs(stored).some(g => g.id === nestedId));
+  assert.ok([...performanceTimeline(stored, projectGraphs(stored).find(g => g.id === timelineId)!).actionsByNode.values()].flat().some(action => action.kind === 'visual' && action.text === '按钮触发的演出'));
   await page.screenshot({ path: path.join(output, 'event-graph.png') });
   await page.evaluate(file => window.studio!.openRecentProject!(file), projectFile);
   await page.reload(); await expect(page.locator('.project-title strong')).toHaveText(project.name, { timeout: 45000 });
@@ -148,7 +150,9 @@ try {
   await page.getByLabel('片段文字内容', { exact: true }).fill('将被放弃');
   await page.locator('[data-workspace-tab="assets"]').click(); await expect(page.getByRole('dialog', { name: '保存界面修改', exact: true })).toBeVisible(); await button('不保存').click();
   assert.equal(await fs.readFile(projectFile, 'utf8'), saved);
+  // Returning to the UI workspace restores the timeline that was open; go back to the page graph from there.
   await page.locator('[data-workspace-tab="ui"]').click(); await page.getByLabel('界面编辑模式').getByRole('button', { name: '事件图', exact: true }).click();
+  await expect(page.getByLabel('界面事件的演出时间轴')).toBeVisible(); await button('返回事件图').click();
   await selectComponent('trigger'); await button('点击时 · OnClicked').click();
   await expect(page.locator('.react-flow__node[data-id="' + callId + '"]')).toBeVisible();
   assert.deepEqual(errors, []);

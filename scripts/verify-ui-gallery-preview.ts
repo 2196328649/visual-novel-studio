@@ -6,6 +6,7 @@ import { blueprintNodeDefaults, connectBlueprintPins, createBlueprintGraph } fro
 import { projectSchema } from '../src/core/model';
 import { createGalleryFixture } from './lib/gallery-fixture';
 import { launchDesktopFixture } from './lib/desktop-fixture';
+import { openUiPreviewForTest } from './lib/ui-preview-window';
 
 const root = path.resolve('.'), output = path.join(process.env.VNS_ARTIFACT_ROOT??path.join(root,'artifacts'), 'ui-gallery-preview', new Date().toISOString().replaceAll(':', '-'));
 const fixture = path.join(output, 'project'), projectFile = path.join(fixture, 'project.vns.json');
@@ -20,15 +21,15 @@ const graph = createBlueprintGraph('ui', '图鉴按键'), key = blueprintNodeDef
 key.properties = { pageId: 'ui:gallery', key: 'K_RIGHT' }; set.properties = { variableId: 'key_count', value: 1 };
 graph.nodes.push(key, set); connectBlueprintPins(graph, key.id, 'exec', set.id, 'exec_in'); project.blueprints.push(graph);
 await fs.writeFile(projectFile, JSON.stringify(projectSchema.parse(project)));
-const app = await launchDesktopFixture({ root, projectFile, profile: path.join(output, 'profile') }), page = await app.firstWindow(), errors: string[] = [];
+const app = await launchDesktopFixture({ root, projectFile, profile: path.join(output, 'profile') }), editor = await app.firstWindow(), errors: string[] = [];
+let page = editor;
 page.on('pageerror', error => errors.push(error.message));
 try {
   await expect(page.locator('.project-title strong')).toHaveText(project.name, { timeout: 45000 });
   await page.locator('[data-workspace-tab="ui"]').click();
-  await page.getByRole('button', { name: '高级 UI 蓝图', exact: true }).click();
-  await page.locator('.ui-logic-preview > summary').click();
-  const divider = page.getByRole('separator', { name: '调整画布与页面设置高度', exact: true });
-  for (let i = 0; i < 18; i++) await divider.press('ArrowUp');
+  await page.getByLabel('界面编辑模式').getByRole('button', { name: '事件图', exact: true }).click();
+  await page.getByLabel('事件图页面').selectOption('ui:main');
+  page = await openUiPreviewForTest(app, editor, errors);
   const before = await fs.readFile(projectFile, 'utf8'), frame = page.getByLabel('参数联动预演画面', { exact: true });
   const pageName = page.getByLabel('当前预演页面', { exact: true }), detail = frame.locator('.ui-gallery-detail-preview');
   await frame.getByRole('button', { name: '进入图鉴', exact: true }).click();
@@ -115,7 +116,7 @@ try {
   await frame.getByRole('button', { name: '进入图鉴', exact: true }).click();
   await page.getByText('图鉴测试数据', { exact: true }).click();
   await expect(page.getByLabel('全部图片已解锁', { exact: true })).toBeChecked();
-  await expect(page.locator('.dirty-dot')).toHaveCount(0);
+  await expect(editor.locator('.dirty-dot')).toHaveCount(0);
   expect(await fs.readFile(projectFile, 'utf8')).toBe(before); expect(errors).toEqual([]);
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', compiledBuild: true, underlayPixels, checks: ['高级UI从标题进入图鉴，独立缩略图与94组12页', '详情顺序/上一张/末张返回，方向键不触发底层蓝图', 'Esc/右键/关闭返回当前页，焦点恢复，离页重入第一页', '测试解锁筛选只显示可用分镜，清空与恢复', '详情逐像素确认底层卡片、页码与返回按钮不透出', '全程不修改UI草稿与磁盘'], errors }, null, 2));
   console.log(output);

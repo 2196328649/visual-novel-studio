@@ -1,0 +1,11 @@
+.blueprint-choice-card-hint { display: block; color: var(--muted, #aab2bf); line-height: 1.5; font-size: 11px; overflow-wrap: anywhere; }
+.blueprint-choice-fields { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.blueprint-choice-fields .muted { margin: 2px 0; font-size: 11px; line-height: 1.5; }
+.blueprint-choice-type, .blueprint-choice-row > label { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 6px; align-items: center; min-width: 0; font-size: 12px; }
+.blueprint-choice-fields input, .blueprint-choice-fields select { min-width: 0; width: 100%; box-sizing: border-box; }
+.blueprint-choice-row { margin: 0; padding: 8px; min-width: 0; display: flex; flex-direction: column; gap: 7px; border: 1px solid #414959; border-radius: 5px; }
+.blueprint-choice-row legend { padding: 0 4px; color: #bbc7d8; font-size: 11px; }
+.blueprint-choice-row-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.blueprint-choice-confirm, .blueprint-choice-problems { padding: 8px; border: 1px solid #927040; background: #332c24; border-radius: 5px; color: #f0d6a6; font-size: 12px; overflow-wrap: anywhere; }
+.blueprint-choice-confirm p, .blueprint-choice-problems p { margin: 0 0 7px; }
+.blueprint-choice-confirm button + button { margin-left: 6px; }

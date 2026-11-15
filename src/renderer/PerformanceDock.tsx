@@ -12,7 +12,7 @@ function readLayout() {
   return readDockLayout(localStorage, 'timeline');
 }
 
-export function PerformanceDock({ panels, minimumTimelineHeight }: { panels: Record<Panel, ReactNode>; minimumTimelineHeight?: number }) {
+export function PerformanceDock({ panels, minimumTimelineHeight, panelActions }: { panels: Record<Panel, ReactNode>; minimumTimelineHeight?: number; panelActions?: Partial<Record<Panel, ReactNode>> }) {
   const [layout, setLayout] = useState(readLayout);
   useEffect(()=>{const refresh=(event:Event)=>{if((event as CustomEvent<string>).detail===key)setLayout(readLayout());};window.addEventListener(editorLayoutEvent,refresh);return()=>window.removeEventListener(editorLayoutEvent,refresh);},[]);
   const [dragging, setDragging] = useState<Slot>();
@@ -21,7 +21,10 @@ export function PerformanceDock({ panels, minimumTimelineHeight }: { panels: Rec
   useEffect(() => { try { localStorage.setItem(key, JSON.stringify(layout)); } catch { /* Keep the current session layout. */ } }, [layout]);
   const swap = (from: Slot, to: Slot) => setLayout(current => ({ ...current, panels: { ...current.panels, [from]: current.panels[to], [to]: current.panels[from] } }));
   const setSize = (axis: 'left' | 'right' | 'top', value: number) => setLayout(current => ({ ...current, [axis]: Math.max(axis === 'top' ? 35 : axis === 'left' ? 12 : 15, Math.min(axis === 'top' ? 85 : axis === 'left' ? 30 : 32, value)) }));
-  return <div ref={root} className="performance-timeline performance-dock" aria-label="演出轨道编辑器" style={{ gridTemplateColumns: `${layout.left}fr 6px ${100 - layout.left - layout.right}fr 6px ${layout.right}fr`, gridTemplateRows: `minmax(${layout.panels.top === 'timeline' ? minimumTimelineHeight ?? 150 : 150}px, ${layout.top}fr) 6px minmax(${layout.panels.bottom === 'timeline' ? minimumTimelineHeight ?? 200 : 200}px, ${100 - layout.top}fr)` }}>
+  // A horizontal timeline uses the whole row. Deliberately placing it in a
+  // side slot still retains the author's custom four-panel arrangement.
+  const timelineRow = layout.panels.bottom === 'timeline' ? 'bottom' : layout.panels.top === 'timeline' ? 'top' : undefined;
+  return <div ref={root} className={'performance-timeline performance-dock' + (timelineRow ? ' timeline-row-' + timelineRow : '')} aria-label="演出轨道编辑器" style={{ gridTemplateColumns: `${layout.left}fr 6px ${100 - layout.left - layout.right}fr 6px ${layout.right}fr`, gridTemplateRows: `minmax(${layout.panels.top === 'timeline' ? minimumTimelineHeight ?? 150 : 150}px, ${layout.top}fr) 6px minmax(${layout.panels.bottom === 'timeline' ? minimumTimelineHeight ?? 200 : 200}px, ${100 - layout.top}fr)` }}>
     {slots.map(slot => {
       const panel = layout.panels[slot];
       return <section key={panel} className={'performance-dock-panel dock-' + slot} data-dock-panel={panel} data-dock-slot={slot} aria-label={names[panel] + '面板'}
@@ -29,6 +32,7 @@ export function PerformanceDock({ panels, minimumTimelineHeight }: { panels: Rec
         onDrop={event => { const from = event.dataTransfer.getData('application/vns-performance-panel') as Slot; if (slots.includes(from)) { event.preventDefault(); swap(from, slot); setDragging(undefined); } }}>
         <header className="performance-dock-title" draggable onDragStart={event => { event.dataTransfer.setData('application/vns-performance-panel', slot); event.dataTransfer.effectAllowed = 'move'; setDragging(slot); }} onDragEnd={() => setDragging(undefined)} title="拖到另一个面板以交换位置">
           <strong>{names[panel]}</strong>
+          {panelActions?.[panel] && <div className="performance-panel-actions" onPointerDown={event => event.stopPropagation()} onDragStart={event => { event.preventDefault(); event.stopPropagation(); }}>{panelActions[panel]}</div>}
           {panel === 'library' && <button type="button" className="small-button" aria-label="恢复默认演出布局" title="素材在左，时间轴在下" onClick={() => setLayout(defaults())}>重置布局</button>}
         </header>
         <div className="performance-dock-content">{panels[panel]}</div>

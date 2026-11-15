@@ -1,18 +1,7 @@
 import { effectiveCharacter, type Asset, type Project } from './model';
 
-export type VisibleBounds = { x: number; y: number; width: number; height: number };
+export { visibleImageBounds, type VisibleBounds } from './image-bounds';
 export const defaultPortraitFraming = { x: 0.5, top: 0.16, visibleFraction: 0.64 };
-
-/** Ignore transparent padding; pixel coordinates also work with native BGRA bitmaps. */
-export function visibleImageBounds(data: ArrayLike<number>, width: number, height: number): VisibleBounds | undefined {
-  if (width <= 0 || height <= 0 || data.length < width * height * 4) return;
-  let left = width, top = height, right = -1, bottom = -1;
-  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-    if (data[(y * width + x) * 4 + 3] < 8) continue;
-    left = Math.min(left, x); right = Math.max(right, x); top = Math.min(top, y); bottom = Math.max(bottom, y);
-  }
-  return right < 0 ? undefined : { x: left, y: top, width: right - left + 1, height: bottom - top + 1 };
-}
 
 export function portraitGeometry(asset: Asset | undefined, width: number, height: number) {
   const w = asset?.width && asset.width > 0 ? asset.width : width;

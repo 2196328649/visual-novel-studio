@@ -1,6 +1,9 @@
+import { resolveUiHierarchy } from '../core/ui-hierarchy';
 import { emissionMeshPoints } from '../core/emission-mesh';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { effectiveUiTheme, orderedUiComponents, type Project } from '../core/model';
+import { effectiveUiComponents, type Project } from '../core/model';
+import { uiPageTheme } from '../core/ui-page-settings';
+import { uiFontFamily } from './UiAppearance';
 import { chapterFrame, chapterGlyphPoints, chapterParticle, chapterParticleCount, chapterParticleFrame, chapterPresentation, chapterSource, chapterTitleNoise, chapterTitleRect, type ChapterContent } from '../core/chapter';
 import { UiComponentContent, uiComponentPreviewStyle } from './UiComponentVisual';
 import type { AssetUrl } from './StageEditor';
@@ -19,7 +22,7 @@ export function ChapterBackdrop({ presentation, assetUrl, seconds = 0 }: { prese
 export function ChapterPreview({ project, node, assetUrl, scale, onComplete, playing = true, elapsed }: {
   project: Project; node?: ChapterContent; assetUrl: AssetUrl; scale: number; onComplete?: () => void; playing?: boolean; elapsed?: number;
 }) {
-  const presentation = chapterPresentation(project, node), theme = effectiveUiTheme(project.ui), rect = chapterTitleRect(project);
+  const presentation = chapterPresentation(project, node), theme = uiPageTheme(project, 'ui:chapterTitle'), rect = chapterTitleRect(project);
   const maskId = useId().replaceAll(':', '');
   const noiseMask = useMemo(() => {
     const canvas = document.createElement('canvas'); canvas.width = 128; canvas.height = 128;
@@ -65,10 +68,10 @@ export function ChapterPreview({ project, node, assetUrl, scale, onComplete, pla
     </filter></defs></svg>
     <div className="chapter-preview-presence" style={{ animation: 'none', opacity: frame.surface, background: '#000' }}>
       <ChapterBackdrop presentation={presentation} assetUrl={assetUrl} seconds={time * chapterSource.timing.duration} />
-      {theme.pages?.chapterTitle?.layout === 'custom' ? orderedUiComponents(project.ui).filter(c => c.page === 'chapterTitle').map(c => <div key={c.id} className={`ui-component ${c.kind} ${c.kind === 'chapterTitle' ? 'chapter-preview-letters' : ''}`} style={{ ...uiComponentPreviewStyle(project, c, scale), ...(c.kind === 'chapterTitle' ? letters : {}) }}>
-        <UiComponentContent project={project} component={c} assetUrl={assetUrl} scale={scale} bindings={{ chapterTitle: title, chapterSubtitle: node?.subtitle, chapterTitleImageId: presentation.titleImageId }} />
-      </div>) : <div className="chapter-preview-default chapter-preview-letters" style={{ gap: 12 * scale, fontSize: Math.min(56, Math.max(28, theme.fontSize + 12)) * scale, color: theme.accent, ...letters }}>
-        {presentation.titleImageId ? <img src={titleSource} alt={title} style={{ maxWidth: '100%', height: project.height * scale * .16, objectFit: 'contain' }} /> : <><span>{title}</span>{node?.subtitle && <span style={{ fontSize: 24 * scale }}>{node.subtitle}</span>}</>}
+      {theme.pages?.chapterTitle?.layout === 'custom' ? resolveUiHierarchy(effectiveUiComponents(project.ui).filter(c => c.page === 'chapterTitle'), { viewport: project }).filter(row => row.visible).map(({ component: c, geometry }) => <div key={c.id} className={`ui-component ${c.kind}`} style={uiComponentPreviewStyle(project, c, scale, 'idle', c, geometry)}>
+        <div className={c.kind === 'chapterTitle' ? 'chapter-preview-letters' : undefined} style={{ width: '100%', height: '100%', ...(c.kind === 'chapterTitle' ? letters : {}) }}><UiComponentContent project={project} component={c} assetUrl={assetUrl} scale={scale} bindings={{ chapterTitle: title, chapterSubtitle: node?.subtitle, chapterTitleImageId: presentation.titleImageId }} /></div>
+      </div>) : <div className="chapter-preview-default chapter-preview-letters" style={{ gap: 12 * scale, fontSize: Math.min(56, Math.max(28, theme.fontSize + 12)) * scale, color: theme.accent, fontFamily: uiFontFamily(theme.fontAssetId), ...letters }}>
+        {presentation.titleImageId ? <img src={titleSource} alt={title} style={{ maxWidth: '100%', height: project.height * scale * .16, objectFit: 'contain' }} /> : <><span>{title}</span>{node?.subtitle && <span style={{ fontSize: Math.min(24, theme.fontSize) * scale, color: theme.textColor }}>{node.subtitle}</span>}</>}
       </div>}
       {presentation.effect === 'ink' && presentation.particles && !!glyph?.points.length && Array.from({ length: chapterParticleCount }, (_, i) => {
         const p = chapterParticle(i), [u, v] = glyph.points[(i * 7919) % glyph.points.length];

@@ -132,8 +132,8 @@ test('scene, character, and UI instances can invoke reusable blueprints', () => 
   const story = compiled.files['game/story.rpy'];
   assert.match(story, /call vn_blueprint_bp_instance from vn_blueprint_call_bp_instance/);
   assert.match(story, /call vn_blueprint_bp_instance from vn_character_blueprint_hero/);
-  assert.match(compiled.files['game/screens.rpy'], /on "show" action Function\(vn_run_ui_show, "bp_instance"\)/);
-  assert.match(compiled.files['game/screens.rpy'], /action Function\(vn_run_blueprint, "bp_instance"\)/);
+  assert.match(compiled.files['game/screens.rpy'], /on "show" action Function\(vn_ui_native_page_shown, "ui:main", \["bp_instance"\]\)/);
+  assert.match(compiled.files['game/screens.rpy'], /action VnUiActions\("ui:main", \[Function\(vn_ui_play_click, "ui_blueprint_button"\), Function\(vn_run_blueprint, "bp_instance", page_id="ui:main"\)\]\)/);
 });
 
 test('extended Aihong UI pages accept reusable components and compile safe screens', () => {
@@ -208,9 +208,9 @@ test('all node families and stage actions produce native engine statements', () 
   const output = compileProject(fixture()).files['game/story.rpy'];
   for (const statement of [
     'scene vn_background_background', 'show vn_actor_hero normal at vn_stage(0.5, 1, 0.8) zorder 3',
-    'vn_stage_transition(fade, 1)', 'vn_stage_transition(dissolve, 0.5)', 'vn_stage_transition(move, 0.5)', 'play music "assets/music.opus" loop fadein 0.5',
+    'vn_actor_legacy_transition(fade, 1)', 'vn_actor_legacy_transition(dissolve, 0.5)', 'vn_actor_legacy_transition(move, 0.5)', 'play music "assets/music.opus" loop fadein 0.5',
     'play sound "assets/voice.ogg"', 'voice "assets/voice.ogg"', 'pause 0.2',
-    'vn_bp_hide("hero"', 'stop music fadeout 0.5', 'menu:', '$ vn_var_trust += 1',
+    'vn_bp_hide("hero"', 'stop music fadeout 0.5', 'menu:', '$ vn_parameter_set("trust", vn_var_trust + 1, False)',
     'if (vn_var_trust > 0):', 'call vn_node_subroutine from vn_return_call',
     'jump vn_node_end', '$ renpy.set_return_stack([])',
   ]) assert.ok(output.includes(statement), statement);
@@ -284,8 +284,8 @@ test('blueprint compare, select, and loop nodes compile as data and execution fl
   assert.deepEqual(result.diagnostics.filter(item => item.severity === 'error'), []);
   const story = result.files['game/story.rpy'];
   assert.match(story, /if \(3 == 3\):/);
-  assert.match(story, /while vn_bp_index_bp_loop <= vn_bp_last_bp_loop:/);
-  assert.match(story, /\$ vn_bp_index_bp_loop \+= 1/);
+  assert.match(story, /while vn_bp_task_alive\(vn_bp_task\) and vn_bp_local\("vn_bp_index_bp_loop"\) <= vn_bp_local\("vn_bp_last_bp_loop"\):/);
+  assert.match(story, /\$ vn_bp_index_bp_loop = vn_bp_local\("vn_bp_index_bp_loop"\) \+ 1/);
 });
 
 test('generic blueprint data links evaluate literals, variables, and math inputs', () => {
@@ -335,7 +335,7 @@ test('generic blueprint data links evaluate literals, variables, and math inputs
   const compiled = compileProject(project);
   assert.deepEqual(compiled.diagnostics.filter(item => item.severity === 'error'), []);
   const story = compiled.files['game/story.rpy'];
-  assert.match(story, /\$ vn_var_trust = 7/);
+  assert.match(story, /\$ vn_parameter_set\("trust", 7, False\)/);
   assert.match(story, /if persistent\.vn_var_unlocked:[\s\S]*vn_performance_pause\(\(0\.25 \+ 0\.5\)\)/);
 });
 
@@ -373,7 +373,7 @@ test('blueprint exposed inputs are passed through nested calls', () => {
   const story = result.files['game/story.rpy'];
   assert.match(story, /label vn_blueprint_bp_target\(vn_bp_in_bp_target_threshold=2\):/);
   assert.match(story, /call vn_blueprint_bp_target\(7\)/);
-  assert.match(story, /\$ vn_var_trust = vn_bp_in_bp_target_threshold/);
+  assert.match(story, /\$ vn_parameter_set\("trust", vn_bp_in_bp_target_threshold, False\)/);
 });
 
 test('blueprint call signatures expose typed outputs to the caller graph', () => {
@@ -427,7 +427,7 @@ test('blueprint call signatures expose typed outputs to the caller graph', () =>
   const story = result.files['game/story.rpy'];
   assert.match(story, /default vn_bp_out_bp_target_out_result = 0/);
   assert.match(story, /label vn_blueprint_bp_target_out\(vn_bp_in_bp_target_out_amount=1\):[\s\S]*\$ vn_bp_out_bp_target_out_result = vn_bp_in_bp_target_out_amount/);
-  assert.match(story, /call vn_blueprint_bp_target_out\(7\)[\s\S]*\$ vn_bp_result_caller_out_call_result = vn_bp_out_bp_target_out_result[\s\S]*pause vn_bp_result_caller_out_call_result/);
+  assert.match(story, /call vn_blueprint_bp_target_out\(7\)[\s\S]*\$ vn_bp_result_caller_out_call_result = vn_bp_out_bp_target_out_result[\s\S]*pause vn_bp_local\("vn_bp_result_caller_out_call_result"\)/);
 });
 
 test('custom minigame definitions bind a reusable UI page and blueprint', () => {
@@ -457,7 +457,7 @@ test('preview uses an isolated save identity and validates its entry and variabl
   assert.deepEqual(preview.diagnostics.filter(item => item.severity === 'error'), []);
   assert.match(normal.files['game/options.rpy'], /config.save_directory = "vns_fixture"/);
   assert.match(preview.files['game/options.rpy'], /config.save_directory = "vns_fixture_preview"/);
-  assert.match(preview.files['game/story.rpy'], /label start:\n    stop music fadeout 0\n    \$ vn_performance_reset\(\)\n    \$ vn_actor_reset_transitions\(\)\n    \$ vn_var_trust = 4\n    \$ persistent.vn_var_unlocked = True\n    jump vn_node_choice/);
+  assert.match(preview.files['game/story.rpy'], /label start:\n    \$ vn_flow_start_game\(\)\n    \$ vn_bp_async_clear\(\)\n    \$ vn_ui_clear_pages\(\)\n    stop music fadeout 0\n    \$ vn_performance_reset\(\)\n    \$ vn_actor_reset_transitions\(\)\n    \$ vn_ui_animations\.clear\(\)\n    \$ vn_parameter_flush_animations\(\)\n    \$ vn_var_trust = 0\n    \$ vn_var_nickname = "旅人"\n    \$ vn_var_trust = 4\n    \$ persistent.vn_var_unlocked = True\n    jump vn_node_choice/);
   for (const options of [{ preview: { entryId: 'missing' } }, { preview: { variables: { trust: 'bad type' } } }]) {
     const result = compileProject(project, options);
     assert.ok(result.diagnostics.some(item => item.severity === 'error'));
@@ -476,8 +476,11 @@ test('invalid project identifiers cannot become generated Python or labels', () 
 test('runtime inspection is emitted only for development builds', () => {
   const release = compileProject(fixture()).files['game/story.rpy'];
   const preview = compileProject(fixture(), { development: true }).files['game/story.rpy'];
-  assert.doesNotMatch(release, /VNS_EVENT:|_vn_debug_emit|interact_callbacks/);
+  // Normal interaction callbacks also drive saved stage/media clocks. Only the
+  // developer observer and its event output must be absent from release games.
+  assert.doesNotMatch(release, /VNS_EVENT:|_vn_debug_emit/);
   assert.match(preview, /print\("VNS_EVENT:" \+ message, flush=True\)/);
+  assert.match(preview, /config\.interact_callbacks\.append\(_vn_debug_emit\)/);
   assert.match(preview, /"trust": vn_var_trust/);
   assert.match(preview, /"unlocked": persistent.vn_var_unlocked/);
 });
@@ -489,8 +492,9 @@ test('custom UI exports its asset and command without developer filesystem paths
     { id: 'portrait_image', page: 'say', kind: 'image', assetId: 'portrait', text: '', x: 0.02, y: 0.5, width: 0.2, height: 0.3 },
   ];
   const screens = compileProject(project).files['game/screens.rpy'];
-  assert.match(screens, /id "vn_component_load_button"[\s\S]*?action ShowMenu\("load"\)/);
-  assert.match(screens, /vn_ui_surface\(\{"idle": "assets\/portrait\.png", "fit": "contain"\}/);
+  assert.match(screens, /id "vn_component_load_button"[\s\S]*?action VnUiActions\("ui:main", \[Function\(vn_ui_play_click, "load_button"\), VnUiMenu\("load"\)\]\)/);
+  assert.match(screens, /VnUiImageSurface\("portrait_image", vn_ui_skin\("portrait_image", .*True\)/);
+  assert.match(compileProject(project).files['game/vn_ui.rpy'] ?? Object.values(compileProject(project).files).join('\n'), /"image": "portrait"/);
   for (const name of ['save', 'load', 'preferences', 'history', 'gallery', 'music_room', 'confirm', 'quick_menu']) assert.ok(screens.includes(`screen ${name}(`));
 });
 
@@ -508,13 +512,14 @@ test('custom choice, save, and preference components preserve native actions and
   assert.deepEqual(compiled.diagnostics.filter(item => item.severity === 'error'), []);
   const screens = compiled.files['game/screens.rpy'];
   assert.match(screens, /use vn_components_choice\(items\)/);
-  assert.match(screens, /use vn_choice_items\(items, max\(1, int\(vn_ui_get\("choices_ui", "width"\)/);
-  assert.match(screens, /vn_ui_get\("choices_ui", "height"\)/);
+  assert.match(screens, /use vn_choice_items\(items, vn_ui_layout_size\("choices_ui", "width", _vn_layout\)/);
+  assert.match(screens, /vn_ui_layout_size\("choices_ui", "height", _vn_layout\)/);
   assert.match(screens, /action item.action/);
   assert.match(screens, /action FileAction\(slot\)/);
-  assert.match(screens, /use vn_preference_slider\("musicVolume", None,[^\n]+"vn_component_music_ui", component_id="music_ui"\)/);
-  assert.match(screens, /value \(VnParameterValue\(parameter_id, reverse=options.get\("reverse", False\), component_id=component_id\) if parameter_id else VnPreferenceValue\(key, character_id, reverse=options.get\("reverse", False\), component_id=component_id\)\)/);
-  assert.equal((screens.match(/text what id "what"/g) ?? []).length, 2);
+  assert.match(screens, /use vn_preference_slider\("musicVolume", None,[^\n]+"vn_component_music_ui", component_id="music_ui", layout_rows=_vn_layout\)/);
+  assert.match(screens, /value \(VnParameterValue\(parameter_id, reverse=options.get\("reverse", False\), component_id=component_id, screen_available=screen_available\) if parameter_id else VnPreferenceValue\(key, character_id, reverse=options.get\("reverse", False\), component_id=component_id, screen_available=screen_available\)\)/);
+  assert.match(screens, /vn_dialogue_text vn_ui_bound_display\("dialogue_ui", what\) id "what"/);
+  assert.match(screens, /vn_dialogue_text what id "what"/);
   assert.match(screens, /else:\n(?:\s+#[^\n]*\n)*\s+vn_dialogue_text what id "what" color "#00000000" size 1/);
   assert.match(screens, /null height 72/);
 });
@@ -549,4 +554,15 @@ test('music room discovers inherited scene entry music', () => {
   const compiled = compileProject(project);
   assert.deepEqual(compiled.diagnostics.filter(item => item.severity === 'error'), []);
   assert.match(compiled.files['game/screens.rpy'], /\("音乐", "assets\/music.opus"\)/);
+});
+
+
+test('dialogue establishes a soft save boundary before its interaction, including the first line', () => {
+  const project = createProject(), passage = project.nodes.find(n => n.kind === 'passage')!;
+  assert.equal(passage.kind, 'passage'); passage.lines[0].text = '首次交互的保存边界';
+  const compiled = compileProject(project);
+  assert.deepEqual(compiled.diagnostics.filter(d => d.severity === 'error'), []);
+  const story = compiled.files['game/story.rpy'];
+  assert.match(story, /\$ renpy\.checkpoint\(hard=False\)\n    "首次交互的保存边界" id vn_say_/);
+  assert.equal(story.includes('renpy.checkpoint(hard=True)'), false);
 });

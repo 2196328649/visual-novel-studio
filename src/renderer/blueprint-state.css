@@ -1,0 +1,10 @@
+.blueprint-state-panel { min-width: 0; }
+.blueprint-state-panel select, .blueprint-state-panel input, .blueprint-state-panel textarea { min-width: 0; width: 100%; box-sizing: border-box; }
+.blueprint-state-panel h3 { display: flex; align-items: center; gap: 7px; }
+.blueprint-state-panel h3 > .blueprint-member-add { margin-left: auto; }
+.blueprint-state-panel .blueprint-state-scope-hint { display: flex; align-items: center; gap: 5px; font-size: 11px; line-height: 1.5; color: var(--editor-muted); margin: 7px 0; }
+.blueprint-state-scope-hint > span { display: inline-flex; flex-shrink: 0; cursor: help; border-radius: 2px; }
+.blueprint-state-scope-hint > span:focus-visible { outline: 1px solid var(--editor-accent, #4c9cbb); outline-offset: 2px; }
+.blueprint-state-shared-summary { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 7px 10px; margin: 5px 0; font-size: 11px; }
+.blueprint-state-shared-summary dt { color: var(--editor-muted); }
+.blueprint-state-shared-summary dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 90px; overflow: auto; }

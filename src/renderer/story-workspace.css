@@ -100,20 +100,43 @@
 .preview-transition-black { position: absolute; inset: 0; background: #000; z-index: 120; pointer-events: none; }
 .ui-dialogue-preview.is-revealing .ui-continue-indicator { visibility: hidden; }
 .text-source-panel > .script-workspace { flex: 1; min-height: 0; height: auto; }
-.text-source-panel .script-scroll { padding: 10px; max-width: none; width: 100%; }
+/* The flex pane determines this viewport's size. Revealing an offscreen row
+   must not remeasure the entire editor through its intrinsic flex size. */
+.text-source-panel .script-scroll { padding: 10px; max-width: none; width: 100%; contain: strict; }
 .passage-heading-row { display: flex; align-items: center; background: #2d343e; border-bottom: 1px solid #424d57; }
 .passage-heading-row > .passage-header { flex: 1; width: auto; min-width: 0; border: 0; background: transparent; padding: 9px 8px; }
 .passage-heading-row > .icon-button { margin-right: 5px; flex: none; }
 .passage-header strong { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .text-source-panel .passage-section { margin-bottom: 13px; }
-.text-source-panel .story-line { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 6px; padding: 9px 7px; }
-.text-source-panel .line-number { padding-top: 7px; font-size: 10px; }
-.text-source-panel .line-content { display: grid; grid-template-columns: 100px minmax(0, 1fr) 78px; gap: 5px 6px; min-width: 0; }
+/* Keep two pixels inside the row so fractional Windows DPI clipping cannot
+   erase or fade the entire separator against the next paint-contained row.
+   The bottom padding preserves the former border's layout space. */
+.text-source-panel .story-lines > .story-line { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 6px; padding: 9px 7px 10px; border-bottom-width: 0; box-shadow: inset 0 -2px var(--editor-border); }
+/* Keep native focus/find/selection and each expanded panel's state. Offscreen
+   expanded rows can skip layout too; only the current/focused row needs to let
+   its menus paint outside its bounds. Remembered sizes retain scroll position. */
+.text-source-panel .story-line { content-visibility: auto; contain-intrinsic-block-size: auto 65px; }
+.text-source-panel .story-line:is(.selected, :focus-within) { content-visibility: visible; }
+.line-gutter { display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 0; }
+.text-source-panel .line-number { width: 100%; padding: 0; line-height: 28px; font-size: 10px; }
+.text-source-panel .line-content { display: grid; grid-template-columns: 100px minmax(0, 1fr) 50px; gap: 5px 6px; min-width: 0; --line-input-height: 32px; }
+.line-expand { position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none; width: 26px; height: 30px; margin-top: 1px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted, #9db0b8); cursor: pointer; }
+.line-expand:hover { background: rgba(255, 255, 255, .08); color: inherit; }
+.line-expand > svg { transition: transform .1s; }
+.line-expand.is-open > svg { transform: rotate(90deg); }
+.line-expand > span { position: absolute; right: 0; bottom: 0; min-width: 12px; padding: 0 2px; border-radius: 6px; background: #3b8f80; color: #fff; font-size: 9px; line-height: 12px; text-align: center; }
+.line-summary { grid-column: 1 / -1; grid-row: 3; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; }
+.line-effects.line-text-effects { grid-row: 3; display: grid; gap: 8px; padding: 10px; border: 1px solid #4e6a70; border-radius: 6px; background: #27333c; }
 .text-source-panel .line-top { display: contents; }
-.text-source-panel .line-top > select { grid-column: 1; grid-row: 2; width: 100%; max-width: none; align-self: start; padding: 6px; margin-top: 4px; background: #222b33; border: 1px solid #414f5b; border-radius: 4px; font-size: 12px; }
-.text-source-panel .dialogue-input { grid-column: 2; grid-row: 2; min-height: 38px; max-height: 180px; field-sizing: content; margin: 0; padding: 7px 8px; line-height: 1.7; font-size: 13px; resize: vertical; }
-.text-source-panel .line-actions { grid-column: 3; grid-row: 2; flex-direction: row; align-self: start; gap: 0; margin-top: 5px; }
-.text-source-panel .line-actions .icon-button { width: 19px; height: 25px; padding: 3px; }
+.text-source-panel .line-top > select { grid-column: 1; grid-row: 2; width: 100%; max-width: none; height: var(--line-input-height); min-height: var(--line-input-height); align-self: start; padding: 5px 6px; margin: 0; background: #222b33; border: 1px solid #414f5b; border-radius: 4px; font-size: 12px; }
+.text-source-panel .line-top > .text-button { grid-column: 1 / 3; grid-row: 2; justify-self: start; }
+/* Do not stretch short dialogue to the two-row action buttons beside it. */
+.text-source-panel .dialogue-input { grid-column: 2; grid-row: 2; align-self: start; min-height: var(--line-input-height); max-height: 180px; field-sizing: content; margin: 0; padding: 5px 8px; line-height: 20px; font-size: 13px; resize: vertical; }
+/* Share the stage/dialogue height; the 2x2 actions must not add blank space
+   below a single-line textarea. Reserve their column in the stage strip. */
+.text-source-panel .line-actions { grid-column: 3; grid-row: 1 / 3; grid-template-columns: repeat(2, 24px); align-self: end; gap: 2px; margin: 0; }
+.text-source-panel .line-effects:not(.line-text-effects) { grid-column: 1 / 3; }
+.text-source-panel .line-actions .icon-button { width: 24px; min-width: 24px; height: 24px; padding: 3px; }
 .line-effects { position: relative; grid-column: 1 / -1; grid-row: 1; min-width: 0; }
 .line-effect-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; min-height: 28px; }
 .line-effect-chip { display: inline-flex; gap: 5px; align-items: center; border: 1px solid #425761; border-radius: 4px; padding: 4px 6px; min-width: 0; max-width: 100%; background: #293740; color: #b0d6d2; cursor: pointer; text-align: left; }
@@ -126,7 +149,7 @@
 .line-effect-menu > button { display: flex; align-items: center; gap: 6px; padding: 7px; color: #c7dbe1; text-align: left; font-size: 11px; border-radius: 4px; }
 .line-effect-menu > button:hover { background: #3b555d; }
 .line-effect-menu > button:disabled { opacity: .35; }
-.line-effect-editor { padding: 10px; margin-top: 6px; border: 1px solid #4e6a70; border-radius: 5px; background: #27333c; max-height: 420px; overflow: auto; }
+.line-effect-editor { padding: 10px; margin-top: 6px; border: 1px solid #4e6a70; border-radius: 5px; background: #27333c; max-height: 480px; overflow: auto; }
 .line-effect-editor .action-editor-header { border-bottom: 1px solid #435660; margin-bottom: 8px; padding-bottom: 5px; }
 .line-effect-editor .field { margin-bottom: 9px; }
 .line-effect-editor .field-row { gap: 10px; }
@@ -202,7 +225,7 @@
   .app-header { gap: 6px; padding-inline: 7px; }
   .app-header .project-title { max-width: 115px; }
   .app-header .tabs > button { padding-inline: 8px; gap: 4px; font-size: 12px; }
-  .text-source-panel .line-content { grid-template-columns: 82px minmax(0, 1fr) 78px; }
+  .text-source-panel .line-content { grid-template-columns: 82px minmax(0, 1fr) 50px; }
   .preview-panel-heading { gap: 5px; padding-inline: 7px; flex-wrap: wrap; }
   .text-editor-toolbar { flex-wrap: wrap; }
 }

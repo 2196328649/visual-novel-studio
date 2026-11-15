@@ -1,5 +1,5 @@
 import { addProjectGraphs, projectGraphs } from '../src/core/project-resources';
-import { timelineInterleaveDiagnostics } from '../src/core/timeline-interleave';
+import { interleaveProjectTimelines, timelineInterleaveDiagnostics } from '../src/core/timeline-interleave';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createProject } from '../src/core/model';
@@ -24,7 +24,8 @@ test('nested title timelines remain editable, retain subsequent clip timing and 
  const clips=model.clips.map(clip=>({...clip,at:clip.nodeId===call.id?2:duration+4}));
  arrangePerformanceTimeline(project,parent,clips,model.tracks);
  const moved=performanceTimeline(project,parent);assert.equal(moved.clips[0].at,2);assert.ok(Math.abs(moved.clips[1].at-(duration+4))<.001);
- const compiled=compileProject(project);assert.ok(compiled.files['game/story.rpy'].includes(`call vn_blueprint_${child.id}`));
+ const prepared=interleaveProjectTimelines(project),preparedCall=projectGraphs(prepared).find(graph=>graph.id===parent.id)!.nodes.find(node=>node.id===call.id)!;
+ const compiled=compileProject(project);assert.notEqual(preparedCall.properties.graphId,child.id);assert.ok(compiled.files['game/story.rpy'].includes(`call vn_blueprint_${preparedCall.properties.graphId}`));
  const copy=structuredClone(project), outer=projectGraphs(copy).find(graph=>graph.id===parent.id)!;
  assert.equal(canLaunchTimeline(copy,child),true);
  arrangePerformanceTimeline(copy,outer,clips.map(clip=>({...clip,at:2})),model.tracks);
@@ -34,7 +35,8 @@ test('nested title timelines remain editable, retain subsequent clip timing and 
  assert.equal(performanceTiming(actions.slice(0,stopIndex)).at,2);
  assert.equal(performanceTiming(actions).at,2+duration);
  const code=compileProject(copy).files['game/story.rpy'];
- assert.ok(code.includes(`vn_bp_launch_${child.id}=True`));
+ const preparedOverlap=interleaveProjectTimelines(copy),overlapCall=projectGraphs(preparedOverlap).find(graph=>graph.id===outer.id)!.nodes.find(node=>node.id===call.id)!;
+ assert.ok(code.includes(`vn_bp_launch_${overlapCall.properties.graphId}=True`));
  assert.ok(code.includes(`float(_return)`));
  // A delayed child shares its parent's schedule without moving the parent's later clips.
  const delayed=projectGraphs(copy).find(graph=>graph.id===child.id)!;

@@ -22,13 +22,13 @@ test('Escape, right-click cancellation and stale confirmation responses cannot a
  const stale = sample([click('ask'), click('no'), click('ask'), { kind: 'confirm', requestId: instance, value: true }]);
  assert.equal(stale.pageId, 'ui:messageBox'); assert.equal(stale.variables.after, 1);
 });
-test('standard confirmation uses its own buttons and ignores authored message-box handlers', () => {
+test('standard confirmation keeps native buttons and authored controls with a single page timer', () => {
  const { project, sample, add, increment, clocks } = fixture(); delete project.ui.pages!.messageBox;
  increment(clocks, add(clocks, 'eventTimer', { pageId: 'ui:messageBox', interval: .1, repeat: true }), 'after');
- const open = sample([click('ask')]); assert.equal(open.layers.at(-1)?.nativeConfirm, true); assert.equal(open.components.length, 0);
+ const open = sample([click('ask')]); assert.equal(open.layers.at(-1)?.nativeConfirm, true); assert.ok(open.components.some(row => row.component.id === 'yes')); assert.ok(open.components.some(row => row.component.id === 'no'));
  const events: UiPreviewEvent[] = [click('ask'), { kind: 'advance', seconds: 1 }];
- const waiting = sample(events, true); assert.equal(waiting.variables.after, 0);
- const accepted = sample([...events, { kind: 'confirm', requestId: waiting.layers.at(-1)!.instance, value: true }], true); assert.equal(accepted.variables.result, '已确认'); assert.equal(accepted.variables.after, 1);
+ const waiting = sample(events, true); assert.equal(waiting.variables.after, 10);
+ const accepted = sample([...events, { kind: 'confirm', requestId: waiting.layers.at(-1)!.instance, value: true }], true); assert.equal(accepted.variables.result, '已确认'); assert.equal(accepted.variables.after, 11);
 });
 test('button callbacks wait for their nested confirmation before applying the outer response', () => {
  const { project, nestedGraph, sample } = fixture(); project.ui.components.find(c => c.id === 'yes')!.events = { onClick: nestedGraph.id };
@@ -55,6 +55,14 @@ test('Escape and right-click in character settings return to preferences before 
   assert.equal(back.pageId,'ui:preferences');assert.equal(back.variables.after,0);
   const end=sample([...events,{kind:'cancelPage',pageId:'ui:preferences'}]);assert.equal(end.pageId,'ui:main');assert.equal(end.variables.after,1);
  }
+});
+test('Escape and right-click close character settings opened directly by a blueprint and resume its caller', () => {
+ const { menu, sample } = fixture(); menu.properties.screen = 'voice_settings';
+ assert.equal(sample([click('open_menu')]).pageId, 'ui:voiceSettings');
+ for(const event of [{kind:'key',key:'K_ESCAPE'},{kind:'cancelPage',pageId:'ui:voiceSettings'}] as UiPreviewEvent[]){
+  const back=sample([click('open_menu'),event]);assert.equal(back.pageId,'ui:main');assert.equal(back.variables.after,1);assert.equal(back.incomplete,false);
+ }
+ const button=sample([click('open_menu'),click('voices_return')]);assert.equal(button.pageId,'ui:preferences');assert.equal(button.variables.after,0);
 });
 test('menus pause covered timers, retain preferences and resume the original timer schedule on return', () => {
  const { sample } = fixture(); const events: UiPreviewEvent[] = [{ kind: 'advance', seconds: .4 }, click('open_menu'), { kind: 'control', componentId: 'volume', value: .3 }, { kind: 'advance', seconds: 2 }];

@@ -8,6 +8,28 @@ import { compileProject } from '../src/runtime/compiler';
 import { applyTextScript, projectToText } from '../src/core/text-script';
 import { expandPreviewActions, previewActionContext } from '../src/core/preview-actions';
 import { initialPreviewStage, linePlaybackPlan } from '../src/core/line-preview';
+import { singleProjectChange } from '../src/core/project-history';
+
+test('position edits preserve node titles and a stable history field; explicit root renaming still synchronizes', () => {
+ const object = createVisualObject('image', 'picture');
+ const node = blueprintFromPerformance(createProject(), [object]).nodes[1];
+ node.name = '作者命名的显示节点';
+ const before = structuredClone(node);
+ patchVisualClipNode(node, { firstFrame: { x: .51 } });
+ const first = structuredClone(node);
+ assert.equal(node.name, before.name);
+ patchVisualClipNode(node, { firstFrame: { x: .52 } });
+ assert.equal(singleProjectChange(before, first), '["properties","action"]');
+ assert.equal(singleProjectChange(first, node), singleProjectChange(before, first));
+ patchVisualClipNode(node, { name: '新片段名称' });
+ assert.equal(node.name, '新片段名称');
+
+ const child = createVisualObject('text'), group = { ...createVisualObject('group'), children: [child] };
+ const parent = blueprintFromPerformance(createProject(), [group]).nodes[1];
+ parent.name = '保留的组合节点名';
+ updateVisualNodeObject(parent, { ...child, name: '新的子对象名称' });
+ assert.equal(parent.name, '保留的组合节点名');
+});
 
 test('video input limits belong to their source and apply after nested animation retiming', () => {
  const video={...createVisualObject('video','footage'),duration:4,sourceDuration:6,mediaOffset:1};
@@ -40,10 +62,10 @@ test('passed video trim values shorten the preview and native timeline to the sa
  const resolved=actions.find(action=>action.kind==='visual')!;assert.equal(resolved.mediaOffset,4);assert.equal(resolved.duration,2);
  assert.equal(context.incomplete,false);assert.equal(linePlaybackPlan(initialPreviewStage(),actions).until,2000);
  const compiled=compileProject(project);assert.deepEqual(compiled.diagnostics.filter(d=>d.severity==='error'),[]);
- const node=graph.nodes.find(node=>rawSavedBlueprintAction(node)?.kind==='visual')!,data='vn_bp_visual_'+node.id;
+ const node=graph.nodes.find(node=>rawSavedBlueprintAction(node)?.kind==='visual')!,data='vn_bp_visual_'+node.id,local='vn_bp_local("'+data+'")';
  const story=compiled.files['game/story.rpy'];assert.ok(story.includes(data+' = vn_visual_with_inputs('));
- assert.ok(story.includes('float('+data+'["duration"])'),'The timeline deadline must use the duration after source clipping');
- assert.ok(story.includes('vn_show_visual(dict('+data+',')||story.includes('vn_show_visual('+data+')'));
+ assert.ok(story.includes('float('+local+'["duration"])'),'The timeline deadline must use the duration after source clipping');
+ assert.ok(story.includes('vn_show_visual(dict('+local+',')||story.includes('vn_show_visual('+local+')'));
 });
 
 test('video fades follow the clip clock and multiply its authored opacity without changing source timing', () => {

@@ -1,5 +1,7 @@
+import { cloneData } from "./project-mutation";
 import { projectGraphs } from './project-resources';
-import { actionSchema, effectiveUiTheme, orderedUiComponents, type Project, type StageAction, type VisualObject } from './model';
+import { actionSchema, orderedUiComponents, type Project, type StageAction, type VisualObject } from './model';
+import { uiPageTheme } from './ui-page-settings';
 import { chapterPresentation, chapterSource, chapterTitleRect, type ChapterContent } from './chapter';
 import { uiComponentFontSize } from './ui';
 import { createVisualObject } from './visual-object';
@@ -58,7 +60,8 @@ export function normalizeChapterCompositions(project: Project): boolean {
 
 /** Creates independent editable data; does not mutate the source chapter or theme. */
 export function chapterComposition(project: Project, chapter: ChapterContent & { wait?: boolean }, textLayout: ChapterTextLayout = {}, options: { includeEmptySubtitle?: boolean; titleMode?: 'text' | 'image'; fourPartText?: boolean } = {}) {
-  const p = chapterPresentation(project, chapter), theme = effectiveUiTheme(project.ui), duration = p.duration;
+  const p = chapterPresentation(project, chapter), theme = uiPageTheme(project, 'ui:chapterTitle'), duration = p.duration;
+  const chapterComponents = orderedUiComponents(project.ui).filter(c => c.page === 'chapterTitle');
   const imageTitle = options.titleMode ? options.titleMode === 'image' : !!p.titleImageId;
   const warnings: string[] = [];
   let backgroundInstanceId: string | undefined;
@@ -122,19 +125,19 @@ export function chapterComposition(project: Project, chapter: ChapterContent & {
     ];
     for (const region of regions) {
       const object = place(make('text', region.name, 10), { x: left + region.x * factor / project.width, y: area.y + region.y * factor / project.height, width: region.width * factor / project.width, height: region.height * factor / project.height });
-      object.text = region.text; object.fontSize = Math.max(12, Math.min(300, Math.round(region.size * factor))); object.fontAssetId = region.font;
+      object.text = region.text; object.fontSize = Math.max(1, Math.round(region.size * factor)); object.fontAssetId = region.font;
       if (region.input === 'rightText') object.textItalic = true;
-      object.color = theme.components.find(c => c.page === 'chapterTitle' && c.kind === 'chapterTitle')?.style?.textColor ?? theme.accent;
+      object.color = chapterComponents.find(c => c.kind === 'chapterTitle')?.style?.textColor ?? theme.accent;
       object.textAlign = 'center'; object.textVerticalAlign = 'center';
       titleObjects.push(object); presence.children.push(object);
       titleTextBindings.push({ instanceId: object.instanceId, input: region.input, styleId: object.instanceId });
     }
-    for (const c of orderedUiComponents(project.ui).filter(c => c.page === 'chapterTitle' && c.kind === 'image' && c.assetId)) {
+    for (const c of chapterComponents.filter(c => c.kind === 'image' && c.assetId)) {
       const object = place(make('image', c.text || '装饰图片', 2, c.assetId), c); object.imageFit = c.style?.imageFit === 'nineSlice' ? 'stretch' : c.style?.imageFit ?? 'contain'; object.keyframes[0].opacity = c.style?.opacity ?? 1; presence.children.push(object);
       decoration(object);
     }
   } else if (theme.pages?.chapterTitle?.layout === 'custom') {
-    for (const [index, c] of orderedUiComponents(project.ui).filter(c => c.page === 'chapterTitle').entries()) {
+    for (const [index, c] of chapterComponents.entries()) {
       let object: VisualObject;
       if (c.kind === 'chapterTitle') { object = makeTitle(imageTitle ? c : textLayout[c.id]?.title ?? c, uiComponentFontSize(c, theme, project.width, project.height), c.style?.textColor ?? theme.textColor, c.style?.fontAssetId ?? theme.fontAssetId); object.textAlign = c.style?.align ?? 'center'; if (object.content === 'text' && c.style) object.textEffects = { outlineWidth: c.style.outlineWidth, outlineColor: c.style.outlineColor, outlineOpacity: c.style.outlineOpacity, shadowX: c.style.shadowX, shadowY: c.style.shadowY, shadowColor: c.style.shadowColor, shadowOpacity: c.style.shadowOpacity }; }
       else if (c.kind === 'image' && c.assetId) { object = place(make('image', c.text || '装饰图片', index + 2, c.assetId), c); object.imageFit = c.style?.imageFit === 'nineSlice' ? 'stretch' : c.style?.imageFit ?? 'contain'; if (c.style?.imageFit === 'nineSlice') warnings.push(`“${c.text}”的九宫格图片暂按拉伸转换，需要检查。`); presence.children.push(object); decoration(object); }
@@ -146,7 +149,7 @@ export function chapterComposition(project: Project, chapter: ChapterContent & {
         const fallback = { x: c.x, y: c.y + (object.fontSize * 1.2 + 12) / project.height, width: c.width, height: size * 1.2 / project.height };
         const subtitle = place(make('text', '章节副标题', object.layer + 1), measured ?? fallback);
         subtitle.text = chapter.subtitle; subtitle.fontSize = size; subtitle.color = object.color; subtitle.fontAssetId = object.fontAssetId;
-        subtitle.textAlign = object.textAlign; subtitle.textVerticalAlign ??= 'center'; subtitle.textEffects = object.textEffects ? structuredClone(object.textEffects) : undefined; subtitle.keyframes[0].opacity = c.style?.opacity ?? 1;
+        subtitle.textAlign = object.textAlign; subtitle.textVerticalAlign ??= 'center'; subtitle.textEffects = object.textEffects ? cloneData(object.textEffects) : undefined; subtitle.keyframes[0].opacity = c.style?.opacity ?? 1;
         clipText(subtitle, c);
         titleObjects.push(subtitle); presence.children.push(subtitle); titleTextBindings.push({ instanceId: subtitle.instanceId, input: 'subtitle', styleId: subtitle.instanceId });
         if (!measured) warnings.push('自定义副标题尚未按字体测量，需检查换行和位置。');
@@ -172,7 +175,7 @@ export function chapterComposition(project: Project, chapter: ChapterContent & {
       presence.children.push(particles);
     } else for (const title of titleObjects) {
       const particles = make('particles', title.name + '字形粒子', 100); particles.color = p.particleColor; particles.width = particles.height = 1;
-      particles.textClip = title.textClip ? structuredClone(title.textClip) : undefined; particles.textEffects = title.textEffects ? structuredClone(title.textEffects) : undefined; particles.text = title.text; particles.fontSize = title.fontSize; particles.fontAssetId = title.fontAssetId; particles.textAlign = title.textAlign; particles.textVerticalAlign = title.textVerticalAlign; particles.textItalic = title.textItalic;
+      particles.textClip = title.textClip ? cloneData(title.textClip) : undefined; particles.textEffects = title.textEffects ? cloneData(title.textEffects) : undefined; particles.text = title.text; particles.fontSize = title.fontSize; particles.fontAssetId = title.fontAssetId; particles.textAlign = title.textAlign; particles.textVerticalAlign = title.textVerticalAlign; particles.textItalic = title.textItalic;
       particles.keyframes[0].opacity = title.keyframes[0].opacity;
       particles.glyphParticles = { source: 'text', count: 200, emissionStart: (chapterSource.timing.move + chapterSource.timing.holdTitle) * duration / chapterSource.timing.duration, timeScale: chapterSource.timing.duration / duration, sizeScale: 1, motionScale: 1,
         rect: { x: title.keyframes[0].x - title.width / 2, y: title.keyframes[0].y - title.height / 2, width: title.width, height: title.height } };

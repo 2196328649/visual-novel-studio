@@ -53,12 +53,16 @@ try {
   phase = 'add-copy-delete';
   const spareSkin = await object('spare_button').locator('img').first().getAttribute('src');
   await row('spare_button').click(); await openChildren(); await page.getByRole('button', { name: '添加背景子图', exact: true }).click();
+  await expect(row('spare_button')).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('list', { name: '子对象列表', exact: true }).getByRole('button', { name: '背景', exact: true }).click(); await openChildren();
   await expect(page.getByLabel('父对象', { exact: true })).toHaveValue('spare_button');
   await page.getByLabel('控件显示名称', { exact: true }).fill('备用背景');
   const added = await page.locator('.ui-hierarchy-row.selected').getAttribute('data-hierarchy-id'); assert.ok(added);
   await expect(object('spare_button').locator('img').first()).toHaveAttribute('src', spareSkin!);
   await expect(object(added).locator('img')).toHaveCount(0);
   await row('spare_button').click(); await openChildren(); await page.getByRole('button', { name: '添加子图片', exact: true }).click();
+  await expect(row('spare_button')).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('list', { name: '子对象列表', exact: true }).getByRole('button', { name: '子图片', exact: true }).click(); await openChildren();
   await expect(page.getByLabel('父对象', { exact: true })).toHaveValue('spare_button');
   await expect(page.getByLabel('子对象放置位置', { exact: true })).toHaveValue('foreground');
   await expect(object('spare_button').locator('img').first()).toHaveAttribute('src', spareSkin!);

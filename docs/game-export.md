@@ -16,8 +16,6 @@ Windows 运行时随安装版和便携版提供，一键配置可以离线完成
 
 内置“哀鸿界面示例”已包含标题、剧情、选项、存档、读档、玩家设置、三个分支结局和返回标题。新游戏从作品设置的故事入口开始；结局显示完后返回标题，重新开局重置本次剧情变量。没有结局指令的 AI 导入剧本自动以“未完待续”收尾。用户保存的游戏进度与玩家偏好使用独立的存档目录。
 
-2026-09-20 已生成可独立运行的[Windows 示例游戏包](../artifacts/complete-game-export/2026-09-20T04-24-42.460Z/distribution/Aihong-Authoring-Demo-1.0.0-win.zip)。解压后运行 `Aihong-Authoring-Demo.exe`；包内程序的完整流程通过 16 个原生断言，并保留[核验报告与截图](../artifacts/complete-game-export/2026-09-20T04-24-42.460Z/report.json)。这是可编辑的两章分支示例，剧情含节选与改写。
-
 ## Android
 
 - **APK**：用于直接安装到手机或分发到支持 APK 的商店。
@@ -45,13 +43,7 @@ Windows 运行时随安装版和便携版提供，一键配置可以离线完成
 Android 使用原生 `libvns_spine.so`，Windows 使用 `vns_spine.dll`。Android 导出检查 ARM 32 位、ARM 64 位、x86_64 三种库，缺失时会在构建前显示原因。开发编辑器时可使用 Android NDK r28 或更新版本生成这些支持库：
 
 ```powershell
-node scripts/build-spine-android.mjs "C:/Android/Sdk/ndk/28.2.13676358"
+node scripts/build-spine-android.mjs "<本机 Android NDK 目录>"
 ```
 
 也可设置 `ANDROID_NDK_HOME` 后运行 `pnpm spine:build:android`。该命令只生成骨骼动画支持库，不生成 APK。输出位于 `resources/spine/android/<ABI>/libvns_spine.so`，使用 16 KB 段对齐；发布编辑器时随资源目录一起分发。实际 Android 导出会将这些库安装到 RAPT 的原生库目录，游戏按设备架构加载。
-
-## 开发验证
-
-`pnpm test` 覆盖平台路由、配置保存、签名复用、图标、依赖错误和失败报告。`node scripts/build-desktop.mjs` 后运行 `pnpm exec tsx scripts/verify-export-settings.ts`，检查真实桌面设置、资源缩略图、保存重开及导出参数；测试隔离真实打包入口，不生成安装包。
-
-`node node_modules/tsx/dist/cli.mjs scripts/verify-complete-game-export.ts` 通过正式导出服务生成独立 Windows ZIP，随后解压并直接运行包内的 EXE，检查标题、流程图、设置、真实存读档与分页、三个分支结局、返回标题和重新开局。验证脚本仅加入解压后的测试副本，交付 ZIP 保持发行内容；使用独立玩家存档，不覆盖用户作品。最新游戏包、截图与结果见[当前验收记录](current-authoring-work.md)。此记录验证 Windows 导出，不代表 Android 已实际打包。

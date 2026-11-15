@@ -1,6 +1,6 @@
 import type { BlueprintNodeType } from './blueprint';
 import type { Project, UiComponent, VariableValue } from './model';
-import { playerPreferences } from './preferences';
+import { playerPreferences, preferenceInfo } from './preferences';
 
 type ValueNode = { type: BlueprintNodeType; properties: Record<string, VariableValue> };
 type ControlValue = { label: string; read: ValueNode; write: ValueNode; error?: never } | { error: string; label?: never; read?: never; write?: never };
@@ -17,7 +17,7 @@ export function uiControlValue(project: Project, component?: UiComponent): Contr
    write: { type: 'setVariable', properties: { variableId: variable.id, value: variable.initial } },
   };
  }
- const preference = component.preference, info = preference && playerPreferences[preference];
+ const preference = component.preference, info = preference && playerPreferences[preference] ? preferenceInfo(project, preference) : undefined;
  if (!preference || !info) return { error: '尚未绑定值，请在设计中选择变量或玩家设置。' };
  const properties: Record<string, VariableValue> = { preference };
  let name = info.name;
@@ -30,6 +30,6 @@ export function uiControlValue(project: Project, component?: UiComponent): Contr
  return {
   label: name + '（玩家设置）',
   read: { type: 'getPlayerPreference', properties },
-  write: { type: 'setPlayerPreference', properties: { ...properties, value: project.playerDefaults?.[preference] ?? info.initial } },
+  write: { type: 'setPlayerPreference', properties: { ...properties, value: info.initial } },
  };
 }

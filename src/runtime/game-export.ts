@@ -1,3 +1,4 @@
+import { requiresSpineRuntime, spineRuntimeProblem, spineAndroidAbis as androidAbis } from './spine-bundle';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -12,7 +13,7 @@ import { packageSingleExe, singleExeEntry } from './single-exe';
 
 const execute = promisify(execFile);
 const exists = (file: string) => fs.stat(file).then(stat => stat.isFile()).catch(() => false);
-export const androidAbis = ['armeabi-v7a', 'arm64-v8a', 'x86_64'] as const;
+export { androidAbis };
 /** Keep native tools below Windows' legacy path limit, including long portable locations. */
 export function exportBuildDirectory(project: Project, userData: string, temporary: string): string {
   const id = randomUUID().replaceAll('-', '').slice(0, 12);
@@ -78,17 +79,17 @@ export async function checkExportEnvironment(project: Project, options: ExportEn
     const buildToolsReady = (await Promise.all(['aapt2', 'zipalign'].map(name => exists(path.join(buildTools, name + (process.platform === 'win32' ? '.exe' : '')))))).every(Boolean)
       && await exists(path.join(buildTools, 'lib/apksigner.jar')) && await exists(path.join(buildTools, 'lib/d8.jar'));
     add('androidBuildTools', 'Android 构建工具', buildToolsReady, buildToolsReady ? `Build Tools ${buildVersion}` : `点击「一键配置」补齐 Android Build Tools ${buildVersion}。`);
-    if (project.assets.some(asset => asset.kind === 'spine')) {
-      const missing = (await Promise.all(androidAbis.map(async abi => await exists(path.join(options.spineRuntimeDir, 'android', abi, 'libvns_spine.so')) ? '' : abi))).filter(Boolean);
-      add('spine', 'Android 骨骼动画', !missing.length, missing.length ? `当前作品使用骨骼动画，缺少 Android 运行库：${missing.join('、')}。请安装包含这些运行库的编辑器资源。` : '已具备 ARM 32 位、ARM 64 位与 x86_64 运行库。');
+    if (requiresSpineRuntime(project)) {
+      const problem = await spineRuntimeProblem(options.spineRuntimeDir, 'android');
+      add('spine', 'Android 骨骼动画', !problem, problem ?? 'ARM 32 位、ARM 64 位与 x86_64 运行库的 ABI 和构建校验一致。');
     }
     const signing = options.projectDir && androidSigningDirectory(project, options.projectDir);
     const signed = !!signing && await exists(path.join(signing, 'android.keystore')) && await exists(path.join(signing, 'bundle.keystore'));
     checks.push({ id: 'signing', label: '应用签名', status: signed ? 'ready' : 'info', detail: signed ? `继续使用工程签名：${signing}` : '首次导出时创建签名并保存在工程的 .studio 文件夹；备份工程时请一并保留。' });
   }
-  if (project.assets.some(asset => asset.kind === 'spine')) {
-    const available = await exists(path.join(options.spineRuntimeDir, 'vns_spine.dll')) && await exists(path.join(options.spineRuntimeDir, 'vns_spine.py'));
-    add('hostSpine', '本机骨骼动画', available, available ? '本机编译与试玩运行库已就绪。' : '缺少本机骨骼动画运行库，请修复编辑器资源。');
+  if (requiresSpineRuntime(project)) {
+    const problem = await spineRuntimeProblem(options.spineRuntimeDir, 'windows');
+    add('hostSpine', '本机骨骼动画', !problem, problem ?? '本机运行库 ABI、适配器与构建校验一致。');
   }
   const diagnostics = checks.filter(check => check.status === 'missing').map(check => ({ severity: 'error' as const, message: check.detail }));
   return { platform: settings.platform, ready: !diagnostics.length, checks, diagnostics };
@@ -127,10 +128,11 @@ export async function ensureAndroidSigning(project: Project, projectDir: string,
 
 export async function prepareAndroidExport(project: Project, options: ExportEnvironment & { buildDir: string }, generate?: KeyGenerator): Promise<void> {
   if (!options.projectDir) throw new Error('请先保存作品，Android 签名需要保存在工程内。');
+  if (requiresSpineRuntime(project)) { const problem = await spineRuntimeProblem(options.spineRuntimeDir, 'android'); if (problem) throw new Error(problem); }
   const directory = await ensureAndroidSigning(project, options.projectDir, generate ?? ((destination, id) => generateKey(destination, id, options.javaHome)));
   await atomicWrite(path.join(options.buildDir, 'android.json'), JSON.stringify(androidConfiguration(project), null, 2));
   for (const name of ['android.keystore', 'bundle.keystore']) await fs.copyFile(path.join(directory, name), path.join(options.buildDir, name));
-  if (project.assets.some(asset => asset.kind === 'spine')) for (const abi of androidAbis) {
+  if (requiresSpineRuntime(project)) for (const abi of androidAbis) {
     const destination = path.join(options.sdkRoot!, 'rapt/prototype/renpyandroid/src/main/jniLibs', abi, 'libvns_spine.so');
     await fs.mkdir(path.dirname(destination), { recursive: true });
     await fs.copyFile(path.join(options.spineRuntimeDir, 'android', abi, 'libvns_spine.so'), destination);

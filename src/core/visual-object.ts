@@ -1,3 +1,4 @@
+import { cloneData } from "./project-mutation";
 import { actionSchema, effectiveCharacter, makeId, type AnimationKeyframe, type VisualObject, type BlueprintNode, type BlueprintPin, type Project, type VariableValue } from './model';
 import { displayPresetPlacement } from './character-presets';
 import { portraitGeometry } from './portrait';
@@ -13,7 +14,7 @@ export function visualRetimeRatio(object: VisualObject, duration: number) {
 /** Resize an authored performance while preserving every sampled pose at the same relative time. */
 export function retimeVisualObject(object: VisualObject, duration: number): VisualObject {
   if (!Number.isFinite(duration) || duration < 0) throw new Error('演出时长必须是有限的非负数。');
-  const result = structuredClone(object), ratio = visualRetimeRatio(object, duration);
+  const result = cloneData(object), ratio = visualRetimeRatio(object, duration);
   if (duration === 0) {
     // Keep the authored clock while the object has no lifetime. Persist its basis
     // so resizing after save/reload can recover the original proportions.
@@ -93,7 +94,7 @@ export function visualInputFields(object: VisualObject): VisualInputField[] {
   return fields;
 }
 export function applyVisualInputs(object: VisualObject, values: Record<string, VariableValue | undefined>, timeScales?: Map<string, number>): VisualObject {
-  const result = structuredClone(object);
+  const result = cloneData(object);
   // Apply child overrides before scaling their containing performance.
   const entries = visualInputFields(object).filter(field => values[field.key] !== undefined).map(field => ({ path: field.path, value: values[field.key]! }));
   for (const field of visualParameterEntries(object, entries)) {
@@ -168,7 +169,9 @@ export function updateVisualNodeObject(node: BlueprintNode, object: VisualObject
     if (fields.has(field.key) && fields.get(field.key) !== field.value) delete node.properties['object_' + field.key];
   }
   node.properties.action = JSON.stringify(checked);
-  node.name = checked.name;
+  // Pose edits must not rename the node as a side effect: that changes the
+  // history field on the first drag update and splits a single undo gesture.
+  if (checked.name !== root.name) node.name = checked.name;
   syncVisualPins(node, checked);
 }
 
@@ -192,7 +195,7 @@ export function patchVisualClipNode(node: BlueprintNode, patch: VisualClipPatch)
     }
   }
   // Clear a directly edited literal even when it happened to equal the raw default.
-  const candidate = { ...node, properties: { ...node.properties }, pins: structuredClone(node.pins) };
+  const candidate = { ...node, properties: { ...node.properties }, pins: cloneData(node.pins) };
   updateVisualNodeObject(candidate, root);
   for (const key of Object.keys(properties)) delete candidate.properties['object_' + key];
   Object.assign(node, candidate);
@@ -220,8 +223,8 @@ export function createCharacterVisualObject(project: Project, characterId: strin
   const asset = project.assets.find(item => item.id === expression.assetId);
   const geometry = portraitGeometry(asset, project.width, project.height);
   const placement = displayPresetPlacement(project, character.id, expression.id);
-  const width = Math.max(.001, Math.min(4, geometry.width / project.width));
-  const height = Math.max(.001, Math.min(4, geometry.height / project.height));
+  const width = Math.max(.001, geometry.width / project.width);
+  const height = Math.max(.001, geometry.height / project.height);
   const object = createVisualObject('image', expression.assetId);
   object.name = `角色 · ${character.name}${expression.name ? ` · ${expression.name}` : ''}`;
   object.characterId = character.id;
@@ -269,7 +272,7 @@ export function toggleVisualKeyframe(object: VisualObject, time: number, key: Vi
 /** Add a local-time property frame while retaining the authored trajectory's endpoints. */
 export function setVisualPropertiesAt(object: VisualObject, time: number, patch: Partial<Record<VisualCurveProperty, number>>) {
   if (!Number.isFinite(time) || time < 0) throw new Error('属性帧时间必须是有限的非负数。');
-  const curves = structuredClone(object.curves ?? {});
+  const curves = cloneData(object.curves ?? {});
   for (const key of Object.keys(patch) as VisualCurveProperty[]) {
     const value = patch[key]; if (value === undefined || !Number.isFinite(value)) throw new Error('属性帧数值必须有限。');
     let frames = curves[key];

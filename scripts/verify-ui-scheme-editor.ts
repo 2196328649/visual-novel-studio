@@ -1,49 +1,81 @@
-import { PNG } from 'pngjs';
+import { selectUiDesignScheme } from './lib/ui-design-controls';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-import { expect } from '@playwright/test';
-import { createServer } from 'vite';
-import { createProject } from '../src/core/model';
-import { blueprintNodeDefaults, createBlueprintGraph } from '../src/core/blueprint';
+import { expect, type ElectronApplication, type Page } from '@playwright/test';
+import { createServer, type ViteDevServer } from 'vite';
+import { createProject, projectSchema } from '../src/core/model';
+import { saveProject } from '../src/desktop/project-store';
 import { launchDesktopFixture } from './lib/desktop-fixture';
-const root=path.resolve('.'), output=path.join(root,'artifacts/ui-scheme-editor',new Date().toISOString().replaceAll(':','-'));
-await fs.mkdir(output,{recursive:true});
-const project=createProject('高级UI编辑验收');
-project.variables.push({id:'show_title',name:'显示标题',type:'boolean',initial:true,persistent:false});project.ui.instances=[{id:'scheme_a',name:'方案A',components:[{id:'title_probe',kind:'text',page:'main',text:'方案A标题',x:.1,y:.1,width:.5,height:.1}]},{id:'scheme_b',name:'方案B',components:[{id:'title_b',kind:'text',page:'main',text:'方案B标题',x:.1,y:.1,width:.5,height:.1}]}];project.ui.activeInstanceId='scheme_a';
-const projectFile=path.join(output,'project.vns.json');await fs.writeFile(projectFile,JSON.stringify(project));
-const server=await createServer({root,server:{host:'127.0.0.1',port:0,watch:{ignored:['**/artifacts/**','**/resources/**','**/release/**']}}});await server.listen();
-const app=await launchDesktopFixture({root,projectFile,profile:path.join(output,'profile'),devUrl:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port}),page=await app.firstWindow();
+import { cleanVerificationDirectories } from './lib/verification-cleanup';
+
+if (process.env.VNS_INSTALLED_EXE) throw new Error('Scheme acceptance uses the isolated development editor.');
+const root = path.resolve('.'), output = path.resolve('artifacts/ui-scheme-editor', new Date().toISOString().replaceAll(':', '-'));
+const project = createProject('方案事件图编辑验收');
+project.ui.instances = [
+  { id: 'scheme_a', name: '方案A', components: [{ id: 'title_probe', kind: 'text', page: 'main', text: '方案A标题', x: .1, y: .1, width: .5, height: .1 }] },
+  { id: 'scheme_b', name: '方案B', components: [{ id: 'title_b', kind: 'text', page: 'main', text: '方案B标题', x: .1, y: .1, width: .5, height: .1 }] },
+];
+project.ui.activeInstanceId = 'scheme_a';
+const projectFile = path.join(output, 'project/project.vns.json');
+let app: ElectronApplication | undefined, page: Page | undefined, server: ViteDevServer | undefined;
+const errors: string[] = [], checks: string[] = [];
+const report: Record<string, unknown> = { status: 'running', errors, checks };
+const read = async () => projectSchema.parse(JSON.parse(await fs.readFile(projectFile, 'utf8')));
+const mode = (name: string) => page!.getByLabel('界面编辑模式').getByRole('button', { name, exact: true });
+async function openScheme(id: string) {
+  await page!.locator('[data-workspace-tab="ui"]').click(); await mode('设计').click();
+  await selectUiDesignScheme(page!, id); await mode('事件图').click();
+}
+async function create() {
+  await page!.getByRole('button', { name: '创建页面事件图', exact: true }).click();
+  await page!.getByRole('button', { name: '＋ 定时事件', exact: true }).click();
+  await expect(page!.locator('.react-flow__node')).toHaveCount(2);
+}
+async function save() {
+  await page!.getByRole('button', { name: '保存界面', exact: true }).click();
+  await expect(page!.locator('.dirty-dot')).toHaveCount(0); return read();
+}
 try {
- await expect(page.locator('.project-title strong')).toHaveText(project.name,{timeout:45000});
- await page.locator('[data-workspace-tab="ui"]').click();
- await page.getByRole('button',{name:'高级 UI 蓝图',exact:true}).click();
- await page.getByLabel('联动组件',{exact:true}).selectOption('title_probe');
- await page.getByRole('button',{name:'创建联动蓝图',exact:true}).click();
- await expect(page.locator('.react-flow__node')).toHaveCount(5);
- assert.equal(JSON.parse(await fs.readFile(projectFile,'utf8')).blueprints.length,0);
- await page.locator('[data-workspace-tab="script"]').click();
- await page.getByRole('dialog',{name:'保存界面修改'}).getByRole('button',{name:'不保存',exact:true}).click();
- await page.locator('[data-workspace-tab="ui"]').click();
- await page.getByRole('button',{name:'高级 UI 蓝图',exact:true}).click();
- await expect(page.getByLabel('高级界面蓝图')).toHaveValue('');
- await page.getByRole('button',{name:'创建联动蓝图',exact:true}).click();
- await page.getByRole('button',{name:'保存界面',exact:true}).click();await expect(page.locator('.dirty-dot')).toHaveCount(0);
- const saved=JSON.parse(await fs.readFile(projectFile,'utf8'));assert.equal(saved.blueprints.length,1);assert.equal(saved.blueprints[0].nodes.find((n:any)=>n.type==='eventTimer').properties.uiInstanceId,'scheme_a');assert.equal(saved.blueprints[0].nodes.find((n:any)=>n.type==='eventTimer').properties.pageId,'ui:main');
- await page.getByRole('button',{name:'返回界面设计',exact:true}).click();
- await page.getByLabel('选择界面实例',{exact:true}).selectOption('scheme_b');
- await page.getByRole('button',{name:'高级 UI 蓝图',exact:true}).click();
- await expect(page.getByLabel('高级界面蓝图')).toHaveValue('');
- await page.getByLabel('联动组件',{exact:true}).selectOption('title_b');
- await page.getByRole('button',{name:'创建联动蓝图',exact:true}).click();
- await page.getByRole('button',{name:'保存界面',exact:true}).click();await expect(page.locator('.dirty-dot')).toHaveCount(0);
- const both=JSON.parse(await fs.readFile(projectFile,'utf8'));assert.equal(both.blueprints.length,2);assert.equal(both.blueprints[1].nodes.find((n:any)=>n.type==='eventTimer').properties.uiInstanceId,'scheme_b');
- await page.getByRole('button',{name:'返回界面设计',exact:true}).click();
- await page.getByLabel('选择界面实例',{exact:true}).selectOption('scheme_a');
- await page.getByRole('button',{name:'高级 UI 蓝图',exact:true}).click();
- await expect(page.getByLabel('高级界面蓝图')).toHaveValue(saved.blueprints[0].id);
- await page.screenshot({path:path.join(output,'advanced-ui.png')});
- await page.getByRole('button',{name:'返回界面设计',exact:true}).click();await expect(page.locator('.ui-canvas')).toBeVisible();
- await fs.writeFile(path.join(output,'report.json'),JSON.stringify({status:'passed',checks:['高级UI创建绑定当前方案','未保存退出丢弃蓝图','两套方案分别创建并保存联动','切换方案显示对应蓝图','返回原方案保留蓝图']}));console.log(output);
-} catch(error){await page.screenshot({path:path.join(output,'failure.png')});throw error;}
-finally {await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().forEach(w=>w.destroy())).catch(()=>undefined);await app.close();await server.close();}
+  await fs.mkdir(path.dirname(projectFile), { recursive: true }); await saveProject(projectFile, project);
+  server = await createServer({ root, server: { host: '127.0.0.1', port: 0, watch: { ignored: ['**/artifacts/**', '**/work/**', '**/resources/**', '**/release/**'] } } }); await server.listen();
+  app = await launchDesktopFixture({ root, projectFile, profile: path.join(output, 'profile'), devUrl: 'http://127.0.0.1:' + (server.httpServer!.address() as { port: number }).port });
+  page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message));
+  await expect(page.locator('.project-title strong')).toHaveText(project.name, { timeout: 45000 });
+  await openScheme('scheme_a'); await create(); assert.equal((await read()).blueprints.length, 0);
+  await page.locator('[data-workspace-tab="script"]').click();
+  await page.getByRole('dialog', { name: '保存界面修改' }).getByRole('button', { name: '不保存', exact: true }).click();
+  await openScheme('scheme_a'); await expect(page.getByRole('button', { name: '创建页面事件图', exact: true })).toBeVisible();
+  assert.equal((await read()).blueprints.length, 0); checks.push('未保存退出丢弃方案事件图，不写入磁盘。');
+  const graphIds = new Map<string, string>();
+  for (const id of ['scheme_a', 'scheme_b']) {
+    await openScheme(id); await create(); const saved = await save();
+    const graph = saved.blueprints.find(graph => graph.uiInstanceId === id)!; assert.ok(graph); graphIds.set(id, graph.id);
+    assert.equal(graph.uiPageId, 'ui:main');
+    const timer = graph.nodes.find(node => node.type === 'eventTimer')!;
+    assert.equal(timer.properties.uiInstanceId, id); assert.equal(timer.properties.pageId, 'ui:main');
+    checks.push(id + ' 通过当前事件图入口创建，图和定时事件绑定同一页面及方案。');
+  }
+  assert.equal((await read()).blueprints.length, 2);
+  for (const id of ['scheme_a', 'scheme_b', 'scheme_a']) {
+    await openScheme(id); await expect(page.getByLabel('当前页面事件图', { exact: true })).toHaveValue(graphIds.get(id)!);
+  }
+  await save();
+  checks.push('往返切换两套方案只显示各自事件图，返回后图 ID 保持。');
+  await page.screenshot({ path: path.join(output, 'scheme-events.png') });
+  await mode('设计').click(); await expect(page.locator('.ui-canvas')).toBeVisible();
+  await page.reload(); await expect(page.locator('.project-title strong')).toHaveText(project.name, { timeout: 45000 });
+  await openScheme('scheme_a'); await expect(page.getByLabel('当前页面事件图', { exact: true })).toHaveValue(graphIds.get('scheme_a')!);
+  await mode('设计').click(); await expect(page.locator('.ui-canvas')).toBeVisible();
+  checks.push('保存重开与返回设计模式保留方案、图及页面绑定。');
+  assert.deepEqual(errors, []); report.status = 'passed';
+} catch (error) {
+  report.status = 'failed'; report.error = error instanceof Error ? error.stack : String(error); process.exitCode = 1;
+  await page?.screenshot({ path: path.join(output, 'failure.png') }).catch(() => undefined);
+} finally {
+  await app?.evaluate(({ app }) => app.exit(0)).catch(() => undefined); await app?.close().catch(() => undefined); await server?.close();
+  const cleanup = await cleanVerificationDirectories(output, ['project', 'profile']); report.cleanup = cleanup;
+  if (cleanup.errors.length) { report.status = 'failed'; process.exitCode = 1; }
+  await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2)); console.log(path.join(output, 'report.json'));
+  if (report.error) console.error(report.error);
+}

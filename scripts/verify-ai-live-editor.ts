@@ -8,6 +8,8 @@ import { performanceTimeline } from '../src/core/performance-timeline';
 import { validateProject } from '../src/core/validate';
 import { compileProject } from '../src/runtime/compiler';
 import { launchDesktopFixture } from './lib/desktop-fixture';
+import { openUiPreviewForTest } from './lib/ui-preview-window';
+import { projectGraphs } from '../src/core/project-resources';
 import { liveAiProvider } from './lib/live-ai-provider';
 import { aiTimelineOverlapFixture } from './lib/ai-timeline-overlap-fixture';
 
@@ -35,7 +37,7 @@ const saveReport = () => fs.writeFile(path.join(output, 'report.json'), JSON.str
 const stage = async (next: string) => { phase = next; console.log(next); await saveReport(); };
 const current = () => assistant!.evaluate(async () => (await window.studio!.getAiContext!())!.project);
 const button = (name: string) => page.getByRole('button', { name, exact: true });
-const layout = (p: Project) => { const model = performanceTimeline(p, p.blueprints.find(g => g.id === fixture.graph.id)!); return { tracks: model.tracks.length, clips: model.clips.map(c => [c.at, c.duration]) }; };
+const layout = (p: Project) => { const model = performanceTimeline(p, projectGraphs(p).find(g => g.id === fixture.graph.id)!); return { tracks: model.tracks.length, clips: model.clips.map(c => [c.at, c.duration]) }; };
 const open = async () => {
   await page.locator('[data-workspace-tab="' + (scenario === 'timeline' ? 'blueprint' : 'ui') + '"]').click();
   if (scenario === 'timeline') { await page.getByLabel('演出目标').selectOption('graph:' + fixture.graph.id); await page.locator('.timeline-clip[data-node-id="' + fixture.first + '"]').click(); }
@@ -60,7 +62,7 @@ try {
   await fs.writeFile(path.join(output, 'proposal.txt'), await proposal.innerText()); await assistant.screenshot({ path: path.join(output, 'proposal.png') });
   assert.deepEqual(await current(), before); assert.equal(await fs.readFile(projectFile, 'utf8'), original);
   await stage('applying'); await proposal.getByRole('button', { name: /^应用(选中的|创作方案)/ }).click(); await expect(proposal).toContainText(/已应用(修改|创作方案)/);
-  await expect.poll(async () => JSON.stringify((await current()).blueprints)).not.toBe(JSON.stringify(before.blueprints));
+  await expect.poll(async () => JSON.stringify(projectGraphs(await current()))).not.toBe(JSON.stringify(projectGraphs(before)));
   const applied = await current(); await fs.writeFile(path.join(output, 'applied.vns.json'), JSON.stringify(applied, null, 2));
   assert.deepEqual(validateProject(applied).filter(d => d.severity === 'error'), []);
   assert.deepEqual(applied.ui.components, before.ui.components); assert.deepEqual(applied.nodes, before.nodes); assert.deepEqual(applied.assets, before.assets);
@@ -68,19 +70,19 @@ try {
   else {
     const graph = applied.blueprints.find(g => g.uiPageId === 'ui:main')!;
     assert.ok(graph.nodes.some(n => n.type === 'eventClick' && n.properties.componentId === 'live_trigger'));
-    await button('框选全部节点').click(); await button('交互预演').click(); const frame = page.locator('.ui-logic-preview-frame');
+    await button('框选全部节点').click(); const preview = await openUiPreviewForTest(app, page, errors); const frame = preview.locator('.ui-logic-preview-frame');
     await expect(frame.getByText('等待操作', { exact: true })).toBeVisible(); await frame.getByRole('button', { name: '执行测试', exact: true }).click();
     await expect(frame.getByText('按钮已执行', { exact: true })).toBeVisible(); await expect(frame.getByText('这项保持原样', { exact: true })).toBeVisible();
     const opacity = await frame.getByText('按钮已执行', { exact: true }).evaluate(el => { let value = 1; for (let item: Element | null = el; item && !item.classList.contains('ui-logic-preview-frame'); item = item.parentElement) value *= Number(getComputedStyle(item).opacity); return value; });
-    assert.equal(opacity, .5); await page.screenshot({ path: path.join(output, 'preview-click.png') }); await button('交互预演').click();
+    assert.equal(opacity, .5); await preview.screenshot({ path: path.join(output, 'preview-click.png') }); await preview.getByRole('button', { name: '关闭预览', exact: true }).click();
     checks.push('真实按钮预演点击后文字及50%不透明度生效，点击前和无关控件保留');
   }
   checks.push('真实服务读取工程并生成可应用建议，应用前不改变草稿或磁盘');
   await stage('history'); await button(scenario === 'ui' ? '框选全部节点' : '查看组件连线').focus(); await page.keyboard.press('Control+z');
-  await expect.poll(async () => (await current()).blueprints).toEqual(before.blueprints);
-  await page.keyboard.press('Control+y'); await expect.poll(async () => (await current()).blueprints).toEqual(applied.blueprints);
+  await expect.poll(async () => projectGraphs(await current())).toEqual(projectGraphs(before));
+  await page.keyboard.press('Control+y'); await expect.poll(async () => projectGraphs(await current())).toEqual(projectGraphs(applied));
   assert.equal(await fs.readFile(projectFile, 'utf8'), original); await button(scenario === 'ui' ? '保存界面' : '保存工程').click();
-  await expect.poll(async () => JSON.parse(await fs.readFile(projectFile, 'utf8')).blueprints).toEqual(applied.blueprints);
+  await expect.poll(async () => projectGraphs(JSON.parse(await fs.readFile(projectFile, 'utf8')))).toEqual(projectGraphs(applied));
   const saved = JSON.parse(await fs.readFile(projectFile, 'utf8')); assert.ok(compileProject(saved).files['game/story.rpy']);
   await page.reload(); await expect(page.locator('.project-title strong')).toHaveText(project.name); await open();
   if (scenario === 'ui') await expect(button('保存界面')).toBeDisabled();

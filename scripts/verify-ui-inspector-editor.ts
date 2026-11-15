@@ -1,3 +1,4 @@
+import { openUiPageSettings, openUiGlobalSettings } from './lib/ui-design-controls';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -88,6 +89,8 @@ try {
   phase = 'children';
   await open('父级与子对象');
   await page!.getByRole('button', { name: '添加子图片', exact: true }).click();
+  await expect(row(button.id)).toHaveAttribute('aria-selected', 'true');
+  await page!.getByRole('list', { name: '子对象列表', exact: true }).getByRole('button', { name: '子图片', exact: true }).click();
   const childId = await page!.locator('.ui-hierarchy-row.selected').getAttribute('data-hierarchy-id'); assert.ok(childId);
   await expect(page!.getByLabel('父对象', { exact: true })).toHaveValue(button.id);
   await expect(page!.getByLabel('子对象放置位置', { exact: true })).toHaveValue('foreground');
@@ -106,18 +109,21 @@ try {
   await page!.screenshot({ path: path.join(output, '02-picture-narrow.png') });
   checks.push('切换控件回到属性顶部；图片素材与缩放没有重复输入，小窗口无横向溢出');
 
-  phase = 'game-groups-and-keyboard';
-  await page!.getByRole('tab', { name: '游戏设置', exact: true }).click();
-  await expect(group('玩家与菜单')).toHaveJSProperty('open', true);
-  await open('标题与声音');
-  await expect(page!.getByRole('combobox', { name: '标题背景', exact: true })).toBeVisible();
+  phase = 'page-groups-and-keyboard';
+  await openUiPageSettings(page!);
+  await expect(group('默认外观')).toHaveJSProperty('open', true);
   await checkWidth();
-  await page!.screenshot({ path: path.join(output, '03-game-settings.png') });
-  await page!.getByRole('tab', { name: '游戏设置', exact: true }).focus();
+  await page!.screenshot({ path: path.join(output, '03-page-settings.png') });
+  await page!.getByRole('tab', { name: '页面设置', exact: true }).focus();
   await page!.keyboard.press('ArrowLeft');
   await expect(page!.getByRole('tab', { name: '组件设置', exact: true })).toBeFocused();
   await expect(page!.getByRole('tab', { name: '组件设置', exact: true })).toHaveAttribute('aria-selected', 'true');
-  checks.push('游戏设置按玩家、主题、标题声音、章节和对白框分组，分类可用键盘切换');
+  const globalSettings = await openUiGlobalSettings(page!);
+  const titleSettings = globalSettings.locator('details.ui-inspector-group').filter({ has: page!.locator('.ui-group-title', { hasText: '标题与声音' }) });
+  await titleSettings.locator(':scope > summary').click();
+  await expect(globalSettings.getByRole('combobox', { name: '标题背景', exact: true })).toBeVisible();
+  await globalSettings.getByRole('button', { name: '完成', exact: true }).click();
+  checks.push('页面属性跟随当前页面，分类可用键盘切换；原全局主题与标题声音在作品设置中可达');
 
   phase = 'flow-style';
   const flow = components.find(c => c.kind === 'flowchart');

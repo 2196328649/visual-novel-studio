@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "release": "0.8.0",
+  "capturedDate": "2026-10-17",
+  "archive": {
+    "file": "release/Visual-Novel-Studio-0.8.0-portable-win-x64.zip",
+    "expectedSha256": "b610fce7e8aca83bb4444919460eecdd9bb8c70e27d72ff50f8b840c07e657f9",
+    "provenance": "release/verification-0.8.0.json"
+  },
+  "sourceTag": "v0.8.0",
+  "sourceRevision": "c16df00cb148b497efe2858563259d399471c7aa",
+  "scope": "Exact project document bytes captured from the archived released distribution. Source fixture capture is not a runtime/save compatibility result; the archive digest and native saves remain to be verified in the unified acceptance phase.",
+  "projects": [
+    {
+      "archiveEntry": "Visual-Novel-Studio-0.8.0/resources/resources/example/project.vns.json",
+      "file": "example.project.vns.json",
+      "bytes": 26594,
+      "inventory": {
+        "blueprints": 1,
+        "assets": 7,
+        "customPages": [],
+        "schemes": [],
+        "componentPages": [],
+        "projectId": "project_rainy_day",
+        "timelinePresets": 0,
+        "schemaVersion": 1
+      },
+      "id": "example",
+      "sha256": "09d3eebaae3d4604a940380a3458895759d76a6485abe1d6ff0b66839ff1c1b6"
+    },
+    {
+      "archiveEntry": "Visual-Novel-Studio-0.8.0/resources/resources/templates/aihong/project.vns.json",
+      "file": "aihong.project.vns.json",
+      "bytes": 434833,
+      "inventory": {
+        "blueprints": 13,
+        "assets": 297,
+        "customPages": [],
+        "schemes": [],
+        "componentPages": [
+          "chapterTitle",
+          "choice",
+          "flowchart",
+          "gallery",
+          "history",
+          "main",
+          "messageBox",
+          "musicRoom",
+          "pause",
+          "preferences",
+          "save",
+          "say",
+          "voiceCollection"
+        ],
+        "projectId": "project_aihong_ui_template",
+        "timelinePresets": 0,
+        "schemaVersion": 1
+      },
+      "id": "aihong",
+      "sha256": "3ca4f97b084797bafdafbbf53a303208f88c9bee1c79e03652e56020b3a4023a"
+    }
+  ],
+  "distribution": {
+    "rootEntry": "Visual-Novel-Studio-0.8.0",
+    "executable": "Visual Novel Studio.exe",
+    "executableSha256": "befad30381e0e825447b2725725015db1310a2020d7f34aee16631add22e65cb",
+    "asarSha256": "fbfb0c93d5a6220d3ee7bb0948137cdc3cfea693198432937087e86f3c92748b",
+    "provenance": "Expected digests from release/verification-0.8.0.json; rechecked before any historical executable is launched."
+  }
+}

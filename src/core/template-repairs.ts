@@ -1,5 +1,8 @@
+import { cloneData } from "./project-mutation";
 import { type Project, type UiSkin } from './model';
 import { templateVoiceCollectionComponents } from './template-voice-collection';
+import { softTextBackdrop } from './ui-text-effects';
+import { applyUiDraft } from './ui-draft';
 
 /** Exact partial-artwork signature produced by the former file-free repair. */
 export function legacyTemplateVoiceArtwork(project: Project): boolean {
@@ -18,11 +21,11 @@ export function restoreTemplateVoiceArtwork(project: Project): void {
   if (!templateVoiceArtworkAssetIds.every(id => ids.has(id))) return;
   for (const original of templateVoiceCollectionComponents) {
     const component = project.ui.components.find(c => c.id === original.id);
-    if (!component) { if (original.kind === 'image') project.ui.components.push(structuredClone(original)); continue; }
-    if (!component.skin?.idle && original.skin?.idle) component.skin = structuredClone(original.skin);
+    if (!component) { if (original.kind === 'image') project.ui.components.push(cloneData(original)); continue; }
+    if (!component.skin?.idle && original.skin?.idle) component.skin = cloneData(original.skin);
     if (component.kind === 'voiceCollection') {
       component.list ??= {};
-      if (!component.list.voiceFavoriteSkin?.idle) component.list.voiceFavoriteSkin = structuredClone(original.list?.voiceFavoriteSkin);
+      if (!component.list.voiceFavoriteSkin?.idle) component.list.voiceFavoriteSkin = cloneData(original.list?.voiceFavoriteSkin);
       if (!component.style?.fontAssetId && component.style?.fontSize === original.style?.fontSize) component.style = { ...component.style, fontAssetId: original.style?.fontAssetId };
     }
   }
@@ -47,7 +50,7 @@ export function repairTemplateVoiceCollection(project: Project): void {
   };
   for (const original of templateVoiceCollectionComponents) {
     if (project.ui.components.some(component => component.id === original.id)) continue;
-    const component = structuredClone(original);
+    const component = cloneData(original);
     withoutMissingAssets(component);
     if (component.kind === 'image' && !component.assetId) continue;
     if (component.skin && !component.skin.idle) {
@@ -61,7 +64,17 @@ export function repairTemplateVoiceCollection(project: Project): void {
 }
 
 export const templateFlowFontId = 'ai_ui_3510f58115c3cc3c';
-export const templateFlowSoftShadow = { shadowX: 0, shadowY: 0, shadowBlur: 7, shadowColor: '#000000', shadowOpacity: .4 };
+export const templateFlowSoftShadow = softTextBackdrop;
+
+/** The 7px/40% release predates the darker backing. Match its complete stock
+ * text signature, and retain an explicitly authored spread (including zero). */
+function repairFaintTemplateFlowText(style: Project['ui']['components'][number]['style'], skin: UiSkin | undefined, idle: string): void {
+  if (skin?.idle !== idle || skin.disabled !== 'ai_ui_ae60f933b9c28da3' || skin.fit !== 'stretch' || skin.hideText
+    || style?.fontAssetId !== templateFlowFontId || style.fontSize !== 60 || style.textColor !== '#ffffff'
+    || style.hoverTextColor !== '#ffffff' || style.outlineWidth !== 1 || style.outlineColor !== '#000000' || style.outlineOpacity !== .2
+    || style.shadowX !== 0 || style.shadowY !== 0 || style.shadowBlur !== 7 || style.shadowColor !== '#000000' || style.shadowOpacity !== .4) return;
+  Object.assign(style, templateFlowSoftShadow, { shadowSpread: style.shadowSpread ?? templateFlowSoftShadow.shadowSpread });
+}
 export function legacyTemplateFlowText(project: Project) {
   return [...project.ui.components, ...(project.ui.instances ?? []).flatMap(instance => instance.components), ...(project.ui.customPages ?? []).flatMap(page => page.components)].filter(component =>
     component.id === 'ai_flowchart_items' && component.kind === 'flowchart' && component.list?.layout === 'flow' &&
@@ -82,6 +95,7 @@ export function repairTemplateFlow(project: Project): void {
   for (const component of [...project.ui.components, ...(project.ui.instances ?? []).flatMap(instance => instance.components), ...(project.ui.customPages ?? []).flatMap(page => page.components)]) {
     if (component.id !== 'ai_flowchart_items' || component.kind !== 'flowchart' || component.list?.layout !== 'flow') continue;
     const text = component.style;
+    repairFaintTemplateFlowText(text, component.skin, 'ai_ui_37adb4cb2b67d83f');
     if (component.skin?.idle === 'ai_ui_37adb4cb2b67d83f' && text?.fontAssetId === templateFlowFontId && text.fontSize === 60 && text.textColor === '#ffffff'
       && text.hoverTextColor === '#ffffff' && text.outlineWidth === 1 && text.outlineColor === '#000000' && text.outlineOpacity === .5
       && text.shadowX === 2 && text.shadowY === 3 && text.shadowColor === '#000000' && text.shadowOpacity === .7 && text.shadowBlur === undefined) Object.assign(text, templateFlowSoftShadow);
@@ -102,4 +116,19 @@ export function repairTemplateFlow(project: Project): void {
     repair(component.list.flowChapterSkin, 'ai_ui_b97c86336119f069');
     if (repaired && component.style?.textColor === '#242a26' && !component.style.hoverTextColor) component.style.hoverTextColor = '#f4f0e6';
   }
+  // Shared presets override the component. Upgrading only the base style leaves
+  // these captions faint whenever the author assigns one of the stock presets.
+  for (const [id, idle] of [['ai_flow_main', 'ai_ui_37adb4cb2b67d83f'], ['ai_flow_memory', 'ai_ui_b97c86336119f069'], ['ai_flow_ending', 'ai_ui_469e3bdcacbe8fd1']]) {
+    const preset = project.ui.flowStyles?.find(style => style.id === id);
+    if (preset) repairFaintTemplateFlowText(preset.style, preset.skin, idle);
+  }
+}
+
+/** Upgrade the old baseline first, then replay only the user's draft changes.
+ * Otherwise a recovery envelope can put the unmodified 40% preset back over
+ * the repaired project. Deliberate offset/color/off edits keep their values. */
+export function repairTemplateFlowDraft(base: Project, draft: Project): Project {
+  const repaired = cloneData(base);
+  repairTemplateFlow(repaired);
+  return applyUiDraft(repaired, { base, value: draft });
 }

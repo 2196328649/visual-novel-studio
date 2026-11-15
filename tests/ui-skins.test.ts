@@ -60,14 +60,16 @@ test('native background children paint below the complete parent button skin in 
   const result = compileProject(project);
   assert.deepEqual(result.diagnostics.filter(d => d.severity === 'error'), []);
   const screens = result.files['game/screens.rpy'];
-  const afterBackground = screens.slice(screens.indexOf('id "vn_component_background_child"'));
-  const ownSkinAt = afterBackground.indexOf('add VnUiStateSurface({"idle": "assets/idle.png"');
-  const foregroundAt = afterBackground.indexOf('id "vn_component_foreground_child"');
+  const parentScreen = screens.slice(screens.indexOf('screen vn_components_main_component_image_button(')).split(/\n(?=screen )/)[0];
+  const backgroundAt = parentScreen.indexOf('vn_ui_layer_order(["background_child"])'); assert.ok(backgroundAt >= 0);
+  const afterBackground = parentScreen.slice(backgroundAt);
+  const ownSkinAt = afterBackground.indexOf('add VnUiStateSurface(vn_ui_skin("image_button", ');
+  const foregroundAt = afterBackground.indexOf('vn_ui_layer_order(["foreground_child"])');
   assert.ok(ownSkinAt > 0 && foregroundAt > ownSkinAt, 'Parent surface belongs between background and foreground children');
   const ownSkin = afterBackground.slice(ownSkinAt, foregroundAt);
   for (const state of ['idle', 'hover', 'pressed', 'selected', 'disabled']) assert.ok(ownSkin.includes(`"${state}": "assets/${state}.png"`));
-  assert.match(ownSkin, /True, colors=\{/);
-  assert.match(ownSkin, /"disabled": "#22282a"/);
+  assert.match(ownSkin, /True, colors=vn_ui_state_colors\("image_button"\), look=vn_ui_appearance\("image_button"\)/);
+  assert.match(result.files['game/00-vn-ui.rpy'], /"disabledBackground": "#22282a"/);
 });
 
 test('custom pages compile native actions, typed conditions, fonts and private image paths', () => {
@@ -81,11 +83,12 @@ test('custom pages compile native actions, typed conditions, fonts and private i
   const result = compileProject(project);
   assert.deepEqual(result.diagnostics.filter(d => d.severity === 'error'), []);
   const screens = result.files['game/screens.rpy'];
-  assert.match(screens, /sensitive \(vn_ui_get\("image_button", "enabled"\) and renpy.display.behavior.is_sensitive\(ShowMenu\("preferences"\)\)\)/);
+  assert.match(screens, /sensitive \(vn_ui_get\("image_button", "enabled"\) and renpy.display.behavior.is_sensitive\(VnUiActions\("ui:main", \[Function\(vn_ui_play_click, "image_button"\), VnUiMenu\("preferences"\)\]\)\)\)/);
   assert.match(result.files['game/00-vn-ui.rpy'], /"enabled": lambda: \(persistent.vn_var_unlocked == True\)/);
   assert.match(screens, /font "assets\/body.otf"/);
   assert.match(screens, /"pressed": "assets\/pressed.png"/);
-  assert.match(screens, /selected_background vn_ui_surface\([^\n]+"selected"[^\n]+"#223344"/);
+  assert.match(screens, /selected_background vn_ui_box\([^\n]+"selected"[^\n]+vn_ui_get\("image_button", "selectedBackground"\)/);
+  assert.match(result.files['game/00-vn-ui.rpy'], /"selectedBackground": "#223344"/);
   assert.doesNotMatch(screens.slice(screens.indexOf('screen main_menu():'), screens.indexOf('screen say(')), /vn_main_start/);
   assert.match(result.files['game/story.rpy'], /ctc_position="nestled-close"/);
   assert.match(result.files['game/00-vn-ui.rpy'], /register_sl_displayable\("vn_skin_button"/);

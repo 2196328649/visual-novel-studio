@@ -1,3 +1,4 @@
+import { cloneData } from "../core/project-mutation";
 import path from 'node:path';
 import { z } from 'zod';
 import { effectiveCharacter, makeId, type Project } from '../core/model';
@@ -25,7 +26,7 @@ export const importedPortraitBindingSchema = z.object({
 
 /** Binding operates on actual imported IDs and is independent of file access/import. */
 export function bindImportedPortraits(project: Project, raw: z.infer<typeof importedPortraitBindingSchema>) {
-  const binding = importedPortraitBindingSchema.parse(raw), draft = structuredClone(project);
+  const binding = importedPortraitBindingSchema.parse(raw), draft = cloneData(project);
   const effective = effectiveCharacter(draft, binding.characterId);
   if (!effective) throw new Error(`找不到要更换立绘的角色：${binding.characterId}`);
   if (binding.mode === 'fillMissing' && effective.expressions.length) return { project: draft, warnings: [] as string[], fallbacks: [] as { id: string; name: string; assetId: string; fallbackName: string }[], fallbackWarning: undefined as string | undefined, changed: false, detail: `「${effective.name}」已有立绘，按“仅补齐缺失”要求保留。` };
@@ -40,7 +41,7 @@ export function bindImportedPortraits(project: Project, raw: z.infer<typeof impo
   if (binding.defaultAssetId && !binding.images.some(item => item.assetId === binding.defaultAssetId)) throw new Error('默认立绘必须属于本次绑定的图片。');
   const fallback = binding.images.find(item => item.assetId === binding.defaultAssetId) ?? binding.images.find(item => usual(item.name)) ?? binding.images[0];
   const matched = new Set<string>(), unmatched: string[] = [], warnings: string[] = [];
-  const expressions = structuredClone(effective.expressions).map(expression => {
+  const expressions = cloneData(effective.expressions).map(expression => {
     if (binding.expressionId && expression.id !== binding.expressionId) return expression;
     const candidate = binding.images.length === 1 ? fallback : binding.images.find(item => normalized(item.name) === normalized(expression.name)) ?? (usual(expression.name) ? fallback : undefined);
     if (candidate) matched.add(normalized(candidate.name)); else unmatched.push(expression.name);
@@ -111,7 +112,7 @@ export async function applyPortraitBindings(project: Project, bindings: ReturnTy
     const matched = new Set<string>(), unmatched: string[] = [];
     // Keep IDs used by dialogue and blueprint inputs; inherited expressions
     // become overrides on this character, leaving its base and siblings alone.
-    const expressions = structuredClone(effective.expressions).map(expression => {
+    const expressions = cloneData(effective.expressions).map(expression => {
       if (binding.expressionId && expression.id !== binding.expressionId) return expression;
       const candidate = binding.directory ? candidates.find(candidate => normalized(candidate.name) === normalized(expression.name)) ?? (usual(expression.name) ? fallback : undefined) : fallback;
       if (candidate) matched.add(normalized(candidate.name));

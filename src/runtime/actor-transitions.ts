@@ -44,8 +44,7 @@ init python:
             return [item for item in (self.previous, self.current) if item is not None]
 
         def render(self, width, height, st, at):
-            interface = renpy.display.interface
-            elapsed = max(0.0, vn_bp_clock() - self.started + max(0.0, interface.frame_time - (interface.interact_time or interface.frame_time)))
+            elapsed = max(0.0, vn_bp_clock() - self.started + vn_stage_render_delta())
             progress = 1.0 if self.finished or self.duration <= 0 else min(1.0, elapsed / self.duration)
             old = self.previous or Null(width=config.screen_width, height=config.screen_height)
             new = self.current or Null(width=config.screen_width, height=config.screen_height)
@@ -79,7 +78,7 @@ init python:
 
     def vn_actor_blend(tag, previous, current, rule, layer, wait):
         global vn_actor_wait_until
-        seconds = rule["duration"] if rule["mode"] != "none" and preferences.transitions and not renpy.is_skipping() and vn_pending_scene_transition is None and vn_performance_transition is None else 0
+        seconds = rule["duration"] if rule["mode"] != "none" and preferences.transitions and not renpy.is_skipping() and vn_pending_scene_transition is None and vn_performance_transition is None and not vn_flow_transition_pending() else 0
         if seconds <= 0:
             if current is None:
                 renpy.hide(tag)
@@ -105,13 +104,21 @@ init python:
         if blend is not None:
             vn_actor_departures[ghost] = blend
 
-    def vn_actor_retire_pending(except_tag=None):
+    def vn_actor_retire_pending():
         for tag, actor in list(vn_actor_pending_exit.items()):
-            if tag != except_tag:
-                vn_actor_depart(tag, actor)
+            vn_actor_depart(tag, actor)
+
+    def vn_actor_legacy_transition(transition, duration):
+        # A blocking legacy transition is an interaction boundary. Start the
+        # uncontinued actors' exits alongside it; flush only their remaining
+        # wait later so the two transitions do not become sequential.
+        if transition is not None and duration > 0:
+            vn_actor_retire_pending()
+        return vn_stage_transition(transition, duration)
 
     def vn_actor_show(tag, image_name, motion, signature, actor, rules, wait):
-        vn_actor_retire_pending(tag)
+        # Consecutive shows form one group. Renew only this actor; another
+        # pending actor may be renewed by the next show before the first wait.
         vn_actor_pending_exit.pop(tag, None)
         previous = renpy.display.core.displayable_by_tag("master", tag)
         old = vn_actor_instances.get(tag)
@@ -128,12 +135,16 @@ init python:
 
     def vn_actor_flush():
         global vn_actor_wait_until, vn_actor_waiting
+        # Every show in this group has now had a chance to retain its old pose.
         vn_actor_retire_pending()
         remaining = max(0.0, vn_actor_wait_until - vn_bp_clock())
         waiting = vn_actor_waiting
         vn_actor_wait_until = 0.0
         vn_actor_waiting = []
-        if remaining and not renpy.is_skipping() and preferences.transitions:
+        if vn_flow_transition_pending():
+            for blend in waiting:
+                blend.finished = True
+        elif remaining and not renpy.is_skipping() and preferences.transitions:
             if renpy.pause(remaining, hard=not _dismiss_pause):
                 for blend in waiting:
                     blend.finished = True

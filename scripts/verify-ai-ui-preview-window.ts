@@ -1,3 +1,4 @@
+import { openUiPageOptions, selectUiDesignScheme } from './lib/ui-design-controls';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -63,13 +64,19 @@ try {
  await expect(preview!.getByRole('button', { name: '暂停计时', exact: true })).toBeVisible();
  await expect.poll(async () => Number((await preview!.getByLabel('预演时间').textContent())?.split(' ')[0])).toBeGreaterThan(clock); assert.equal(app.windows().length, 3);
  await preview!.getByRole('button', { name: '暂停计时', exact: true }).click();
- await mode('设计').click(); await page.getByLabel('选择界面实例').selectOption('child'); await open(); await expect(frame()).toContainText('所选方案内容');
+ await mode('设计').click(); await selectUiDesignScheme(page, 'child'); await open(); await expect(frame()).toContainText('所选方案内容');
  assert.equal((await preview!.evaluate(() => window.studio!.getUiPreviewContext!()))!.project.ui.activeInstanceId, 'child');
- await mode('事件图').click(); await page.getByLabel('事件图页面').selectOption('waiting_page');
- const leave = page.getByRole('dialog', { name: '保存界面修改', exact: true }); await expect(leave).toBeVisible();
+ // Switching pages keeps the UI draft without asking; leaving the UI workspace still asks to save or discard.
+ const leave = page.getByRole('dialog', { name: '保存界面修改', exact: true });
+ const discardUiDraft = async () => { await page.locator('[data-workspace-tab="script"]').click(); await leave.getByRole('button', { name: '不保存', exact: true }).click(); await expect(leave).toHaveCount(0); await page.locator('[data-workspace-tab="ui"]').click(); await mode('事件图').click(); };
+ await mode('事件图').click(); await page.getByLabel('事件图页面').selectOption('waiting_page'); await open();
+ await expect(preview!.getByLabel('当前预演页面')).toHaveText('等待页面'); await expect(leave).toHaveCount(0); await expect(page.getByRole('button', { name: '保存界面', exact: true })).toBeEnabled();
+ await page.locator('[data-workspace-tab="script"]').click(); await expect(leave).toBeVisible();
  await action('打开 UI 预览窗口').click(); await expect(result()).toContainText('处理主编辑器中已打开的保存提示');
- await leave.getByRole('button', { name: '取消', exact: true }).click(); await expect(frame()).toContainText('所选方案内容');
- await page.getByLabel('事件图页面').selectOption('waiting_page'); await leave.getByRole('button', { name: '不保存', exact: true }).click(); await open();
+ await leave.getByRole('button', { name: '取消', exact: true }).click(); await expect(leave).toHaveCount(0);
+ await expect(page.getByLabel('事件图页面')).toHaveValue('waiting_page'); await expect(preview!.getByLabel('当前预演页面')).toHaveText('等待页面'); await expect(page.getByRole('button', { name: '保存界面', exact: true })).toBeEnabled();
+ // Returning to the UI workspace reopens its title page, so choose the waiting page again.
+ await discardUiDraft(); await expect(page.getByRole('button', { name: '保存界面', exact: true })).toBeDisabled(); await page.getByLabel('事件图页面').selectOption('waiting_page'); await open();
  await expect(preview!.getByLabel('当前预演页面')).toHaveText('等待页面');
  await page.getByLabel('事件图页面').selectOption('ui:main'); await mode('设计').click(); await page.locator('[data-hierarchy-id="window_text"]').click(); await page.getByLabel('文字', { exact: true }).fill('AI 使用未保存的界面修改'); await mode('事件图').click();
  await expect(frame()).toContainText('AI 使用未保存的界面修改'); await frame().getByRole('button', { name: '打开语音收藏', exact: true }).click();
@@ -91,8 +98,14 @@ try {
  await action('打开 UI 预览窗口').click(); await expect(result()).toContainText('专项模拟窗口加载失败'); await expect(page.getByRole('alert')).toContainText('专项模拟窗口加载失败'); assert.equal(app.windows().length, 2);
  await app.evaluate(() => (globalThis as any).__restoreUiPreviewLoad()); await open(); await expect(page.getByRole('alert')).toHaveCount(0);
  await action('关闭 UI 预览窗口').click(); await expect.poll(() => app.windows().length).toBe(2);
- await page.getByLabel('事件图页面').selectOption('waiting_page'); await leave.getByRole('button', { name: '不保存', exact: true }).click(); await mode('设计').click();
- while (await page.getByRole('button', { name: '删除自定义页面', exact: true }).isEnabled()) await page.getByRole('button', { name: '删除自定义页面', exact: true }).click();
+ await page.getByLabel('事件图页面').selectOption('waiting_page'); await discardUiDraft(); await mode('设计').click(); await page.getByLabel('设计页面', { exact: true }).selectOption('waiting_page');
+ // Deleting a page is in 页面选项 and asks for confirmation; remove every custom page.
+ for (let i = 0; ; i++) {
+  assert.ok(i < 16, '自定义页面应能逐个删除');
+  await openUiPageOptions(page); const remove = page.getByRole('button', { name: '删除自定义页面', exact: true });
+  if (!await remove.count() || !await remove.isEnabled()) { await page.getByRole('button', { name: '关闭页面选项', exact: true }).click(); break; }
+  await remove.click(); const dialog = page.getByRole('dialog', { name: '删除页面及影响', exact: true }); await dialog.getByRole('button', { name: '删除页面', exact: true }).click(); await expect(dialog).toHaveCount(0);
+ }
  await expect(page.getByRole('button', { name: '预览窗口', exact: true })).toBeDisabled();
  await action('打开 UI 预览窗口').click(); await expect(result()).toContainText('没有可预览'); assert.equal(app.windows().length, 2);
  await page.reload(); await expect(page.locator('.project-title strong')).toHaveText(project.name);

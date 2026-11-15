@@ -21,9 +21,11 @@ try {
   p.playerDefaults = { ...p.playerDefaults, fullscreen: false, windowSize: '1280x720' };
   const hero = p.characters.find(c => c.name === '林翩翩')!, normal = hero.defaultExpressionId ?? hero.expressions[0].id, smile = hero.expressions.at(-1)!.id;
   hero.displayPresets = ['left', 'center', 'right'].map((id, i) => ({ id, name: id, x: .2 + .3 * i, y: 1, scale: .72, useDefaultFraming: true }));
-  const chapter = p.nodes.find(n => n.kind === 'chapterTitle')!; assert.equal(chapter.kind, 'chapterTitle');
-  const background = chapter.backgroundId!, otherBackground = p.nodes.find(n => n.kind === 'chapterTitle' && n.id !== chapter.id)!;
-  assert.equal(otherBackground.kind, 'chapterTitle');
+  // The template's chapter cards are its chapter-title page and presentation images, not story nodes.
+  const chapterCard = (title: string, backgroundId: string, titleImageId: string) => { for (const id of [backgroundId, titleImageId]) assert.ok(p.assets.some(a => a.id === id), id); return { title, backgroundId, titleImageId }; };
+  const chapter = chapterCard(p.chapters[0].name, 'ai_presentation_chapter_one', 'ai_presentation_title_one');
+  const background = chapter.backgroundId, otherBackground = chapterCard(p.chapters[1].name, 'ai_presentation_chapter_two', 'ai_presentation_title_two');
+  assert.notEqual(otherBackground.backgroundId, background);
   const show = (id: string, lifetime: 'line' | 'persistent' | undefined, presetId = id, expressionId = normal): StageAction => ({ kind: 'show', characterId: hero.id, expressionId, instanceId: id, lifetime, presetId, x: .5, y: 1, scale: 1, layer: 10, transition: 'none' });
   const motion = displayPresetPlacement(p, hero.id, normal, 'right');
   const graph = blueprintFromPerformance(p, [show('blueprint_left', 'persistent', 'left'), show('blueprint_guest', 'line', 'center')]);
@@ -42,7 +44,7 @@ try {
   p.scenes.push({ id: 'qa_scene', name: '角色实例验收', chapterId: p.chapters[0].id });
   p.nodes.push({ id: 'qa_actors', name: '角色实例验收', kind: 'passage', sceneId: 'qa_scene', x: 0, y: 0, next: 'ai_ending_shelter', lines: [
     { id: 'three', text: '三个实例：左和右持续，中间仅本句。', actions: [{ kind: 'background', assetId: background, transition: 'none' }, show('left', 'persistent'), show('right', 'persistent'), show('guest', 'line', 'center')] },
-    { id: 'background', text: '换背景以后只有左右两个实例。', actions: [{ kind: 'background', assetId: otherBackground.backgroundId!, transition: 'none' }, { kind: 'animate', characterId: hero.id, instanceId: 'right', keyframes: [{ x: .68, y: motion.y, scale: motion.scale, rotation: 8, opacity: .8, duration: .2, easing: 'linear' }], repeat: false, wait: true }] },
+    { id: 'background', text: '换背景以后只有左右两个实例。', actions: [{ kind: 'background', assetId: otherBackground.backgroundId, transition: 'none' }, { kind: 'animate', characterId: hero.id, instanceId: 'right', keyframes: [{ x: .68, y: motion.y, scale: motion.scale, rotation: 8, opacity: .8, duration: .2, easing: 'linear' }], repeat: false, wait: true }] },
     { id: 'expression', text: '只更新右侧表情，并保留持续范围。', actions: [show('right', undefined, 'right', smile)] },
     { id: 'hide_left', text: '手动隐藏左侧，右侧还在。', actions: [{ kind: 'hide', characterId: hero.id, instanceId: 'left', transition: 'none' }] },
     { id: 'hide_right', text: '两个持续实例都已手动隐藏。', actions: [{ kind: 'hide', characterId: hero.id, instanceId: 'right', transition: 'none' }] },

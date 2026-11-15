@@ -1,3 +1,4 @@
+import { openUiPageOptions, selectUiDesignScheme } from './lib/ui-design-controls';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -55,7 +56,7 @@ try {
  await expect(frame()).toContainText('未保存的修改已同步');
  await expect(editor.getByRole('button', { name: '保存界面', exact: true })).toBeEnabled(); assert.equal(await fs.readFile(projectFile, 'utf8'), original);
  await editor.getByRole('button', { name: '撤销', exact: true }).click(); await expect(frame()).toContainText('窗口同步原文');
- await editor.getByLabel('选择界面实例').selectOption('second_scheme'); await expect(frame()).toContainText('第二方案内容');
+ await selectUiDesignScheme(editor, 'second_scheme'); await expect(frame()).toContainText('第二方案内容');
  await editor.getByRole('button', { name: '撤销', exact: true }).click(); await expect(frame()).toContainText('窗口同步原文');
  await editor.getByLabel('界面编辑模式').getByRole('button', { name: '事件图', exact: true }).click();
  await editor.getByLabel('事件图页面').selectOption('waiting_page'); await expect(preview.getByLabel('当前预演页面')).toHaveText('等待页面');
@@ -71,20 +72,23 @@ try {
  await editor.keyboard.press('Escape'); await expect(preview.getByLabel('当前预演页面')).toHaveText('消息框');
  await preview.keyboard.press('Escape'); await expect(preview.getByLabel('当前预演页面')).toHaveText('语音收藏');
  await expect.poll(() => audio.evaluate((a: HTMLAudioElement) => !a.paused)).toBe(true);
- const savedSize = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith('#ui-preview'))!.getSize());
+ const savedSize = await app.evaluate(({ BrowserWindow, screen }) => { const window = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith('#ui-preview'))!, area = screen.getDisplayMatching(window.getBounds()).workArea, [width, height] = window.getSize(); return [Math.min(width, area.width), Math.min(height, area.height)]; });
  await button('关闭预览').click(); await expect.poll(() => app.windows().length).toBe(1);
  await expect(editor.getByRole('button', { name: '预览窗口', exact: true })).toHaveAttribute('aria-pressed', 'false');
  preview = await openUiPreviewWindow(app, editor); await expect(preview.getByLabel('当前预演页面')).toHaveText('标题');
  const restored = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith('#ui-preview'))!.getSize());
- // Windows rounds frame sizes between physical pixels and logical pixels at display scaling.
+ // Windows rounds frame sizes between physical pixels and logical pixels at display scaling;
+ // a small second display can also clamp the saved size to its work area.
  assert.ok(restored.every((value, index) => Math.abs(value - savedSize[index]) <= 2), '重开尺寸只允许显示缩放产生的取整差异');
  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith('#ui-preview'))!.close()); await expect.poll(() => app.windows().length).toBe(1);
  preview = await openUiPreviewWindow(app, editor); await editor.reload(); await expect.poll(() => app.windows().length).toBe(1);
  await expect(editor.locator('.project-title strong')).toHaveText(project.name, { timeout: 45000 }); await editor.locator('[data-workspace-tab="ui"]').click(); preview = await openUiPreviewWindow(app, editor);
  await editor.getByLabel('界面编辑模式').getByRole('button', { name: '事件图', exact: true }).click(); await editor.getByLabel('事件图页面').selectOption('waiting_page');
  await expect(preview.getByLabel('当前预演页面')).toHaveText('等待页面'); await editor.getByLabel('界面编辑模式').getByRole('button', { name: '设计', exact: true }).click();
- await editor.getByRole('button', { name: '删除自定义页面', exact: true }).click(); await expect(preview.getByLabel('当前预演页面')).toHaveText('子页');
- await editor.getByRole('button', { name: '删除自定义页面', exact: true }).click(); await expect.poll(() => app.windows().length).toBe(1); await expect(editor.getByRole('alert')).toHaveCount(0);
+ // Deleting a page is in 页面选项 and asks for confirmation first.
+ const deletePage = async () => { await openUiPageOptions(editor); await editor.getByRole('button', { name: '删除自定义页面', exact: true }).click(); const dialog = editor.getByRole('dialog', { name: '删除页面及影响', exact: true }); await dialog.getByRole('button', { name: '删除页面', exact: true }).click(); await expect(dialog).toHaveCount(0); };
+ await deletePage(); await expect(preview.getByLabel('当前预演页面')).toHaveText('子页');
+ await deletePage(); await expect.poll(() => app.windows().length).toBe(1); await expect(editor.getByRole('alert')).toHaveCount(0);
  await editor.getByRole('button', { name: '撤销', exact: true }).click(); await editor.getByRole('button', { name: '撤销', exact: true }).click(); preview = await openUiPreviewWindow(app, editor);
  await editor.locator('[data-workspace-tab="script"]').click(); await expect.poll(() => app.windows().length).toBe(1);
  assert.equal(await fs.readFile(projectFile, 'utf8'), original); assert.deepEqual(errors, []);

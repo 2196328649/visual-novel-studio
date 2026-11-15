@@ -1,11 +1,12 @@
 import type { ActorTransitionRule, VisualTransitions } from '../core/model';
-import { visualTransitionNames } from '../core/visual-transitions';
+import { visualTransitionNames, visualTransitionSeconds } from '../core/visual-transitions';
 import { NumberInput } from './NumberInput';
 
 export function VisualTransitionField({ label, value, inherit, onChange }: { label: string; value?: ActorTransitionRule; inherit?: boolean; onChange: (value?: ActorTransitionRule) => void }) {
-  return <div className="field-row visual-transition-field"><label>{label}<select aria-label={label} value={value?.mode ?? (inherit ? 'inherit' : 'none')} onChange={event => onChange(event.target.value === 'inherit' ? undefined : { mode: event.target.value as ActorTransitionRule['mode'], duration: value?.duration || .5 })}>
+  const inherited = !value && inherit;
+  return <div className="field-row visual-transition-field"><label>{label}<select aria-label={label} value={value?.mode ?? (inherit ? 'inherit' : 'none')} onChange={event => onChange(event.target.value === 'inherit' ? undefined : { mode: event.target.value as ActorTransitionRule['mode'], duration: value?.duration ?? .5 })}>
     {inherit && <option value="inherit">沿用显示时设置</option>}{Object.entries(visualTransitionNames).map(([key, name]) => <option key={key} value={key}>{name}</option>)}
-  </select></label><label>秒数<NumberInput aria-label={label + '秒数'} type="number" value={value?.duration ?? .5} min={0} max={60} step={.1} disabled={!value || value.mode === 'none'} onChange={event => value && onChange({ ...value, duration: Math.max(0, Math.min(60, Number(event.target.value))) })} /></label></div>;
+  </select></label><label>秒数<NumberInput aria-label={label + '秒数'} type="number" value={inherited ? '' : visualTransitionSeconds(value)} placeholder={inherited ? '沿用显示时设置' : undefined} title={inherited ? '使用显示对象的离场时长' : undefined} min={0} step={.1} disabled={!value || value.mode === 'none'} onChange={event => value && onChange({ ...value, duration: Math.max(0, Number(event.target.value) || 0) })} /></label></div>;
 }
 export function VisualTransitionsEditor({ value, wait, onChange, onWaitChange }: { value?: VisualTransitions; wait?: boolean; onChange: (value: VisualTransitions) => void; onWaitChange: (wait: boolean) => void }) {
   return <details className="ui-property-group" open={!!value}><summary>进出场过渡</summary>

@@ -11,8 +11,21 @@ export function resolveBlueprintCall(graphs: BlueprintGraph[], name: string) {
   return graphs.find(graph => normalize(blueprintCallName(graph)) === normalize(name) || normalize(graph.name) === normalize(name));
 }
 
+/** Resolve executable text references for destructive resource operations.
+ * This is not a dialogue/string search: legacy human-name commands can be the
+ * only remaining caller even when no stable-ID suffix has been written yet. */
+export function blueprintCommandReference(graphs: BlueprintGraph[], line: string, depth = 0): BlueprintGraph | undefined {
+  if (depth > 16) return;
+  const command = line.match(/^\s*[@／/](?!\/)\s*([^:：]+?)(?:[:：]\s*(.*))?$/);
+  if (!command) return;
+  const head = command[1].trim(), body = command[2] ?? '';
+  if (head === '动作') return blueprintCommandReference(graphs, body, depth + 1);
+  const target = ['蓝图', '通用蓝图'].includes(head) ? body.split(/[，,]/, 1)[0] : head === '场景蓝图' ? body : head;
+  return resolveBlueprintCall(graphs, target.trim().replace(/^(["'])(.*)\1$/, '$2'));
+}
+
 // Engine syntax must remain unambiguous when a blueprint becomes a command.
-const reserved = new Set('独立演出 播放台词演出 背景音乐 复用节点 显示角色 隐藏 隐藏角色 背景 切换背景 bgm 音乐 播放音乐 音效 播放音效 配音 停止音乐 等待 暂停 震动 镜头 效果 蓝图 通用蓝图 角色功能 角色-功能 章节演出 章节标题 章节背景 章节题图 章节音效 章节动效 入口 开始 返回 选择 选项 结局 跳转 调用 实例 节点实例 互动实例 小游戏实例 设置 条件 满足 不满足 场景基础 场景模板 场景参数 场景蓝图 界面实例 ui实例 演出实例 对白标记 节点标记 效果定义 动作 效果结束'.split(' '));
+const reserved = new Set('独立演出 开始台词演出 播放台词演出 背景音乐 复用节点 显示角色 隐藏 隐藏角色 背景 切换背景 bgm 音乐 播放音乐 音效 播放音效 配音 停止音乐 等待 暂停 震动 镜头 效果 蓝图 通用蓝图 角色功能 角色-功能 章节演出 章节标题 章节背景 章节题图 章节音效 章节动效 入口 开始 返回 选择 选项 选项标记 连线过渡 结局 跳转 调用 实例 节点实例 互动实例 小游戏实例 设置 条件 满足 不满足 场景基础 场景模板 场景参数 场景蓝图 界面实例 ui实例 演出实例 对白标记 节点标记 效果定义 动作 效果结束'.split(' '));
 export function availableBlueprintName(project: Project, base: string): string {
   const used = new Set([...reserved, ...projectGraphs(project).flatMap(graph => [normalize(graph.name), normalize(blueprintCallName(graph))])]);
   let name = base, index = reserved.has(normalize(base)) ? 1 : 2;
@@ -60,6 +73,6 @@ export function renameBlueprint(project: Project, graphId: string, change: { nam
   for (const effect of project.effects) effect.commands = effect.commands.map(rewrite);
   for (const owner of projectGraphs(project)) for (const node of owner.nodes) {
     if (node.type === 'sceneAction' && typeof node.properties.command === 'string') node.properties.command = node.properties.command.split('\n').map(rewrite).join('\n');
-    if (['callFunction', 'callMacro'].includes(node.type) && node.properties.graphId === graph.id && [before.name, blueprintCallName(before)].includes(node.name)) node.name = name;
+    if (['callFunction', 'callMacro', 'startTask', 'debounce', 'waitTask'].includes(node.type) && node.properties.graphId === graph.id && [before.name, blueprintCallName(before)].includes(node.name)) node.name = name;
   }
 }

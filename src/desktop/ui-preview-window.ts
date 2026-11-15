@@ -1,3 +1,4 @@
+import { checkedUiPreviewAction, uiPreviewActionResultSchema, type UiPreviewActionResult } from '../core/ui-preview-actions';
 import { BrowserWindow, ipcMain, screen, type IpcMainInvokeEvent, type Rectangle } from 'electron';
 import path from 'node:path';
 import { z } from 'zod';
@@ -13,6 +14,9 @@ export class UiPreviewWindowController {
  private context?: UiPreviewWindowContext;
  private signature = '';
  private bounds?: Rectangle;
+ private actionSequence = 0;
+ private pendingAction?: { id: number; resolve: (result: UiPreviewActionResult) => void };
+ private cancelAction() { this.pendingAction?.resolve({ status: 'cancelled', message: '预览已关闭，操作请求已结束。' }); this.pendingAction = undefined; }
  constructor(private options: { editor: () => BrowserWindow; desktopDir: string; devUrl?: string }) {}
  private editor(event: IpcMainInvokeEvent) {
   if (event.sender !== this.options.editor().webContents) throw Error('请从主编辑器打开或更新预览。');
@@ -56,15 +60,35 @@ export class UiPreviewWindowController {
     this.bounds = { x, y, width, height };
    }
   });
-  preview.on('closed', () => { if (this.window === preview) this.window = undefined; this.signal(false); });
+  preview.on('closed', () => { if (this.window === preview) this.window = undefined; this.cancelAction(); this.signal(false); });
   this.loading = this.options.devUrl ? preview.loadURL(new URL('#ui-preview', this.options.devUrl).toString()) : preview.loadFile(path.join(this.options.desktopDir, '..', 'dist', 'index.html'), { hash: 'ui-preview' });
   try { await this.loading; if (!preview.isDestroyed()) { preview.show(); preview.focus(); this.signal(true); } }
   catch (error) { if (!preview.isDestroyed()) preview.destroy(); throw error; }
   finally { this.loading = undefined; }
  }
  close() { this.window?.close(); }
- dispose() { this.close(); this.context = undefined; this.signature = ''; }
+ dispose() { this.cancelAction(); this.close(); this.context = undefined; this.signature = ''; }
  registerHandlers() {
+  ipcMain.handle('studio:ui-preview-action', (event, raw) => {
+   this.preview(event);
+   if (!this.context) throw new Error('预演上下文已关闭。');
+   const action = checkedUiPreviewAction(this.context.project, raw), editor = this.options.editor();
+   if (editor.isDestroyed()) throw new Error('编辑器已关闭。');
+   if (this.pendingAction) throw new Error('上一个预演操作还在等待主编辑器处理。');
+   const result = new Promise<UiPreviewActionResult>(resolve => {
+    const id = ++this.actionSequence;
+    this.pendingAction = { id, resolve };
+    editor.webContents.send('studio:ui-preview-action', { id, action });
+   });
+   if (editor.isMinimized()) editor.restore(); editor.show(); editor.focus();
+   return result;
+  });
+  ipcMain.on('studio:ui-preview-action-result', (event, raw) => {
+   if (event.sender !== this.options.editor().webContents || !this.pendingAction || raw?.id !== this.pendingAction.id) return;
+   const parsed = uiPreviewActionResultSchema.safeParse(raw.result);
+   this.pendingAction.resolve(parsed.success ? parsed.data : { status: 'failed', message: '主编辑器返回的操作结果无效。' });
+   this.pendingAction = undefined;
+  });
   ipcMain.handle('studio:ui-preview-open', (event, context) => { this.editor(event); return this.open(context); });
   ipcMain.handle('studio:ui-preview-update', (event, context) => { this.editor(event); if (this.window && !this.window.isDestroyed()) this.update(context); });
   ipcMain.handle('studio:ui-preview-get', event => { this.preview(event); return this.context ?? null; });

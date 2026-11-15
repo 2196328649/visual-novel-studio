@@ -1,8 +1,10 @@
+import { cloneData } from "./project-mutation";
 import { graphResourceKey, isTimelineResource, projectGraphs, withProjectGraphs, setProjectGraphs } from './project-resources';
 import { makeId, type Asset, type Project } from './model';
 import { blueprintKindNames } from './blueprint';
+import { parameterDisplayValue, parameterTypeName } from './parameter-sets';
 import { categoryAcceptsKind, folderCategory } from './asset-library';
-import { blueprintCallName, renameBlueprint, resolveBlueprintCall } from './blueprint-names';
+import { blueprintCallName, renameBlueprint, blueprintCommandReference } from './blueprint-names';
 
 export type ContentKind = Asset['kind'] | 'blueprint' | 'timeline' | 'character' | 'variable' | 'scene';
 export interface ContentItem { key: string; id: string; kind: ContentKind; name: string; detail: string; assetId?: string; path?: string; callName?: string }
@@ -18,7 +20,7 @@ export function projectContent(project: Project): ContentItem[] {
       return { key: graphResourceKey(g), id: g.id, kind: isTimelineResource(g) ? 'timeline' as const : 'blueprint' as const, name: g.name, callName: blueprintCallName(g), detail: isTimelineResource(g) ? timeline : `${blueprintKindNames[g.kind]} · ${g.nodes.length} 节点 · @${blueprintCallName(g)}` };
     }),
     ...project.characters.map(c => ({ key: `character:${c.id}`, id: c.id, kind: 'character' as const, name: c.name, detail: `${c.expressions.length} 个表情`, assetId: c.expressions[0]?.assetId })),
-    ...project.variables.map(v => ({ key: `variable:${v.id}`, id: v.id, kind: 'variable' as const, name: v.name, detail: `${v.type === 'boolean' ? '开关' : v.type === 'number' ? '数值' : '文字'} · ${String(v.initial)}` })),
+    ...project.variables.map(v => ({ key: `variable:${v.id}`, id: v.id, kind: 'variable' as const, name: v.name, detail: `${parameterTypeName(v)} · ${parameterDisplayValue(project, v)}` })),
     ...project.scenes.map(s => ({ key: `scene:${s.id}`, id: s.id, kind: 'scene' as const, name: s.name, detail: `${project.chapters.find(c => c.id === s.chapterId)?.name ?? '场景'} · ${project.nodes.filter(n => n.sceneId === s.id).length} 节点` })),
   ];
 }
@@ -123,7 +125,7 @@ export function copyAssetSelection(project: Project, source: Project, keys: stri
     const sourceFolder = sourceState.assignments['asset:' + asset.id];
     if (!keys.includes('asset:' + asset.id) && !folderMap.has(sourceFolder)) continue;
     const targetFolder = folderMap.get(sourceFolder) ?? destination, category = folderCategory(project, targetFolder);
-    const copy = structuredClone(asset);
+    const copy = cloneData(asset);
     copy.id = makeId('asset');
     copy.name = uniqueName(asset.name + ' 副本', project.assets.map(item => item.name));
     if (category && categoryAcceptsKind(category, asset.kind)) copy.category = category;
@@ -158,12 +160,13 @@ export function removeContentSelection(project: Project, keys: string[]) {
     else if (value && typeof value === 'object') Object.entries(value).forEach(([name, item]) => inspect(item, name));
   };
   inspect(retained);
-  for (const row of project.scriptText?.content.split(/\r?\n/) ?? []) {
-    const command = row.match(/^\s*[@／/](?!\/)\s*([^:：]+)(?:[:：]|$)/);
-    if (!command) continue;
-    inspect(row);
-    const called = resolveBlueprintCall(projectGraphs(project), command[1].trim());
+  const graphs = projectGraphs(project);
+  const commandSources = [project.scriptText?.content ?? '', ...retained.effects.flatMap(effect => effect.commands),
+    ...projectGraphs(retained).flatMap(graph => graph.nodes.flatMap(node => node.type === 'sceneAction' && typeof node.properties.command === 'string' ? [node.properties.command] : []))];
+  for (const source of commandSources) for (const row of source.split(/\r?\n/)) {
+    const called = blueprintCommandReference(graphs, row);
     if (called) used.add(called.id);
+    if (/^\s*[@／/](?!\/)/.test(row)) inspect(row);
   }
   const blocked = chosen.filter(item => used.has(item.id));
   if (blocked.length) throw new Error('仍被所选范围之外的剧情、蓝图、时间轴或界面引用，无法删除：' + blocked.map(item => item.name).join('、') + '。请先解除引用。');

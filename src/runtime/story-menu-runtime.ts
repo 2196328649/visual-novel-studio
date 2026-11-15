@@ -2,9 +2,14 @@ import type { Project } from '../core/model';
 import { storyVoiceEntries } from '../core/story-menu';
 import { defaultVoiceRemoveMessage } from '../core/voice-preview';
 import { pythonLiteral } from './literals';
+import { createPlayerFlowCallRuntime } from './player-flow-call-runtime';
 
 export function createStoryMenuRuntime(project: Project): string {
-  const nodes = Object.fromEntries(project.nodes.map(node => [node.id, { chapterId: project.scenes.find(scene => scene.id === node.sceneId)?.chapterId, label: `vn_node_${node.id}` }]));
+  const nodes = Object.fromEntries(project.nodes.map(node => {
+    const scene = project.scenes.find(item => item.id === node.sceneId);
+    const chapter = project.chapters.find(item => item.id === scene?.chapterId);
+    return [node.id, { chapterId: scene?.chapterId, chapter: chapter?.name, scene: scene?.name, title: node.name, label: `vn_node_${node.id}` }];
+  }));
   const voices = Object.fromEntries(storyVoiceEntries(project).map(asset => [asset.path.replaceAll('\\', '/'), { id: asset.id, assetId: asset.id, speakerId: asset.speakerId, caption: asset.caption, text: asset.text }]));
   const voicePaths = Object.fromEntries(project.assets.filter(asset => asset.kind === 'audio').map(asset => [asset.id, asset.path.replaceAll('\\', '/')]));
   return `default persistent.vn_seen_nodes = []
@@ -74,7 +79,7 @@ init python:
 
     def vn_story_caption(kind, identity, caption, options):
         if not vn_story_unlocked(kind, identity, options.get("lockUnread", False)):
-            return "未解锁章节" if kind == "chapterList" else "未到达"
+            return "未解锁章节" if kind == "chapterList" else options.get("flowLockedCaption", "未到达")
         if not options.get("showProgress", False):
             return caption
         current = (vn_story_nodes.get(vn_current_node, {}).get("chapterId") == identity) if kind == "chapterList" else vn_current_node == identity
@@ -84,6 +89,7 @@ init python:
     @renpy.pure
     class VnStoryStart(Action, DictEquality):
         def __init__(self, kind, identity, label, caption, locked=False, confirm=True):
+            # All callers pass raw story text, including the built-in directories.
             self.kind, self.identity, self.label, self.caption = kind, identity, label, caption
             self.locked, self.confirm = locked, confirm
         def get_sensitive(self):
@@ -95,8 +101,56 @@ init python:
                 return
             action = Start(self.label) if main_menu else Function(renpy.full_restart, transition=None, label=self.label)
             if self.confirm and not main_menu:
-                action = Confirm("从「" + self.caption + "」重新开始？当前未保存的进度将丢失。", action)
+                # Confirm also serves interpolated system prompts. Escape this
+                # literal title once before either native or authored text sees it.
+                prompt = vn_ui_literal("从「" + self.caption + "」重新开始？当前未保存的进度将丢失。").replace("[", "[[")
+                action = Confirm(prompt, action)
             return renpy.display.behavior.run(action)
+
+    @renpy.pure
+    class VnFlowEntry(Action, DictEquality):
+        def __init__(self, identity, options, navigation=None, locations=None, trail=None, gesture=None):
+            self.identity, self.options, self.navigation = identity, options, navigation
+            self.locations = locations or {}
+            self.trail, self.gesture = trail or [], gesture
+        def get_sensitive(self):
+            entry = vn_flow_entry(self.identity, self.options)
+            if vn_flow_locked(self.identity, self.options):
+                return False
+            if entry.get("viewId"):
+                return self.navigation is not None and entry["viewId"] in self.options.get("flowViews", {})
+            if entry.get("groupId"):
+                return self.navigation is not None and bool(entry.get("memberIds"))
+            if entry.get("nodeId", self.identity) not in vn_story_nodes:
+                return False
+            if self.options.get("flowViews") and entry.get("action") != "inspect" and any(step.get("callId") for step in self.trail):
+                return vn_flow_replay_plan(self.options, self.identity, self.trail) is not None
+            return True
+        def get_selected(self):
+            return vn_flow_current(self.identity, self.options, self.locations)
+        def __call__(self):
+            if not self.get_sensitive():
+                return
+            entry = vn_flow_entry(self.identity, self.options)
+            if entry.get("groupId") or entry.get("viewId"):
+                if entry.get("callId") and self.gesture is not None and not vn_flow_open_gesture(self.gesture, self.identity):
+                    return
+                return renpy.display.behavior.run(self.navigation)
+            if self.gesture is not None:
+                self.gesture.clear()
+            node_id = entry.get("nodeId", self.identity)
+            caption = entry.get("name", vn_story_nodes[node_id].get("title", "剧情节点"))
+            if entry.get("action") == "inspect":
+                return renpy.display.behavior.run(Show("vn_story_inspect", node_id=node_id, caption=caption))
+            if self.options.get("flowViews") and any(step.get("callId") for step in self.trail):
+                action = VnFlowRestart(self.options.get("flowComponentId"), self.identity, self.trail)
+                if not action.get_sensitive():
+                    return
+                if self.options.get("confirmJump", True) and not main_menu:
+                    prompt = vn_ui_literal("从「" + caption + "」重新开始？当前未保存的进度将丢失。").replace("[", "[[")
+                    action = Confirm(prompt, action)
+                return renpy.display.behavior.run(action)
+            return renpy.display.behavior.run(VnStoryStart("flowchart", node_id, vn_story_nodes[node_id]["label"], caption, self.options.get("lockUnread", False), self.options.get("confirmJump", True)))
 
     def vn_capture_history_voice(entry, current=False):
         if getattr(entry, "vn_voice_log", None):
@@ -223,5 +277,26 @@ init python:
                 renpy.music.stop(channel="vn_replayvoice")
                 vn_replay_voice_identity = None
             renpy.restart_interaction()
-`;
+
+screen vn_story_inspect(node_id, caption):
+    modal True
+    zorder 300
+    key "game_menu" action Hide("vn_story_inspect")
+    add Solid("#00000080")
+    $ source = vn_story_nodes.get(node_id, {})
+    frame:
+        align (0.5, 0.5)
+        xsize min(680, config.screen_width - 48)
+        padding (28, 24)
+        background "#1d252a"
+        vbox:
+            spacing 16
+            text vn_ui_literal(caption) substitute False size 32 color "#ffffff" xmaximum min(624, config.screen_width - 104)
+            if source.get("chapter"):
+                text vn_ui_literal("章节：" + source["chapter"]) substitute False size 22 color "#c8d1d7" xmaximum min(624, config.screen_width - 104)
+            if source.get("scene"):
+                text vn_ui_literal("小章节：" + source["scene"]) substitute False size 22 color "#c8d1d7" xmaximum min(624, config.screen_width - 104)
+            text "仅查看剧情位置，当前进度保持不变。" size 20 color "#9aaab5"
+            textbutton "返回流程图" id "vn_story_inspect_close" action Hide("vn_story_inspect") text_size 24 xalign 1.0
+${createPlayerFlowCallRuntime(project)}`;
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowRight, BookOpen, FilePlus2, FolderOpen, History, Search, X } from 'lucide-react';
 import type { ProjectHubInfo, ProjectSession, StudioBridge } from '../core/bridge';
@@ -9,21 +9,29 @@ import { TemplateManager } from './TemplateManager';
 
 export type ProjectBrowserSection = 'recent' | 'create' | 'templates';
 
-export function ProjectBrowser({ bridge, initial, initialSection, onOpen, onReturn }: { bridge: StudioBridge; initial?: ProjectHubInfo; initialSection?: ProjectBrowserSection; onOpen: (session: ProjectSession) => void; onReturn?: () => void }) {
+export function ProjectBrowser({ bridge, initial, initialSection, onOpen, onReturn, onBusyChange, closing=false, closeError }: { bridge: StudioBridge; initial?: ProjectHubInfo; initialSection?: ProjectBrowserSection; onOpen: (session: ProjectSession) => void; onReturn?: () => void; onBusyChange?: (busy: boolean) => void; closing?: boolean; closeError?: string }) {
   const [info, setInfo] = useState(initial);
   const [section, setSection] = useState<ProjectBrowserSection>(initialSection ?? (initial?.recent.length ? 'recent' : 'create'));
   const [name, setName] = useState('我的视觉小说');
   const [directory, setDirectory] = useState(initial?.defaultDirectory ?? '');
   const [template, setTemplate] = useState<ProjectTemplate>('blank');
   const [query, setQuery] = useState(''), [busy, setBusy] = useState(''), [error, setError] = useState('');
+  const pending=useRef(false),closingRef=useRef(closing),busyCallback=useRef(onBusyChange);
+  closingRef.current=closing;busyCallback.current=onBusyChange;
   useEffect(() => { if (initial) return; let active = true; void bridge.getProjectHub!().then(value => { if (active) { setInfo(value); setDirectory(value.defaultDirectory); if (!initialSection) setSection(value.recent.length ? 'recent' : 'create'); } }).catch(error => { if (active) setError(errorMessage(error)); }); return () => { active = false; }; }, [bridge, initial, initialSection]);
-  const run = async (label: string, action: () => Promise<void>) => { if (busy) return; setBusy(label); setError(''); try { await action(); } catch (error) { setError(errorMessage(error)); } finally { setBusy(''); } };
+  const run = async (label: string, action: () => Promise<void>) => {
+    if (pending.current||closingRef.current) return;
+    pending.current=true;busyCallback.current?.(true);setBusy(label);setError('');
+    try { await action(); }
+    catch (error) { setError(errorMessage(error)); }
+    finally { pending.current=false;busyCallback.current?.(false);setBusy(''); }
+  };
   const recent = info?.recent.filter(item => `${item.name} ${item.path}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())) ?? [];
   const templates: { id: ProjectTemplate; name: string; description: string; detail: string; available: boolean }[] = [
     { id: 'blank', name: '空白项目', description: '从第一句对白开始', detail: '基础章节、空白段落和默认游戏菜单。没有示例故事或素材。', available: true },
     ...(info?.templates ?? []).map(item => ({ ...item, detail: item.customized ? '使用本机保存的版本。内容与素材将复制到新工程。' : '内容与素材将复制到新工程。' })),
   ];
-  return createPortal(<main className="project-browser" aria-label="项目窗口">
+  return createPortal(<main className="project-browser" aria-label="项目窗口" inert={closing}>
     <aside className="project-browser-sidebar"><div className="project-browser-brand"><BookOpen size={28} /><strong>叙事工坊</strong><span>Visual Novel Studio</span></div><nav aria-label="项目操作"><button aria-pressed={section === 'recent'} onClick={() => setSection('recent')}><History size={18} />最近项目</button><button aria-pressed={section === 'create'} onClick={() => setSection('create')}><FilePlus2 size={18} />新建项目</button><button aria-pressed={section === 'templates'} onClick={() => setSection('templates')}><BookOpen size={18} />模板库</button><button disabled={!!busy} onClick={() => void run('打开工程', async () => { const session = await bridge.open(); if (session) onOpen(session); })}><FolderOpen size={18} />打开已有项目…</button></nav><div className="spacer" />{onReturn && <button className="small-button" disabled={!!busy} onClick={onReturn}>返回当前工程</button>}<p>选择一个工程，开始创作。</p></aside>
     <section className="project-browser-content"><header><div><small>项目窗口</small><h1>{section === 'recent' ? '继续你的故事' : section === 'templates' ? '管理你的模板' : '创建新的故事'}</h1><p>{section === 'recent' ? '打开最近使用的工程，或从其他文件夹选择项目。' : section === 'templates' ? '新建、复制或编辑模板，复用你的创作起点。' : '选择起点，再为工程指定名称和保存位置。'}</p></div>{onReturn && <button type="button" className="icon-button" aria-label="关闭项目窗口" disabled={!!busy} onClick={onReturn}><X size={20} /></button>}</header>
       {info?.recovery && <div className="project-recovery"><div><strong>有未保存的新工程：{info.recovery.name}</strong><p>可恢复上次的编辑内容，再选择位置保存。</p></div><button className="small-button" disabled={!!busy} onClick={() => void run('恢复工程', async () => onOpen(await bridge.recoverDraftProject!()))}>恢复未保存工程</button></div>}
@@ -31,7 +39,7 @@ export function ProjectBrowser({ bridge, initial, initialSection, onOpen, onRetu
         <div className="project-template-grid" role="group" aria-label="选择项目模板">{templates.map(item => <button key={item.id} type="button" aria-pressed={template === item.id} disabled={!!busy || !item.available} onClick={() => setTemplate(item.id)}><span className="project-template-icon">{item.id === 'blank' ? <FilePlus2 size={28} /> : <BookOpen size={28} />}</span><strong>{item.name}</strong><span>{item.description}</span><p>{item.detail}</p></button>)}</div>
         <div className="project-create-fields"><label><span>作品名称</span><input aria-label="新项目名称" value={name} maxLength={200} onChange={event => setName(event.target.value)} /></label><label><span>保存位置（父文件夹）</span><div className="project-directory-field"><input aria-label="新项目保存位置" value={directory} onChange={event => setDirectory(event.target.value)} /><button type="button" className="small-button" disabled={!!busy} onClick={() => void run('选择位置', async () => { const chosen = await bridge.chooseProjectDirectory!(); if (chosen) setDirectory(chosen); })}>浏览…</button></div></label><p>将在此位置创建文件夹：<strong>{projectFolderName(name)}</strong>。同名文件夹不会被覆盖。</p><button type="submit" className="primary" disabled={!!busy || !info || !name.trim() || !directory.trim() || !templates.some(item => item.id === template && item.available)}><FilePlus2 size={17} />创建并打开项目</button></div>
       </form>}
-      {busy && <p role="status">{busy}，请稍候…</p>}{error && <p className="project-browser-error" role="alert">{error}</p>}
+      {busy && <p role="status">{busy}，请稍候…</p>}{error && <p className="project-browser-error" role="alert">{error}</p>}{closeError && <p className="project-browser-error" role="alert">{closeError}</p>}
     </section>
   </main>, document.body);
 }

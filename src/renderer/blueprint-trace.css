@@ -1,0 +1,72 @@
+.ui-preview-content { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.blueprint-trace { flex: 0 0 clamp(340px, 42%, 600px); width: 42%; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--editor-panel); border-left: 1px solid var(--border); font-size: 12px; }
+.blueprint-trace > header { display: flex; align-items: center; flex: none; gap: 8px; padding: 8px 10px; }
+.blueprint-trace > header > span { color: var(--muted); margin-left: auto; }
+.blueprint-trace-help { padding: 0 10px 6px; flex: none; max-height: 25%; overflow: auto; }
+.blueprint-trace-help p { line-height: 1.6; margin: 6px 0; }
+.blueprint-trace-notice { flex: none; margin: 0; padding: 4px 10px; color: var(--warning, #e4b764); }
+.blueprint-trace-filters { display: grid; grid-template-columns: minmax(110px, 1fr) minmax(0, 1.3fr); gap: 6px; padding: 0 10px 6px; flex: none; }
+.blueprint-trace-filters > input { grid-column: 1 / -1; }
+.blueprint-trace-filters input, .blueprint-trace-filters select { width: 100%; min-width: 0; height: 30px; }
+.blueprint-trace-pagination { display: flex; align-items: center; gap: 5px; padding: 0 10px 6px; flex: none; }
+.blueprint-trace-pagination label { display: flex; gap: 4px; align-items: center; white-space: nowrap; }
+.blueprint-trace-pagination output { margin-left: auto; color: var(--muted); }
+.blueprint-trace-entries { flex: 1; min-height: 62px; overflow: auto; overscroll-behavior: contain; border-block: 1px solid var(--border); }
+.blueprint-trace-entries > p { padding: 10px; }
+.blueprint-trace-entry { border: 0; border-radius: 0; background: transparent; border-bottom: 1px solid var(--border); padding: 7px 10px; display: flex; flex-direction: column; gap: 3px; width: 100%; text-align: left; color: var(--editor-text); }
+.blueprint-trace-entry > strong, .blueprint-trace-entry > span:not(.blueprint-trace-entry-meta), .blueprint-trace-entry > small { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.blueprint-trace-entry-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.blueprint-trace-entry-meta > span, .blueprint-trace-entry small { color: var(--muted); font-weight: normal; }
+.blueprint-trace-entry[aria-current=true] { background: var(--editor-selection, #344758); box-shadow: inset 3px 0 var(--accent, #71b2d2); }
+.blueprint-trace-entry.trace-stop b { color: var(--warning, #e4b764); }
+.blueprint-trace-entry.trace-write b { color: #85cbb4; }
+.blueprint-trace-entry:hover { background: var(--editor-hover, #30353b); }
+.blueprint-trace-entry:focus-visible { outline: 2px solid var(--accent, #71b2d2); outline-offset: -2px; }
+.blueprint-trace-details { flex: 0 1 auto; min-height: 80px; max-height: 51%; overflow: auto; padding: 8px 10px; border-bottom: 1px solid var(--border); overscroll-behavior: contain; }
+.blueprint-trace-detail-title { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.blueprint-trace-details dl { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 5px 8px; margin: 10px 0; }
+.blueprint-trace-details dt, .blueprint-trace-details small { color: var(--muted); }
+.blueprint-trace-details dd { margin: 0; overflow-wrap: anywhere; }
+.blueprint-trace-details pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; margin: 0; }
+.blueprint-trace-locations { display: flex; flex-wrap: wrap; gap: 6px; }
+.blueprint-trace-details h4 { margin: 12px 0 6px; }
+.blueprint-trace-stack { padding-left: 20px; margin: 0; }
+.blueprint-trace-stack li { margin: 6px 0; }
+.blueprint-trace-stack li > * { display: block; max-width: 100%; white-space: normal; text-align: left; overflow-wrap: anywhere; margin-top: 4px; }
+.blueprint-trace > footer { flex: none; padding: 7px 10px; max-height: 25%; overflow: auto; }
+.blueprint-trace > footer > small { display: block; color: var(--muted); margin-top: 4px; }
+.blueprint-trace > footer p { margin: 0 0 6px; overflow-wrap: anywhere; }
+@media (max-width: 900px) {
+  .ui-preview-content.trace-open > .ui-logic-preview-body { visibility: hidden; }
+  .ui-preview-content > .blueprint-trace { position: absolute; inset: 0; width: auto; border-left: 0; }
+  .blueprint-trace-details { max-height: 48%; }
+}
+@media (max-height: 650px) {
+  .ui-preview-window .ui-preview-controls { max-height: 34%; }
+  .blueprint-trace-help { display: none; }
+  .blueprint-trace-details { max-height: 42%; }
+  .blueprint-trace > footer > small { display: none; }
+}
+
+@media (max-height: 700px) {
+  .blueprint-trace.has-detail .blueprint-trace-filters, .blueprint-trace.has-detail .blueprint-trace-pagination, .blueprint-trace.has-detail .blueprint-trace-entries { display: none; }
+  .blueprint-trace.has-detail .blueprint-trace-details { flex: 1; max-height: none; min-height: 0; }
+}
+
+.blueprint-trace > .blueprint-trace-help { margin: 0; border: 0; border-radius: 0; }
+.blueprint-trace > .blueprint-trace-help > summary { min-height: 0; padding: 3px 0; }
+@media (min-height: 701px) {
+  .blueprint-trace-details { flex: 0 0 46%; max-height: none; }
+}
+
+/* Reserve space for actions even at the 640×480 minimum window size. */
+.blueprint-trace-entries { flex: 1 1 0; min-height: 0; }
+#root .ui-preview-window .ui-logic-preview :is(details.ui-preview-help, details.ui-preview-test-data, details.blueprint-trace-help) > summary {
+  min-height: 0; padding: 3px 0; margin: 0; border: 0; border-radius: 0; background: transparent;
+}
+
+@media (max-height: 650px) {
+  /* The trace, not a stack of unrelated controls, gets the working area.
+     Returning to the canvas restores the still-mounted clock/audio controls. */
+  .ui-preview-window .ui-logic-preview.trace-visible > .ui-preview-controls { display: none; }
+}

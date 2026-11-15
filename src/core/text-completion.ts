@@ -1,11 +1,11 @@
 import { graphResourceKey, isTimelineResource, projectGraphs, withProjectGraphs } from './project-resources';
 import { characterDisplayPresets } from './character-presets';
-import { actorInstanceIds, actorLifetimes } from './actor-instance';
+import { actorInstanceIds, actorInstanceLabel, actorLifetimes } from './actor-instance';
 import { pinyin } from 'pinyin-pro';
 import { effectiveCharacter, type Project, type Asset, type AssetCategory } from './model';
 import { categoryAssets, assetCategories } from './asset-library';
 import { textReference, serializeParameterValue } from './text-script';
-import { blueprintGroup, blueprintInputTarget } from './blueprint-authoring';
+import { blueprintActorInstanceTargets, blueprintGroup, blueprintInputTarget } from './blueprint-authoring';
 import { availablePerformanceBlueprints, commandPerformanceBlueprints } from './builtin-performances';
 import { blueprintCallName, resolveBlueprintCall } from './blueprint-names';
 import { blueprintAssetFilter } from './blueprint-assets';
@@ -13,6 +13,8 @@ import { textHeading, type TextHeading } from './text-headings';
 
 import { commandSignatures, parameter, type CommandSignature } from './command-parameters';
 import { argumentTokens, argumentText, argumentName, bindArguments } from './text-arguments';
+import { parameterDisplayValue, parameterTypeName } from './parameter-sets';
+import { storyTransitionPorts } from './flow-transitions';
 export { commandSignatures, type CommandSignature, type CommandParameter } from './command-parameters';
 
 const searchCache = new Map<string, string[]>();
@@ -38,6 +40,12 @@ export function completionScore(label: string, query: string, aliases: string[] 
   return score;
 }
 export interface TextCompletion { id: string; label: string; detail: string; insertText: string; kind: string; assetId?: string; aliases?: string[]; group?: string; replaceStart?: number; replaceEnd?: number; caretOffset?: number; openParameters?: boolean }
+function actorNumberItems(project: Project, characterId?: string): TextCompletion[] {
+  return [...new Set(['1', '2', '3', ...actorInstanceIds(project, characterId)])].map(id => ({
+    id, label: actorInstanceLabel(id), insertText: id, aliases: [id], kind: '第几个',
+    detail: /^\d+$/.test(id) ? '同一角色的固定编号；相同编号更新同一个副本。' : '兼容工程中已有的命名实例。',
+  }));
+}
 export interface CompletionResource { kind: Asset['kind'] | 'all'; category: AssetCategory | 'all' }
 export const commandGroup = (_name: string) => '基础';
 export interface TextAssistance { start: number; end: number; query: string; items: TextCompletion[]; signature?: CommandSignature; syntax?: 'heading'; parameterIndex?: number; parameterEdits?: TextCompletion[]; resource?: CompletionResource }
@@ -60,8 +68,18 @@ function argumentItems(project: Project, spec: CommandSignature, index: number, 
   const field = spec.parameters[index];
   if (!field) return [];
   const item = (id: string, name: string, detail: string, reference = true): TextCompletion => ({ id, label: name, detail, kind: field.name, insertText: serializeParameterValue(reference ? textReference(name, id) : name) });
+  if (spec.name === '连线过渡' && field.name === '出口') {
+    const ownerValue = values[0] ?? '', ownerId = ownerValue.match(/【([a-z][a-z0-9_]{0,63})】$/)?.[1];
+    const matches = project.nodes.filter(node => ownerId ? node.id === ownerId : node.id === ownerValue || node.name === ownerValue);
+    if (matches.length !== 1) return [];
+    const node = matches[0], labels: Record<string, string> = { next: node.kind === 'call' ? '返回后' : '继续', target: node.kind === 'call' ? '调用' : '跳转', yes: '满足', no: '不满足', success: '成功', failure: '失败', cancel: '取消', timeout: '超时' };
+    return storyTransitionPorts(node, project).map(({ port, target }) => {
+      const name = (node.kind === 'choice' ? node.choices.find(option => option.id === port)?.text : node.kind === 'interaction' ? node.hotspots.find(hotspot => hotspot.id === port)?.name : undefined) ?? labels[port] ?? port;
+      return item(port, name, target ? `前往 ${project.nodes.find(node => node.id === target)?.name ?? '缺失模块'}` : '尚未连接，设置将保留');
+    });
+  }
   const selectedCharacter = effectiveCharacter(project, project.characters.find(c => c.name === argumentName(values[0] ?? '') || c.id === values[0]?.trim() || values[0]?.endsWith('【' + c.id + '】'))?.id ?? (spec.name === '显示角色' && !values[0] ? speakerId : '') ?? '');
-  if (field.name === '实例ID') return actorInstanceIds(project, selectedCharacter?.id).map(id => item(id, id, '已命名的角色实例', false));
+  if (field.name === '第几个' && commandSignatures.includes(spec) && (spec.name === '显示角色' || spec.name === '隐藏角色')) return actorNumberItems(project, selectedCharacter?.id);
   switch (field.kind) {
     case 'character': return project.characters.map(c => ({ ...item(c.id, c.name, ''), assetId: effectiveCharacter(project, c.id)?.expressions[0]?.assetId }));
     case 'preset': return [item('default', '角色默认', '跟随角色默认预设', false), ...characterDisplayPresets(project, selectedCharacter?.id ?? '').map(p => item(p.id, p.name, '关联站位预设', true)), item('manual', '手动', '本次使用坐标和缩放', false)];
@@ -71,7 +89,7 @@ function argumentItems(project: Project, spec: CommandSignature, index: number, 
     case 'node': return project.nodes.filter(n => spec.name !== '互动实例' || n.kind === 'interaction').filter(n => spec.name !== '小游戏实例' || n.kind === 'minigame').map(n => item(n.id, n.name, project.scenes.find(s => s.id === n.sceneId)?.name ?? '剧情节点'));
     case 'effect': return [...project.effects.map(e => item(e.id, e.name, '工程效果')), ...['纵向震动', '横向震动', '镜头推进', '镜头复位'].map(name => item(name, name, '内置效果', false))];
     case 'blueprint': return projectGraphs(project).filter(b => b.kind !== 'ui').map(b => ({ ...item(b.id, b.name, blueprintGroup(project, b.id) || (isTimelineResource(b) ? '时间轴预设' : '蓝图')), aliases: [blueprintGroup(project, b.id)] }));
-    case 'variable': return project.variables.map(v => item(v.id, v.name, `初始值：${v.initial}`));
+    case 'variable': return project.variables.map(v => item(v.id, v.name, `${parameterTypeName(v)} · 初始值：${parameterDisplayValue(project, v)}`));
     case 'image': case 'asset': return project.assets.filter(asset => field.kind === 'asset' || asset.kind === 'image').map(asset => ({ ...item(asset.id, asset.name, asset.path), assetId: asset.kind === 'image' ? asset.id : undefined }));
     case 'video': return project.assets.filter(asset => asset.kind === 'video').map(asset => item(asset.id, asset.name, asset.path));
     case 'visualId': return [...new Set(['image', 'video', 'text', ...project.nodes.flatMap(node => node.kind === 'passage' ? node.lines.flatMap(line => line.actions.flatMap(action => action.kind === 'visual' || action.kind === 'hideVisual' ? [action.instanceId] : [])) : [])])].map(id => item(id, id, '', false));
@@ -84,8 +102,8 @@ function headingParameterAssistance(project: Project, heading: TextHeading, line
   const parameters = heading.parameters!;
   const signature: CommandSignature = { name: heading.kind, detail: '目录参数写在括号内；省略时使用默认设置。', parameters: [
     parameter('流程图', 'keyword', `是否在游戏流程图中显示此${heading.kind}；默认${heading.kind === '章节' ? '是' : '否'}。`, ['是', '否']),
-    parameter('显示名称', 'text', '游戏流程图中的名称；省略时使用目录标题。最多 120 个字，包含逗号时用引号包住。'),
-    parameter('样式', 'text', '选择“界面 → 流程图 → 框样式”中的可复用样式；省略时使用默认外观。'),
+    parameter('显示名称', 'text', '游戏流程图中的名称；省略时使用目录标题。用 ｜ 分段后，每段可以用不同的字体和大小，例如 记 第一回｜醉梦。最多 120 个字，包含逗号时用引号包住。'),
+    parameter('样式', 'text', '选择玩家剧情图“节点样式 → 节点外观预设”中的预设；省略时使用基础外观。'),
   ] };
   const args = line.slice(parameters.start, parameters.end), base = lineStart + parameters.start;
   const binding = bindArguments(args, signature.parameters, true), relativeCaret = column - parameters.start;
@@ -99,7 +117,7 @@ function headingParameterAssistance(project: Project, heading: TextHeading, line
   const field = signature.parameters[parameterIndex];
   const items: TextCompletion[] = naming ? signature.parameters.flatMap((field, index) => used.has(index) ? [] : [{
     id: 'name:' + index, label: field.name, detail: field.detail, insertText: field.name + '=', kind: '参数名', openParameters: true,
-  }]) : field?.name === '样式' ? (project.ui.flowStyles ?? []).map(style => ({ id: style.id, label: style.name, detail: '流程图框样式', insertText: serializeParameterValue(textReference(style.name, style.id)), kind: '样式', assetId: style.skin?.idle })) : (field?.values ?? []).map(value => ({ id: value, label: value, detail: field.detail, insertText: value, kind: field.name }));
+  }]) : field?.name === '样式' ? (project.ui.flowStyles ?? []).map(style => ({ id: style.id, label: style.name, detail: '节点外观预设', insertText: serializeParameterValue(textReference(style.name, style.id)), kind: '样式', assetId: style.skin?.idle })) : (field?.values ?? []).map(value => ({ id: value, label: value, detail: field.detail, insertText: value, kind: field.name }));
   const edits = signature.parameters.map((field, index): TextCompletion => {
     const existing = binding.bindings.find(item => item.index === index && item.token.name !== undefined);
     const partial = naming && token.name === undefined && completionScore(field.name, query) > 0 ? token : undefined;
@@ -143,7 +161,7 @@ export function textAssistance(project: Project, source: string, offset: number,
   if (colon < 0 || column <= colon) {
     const typed = before.slice(nameStart).trim();
     if ((!typed && !marked && !explicit) || !/^[\p{Letter}\p{Number}_\s-]*$/u.test(typed)) return;
-    const choices: TextCompletion[] = commandSignatures.filter(spec => !spec.legacy && (spec.name !== '角色功能' || project.characters.some(c => effectiveCharacter(project, c.id)?.features?.length))).map(spec => ({ id: `command:${spec.name}`, label: spec.name, detail: spec.detail, aliases: spec.aliases, insertText: `@${spec.name}${spec.parameters.length ? '：' : ''}`, kind: '指令', group: commandGroup(spec.name) }));
+    const choices: TextCompletion[] = commandSignatures.filter(spec => !spec.legacy).map(spec => ({ id: `command:${spec.name}`, label: spec.name, detail: spec.detail, aliases: spec.aliases, insertText: `@${spec.name}${spec.parameters.length ? '：' : ''}`, kind: '指令', group: commandGroup(spec.name) }));
     choices.push(...commandPerformanceBlueprints(project).map(graph => ({ id: graphResourceKey(graph), label: blueprintCallName(graph), detail: `${graph.exposedInputs.length} 个参数`, aliases: [graph.name, blueprintGroup(project, graph.id)], insertText: `@${textReference(blueprintCallName(graph), graph.id)}${graph.exposedInputs.length ? '：' : ''}`, kind: isTimelineResource(graph) ? '时间轴预设' : '蓝图', group: blueprintGroup(project, graph.id) || (projectGraphs(project).some(item => item.id === graph.id) ? '项目演出' : '内置演出') })));
     if (!marked) choices.push(...[{ id: '', name: '旁白' }, ...project.characters].map(c => ({ id: `speaker:${c.id}`, label: c.name, detail: '填写这位角色的台词', insertText: `${c.name}：`, kind: '说话人' })));
     return { start: lineStart + (line.match(/^\s*/)?.[0].length ?? 0), end: lineStart + (colon < 0 ? line.length : colon + 1), query: typed, items: rank(choices, typed) };
@@ -197,8 +215,15 @@ export function textAssistance(project: Project, source: string, offset: number,
     const pin = graph.exposedInputs[parameterIndex - parameterOffset];
     if (pin) {
       const target = blueprintInputTarget(graph, pin.id, { blueprints: availablePerformanceBlueprints(project) });
-      if (target.pinId === 'lifetime') items = Object.entries(actorLifetimes).map(([id, name]) => ({ id, label: name, insertText: id, detail: name, kind: '显示范围' }));
-      else if (target.pinId === 'instanceId') items = actorInstanceIds(project).map(id => ({ id, label: id, insertText: id, detail: '角色实例 ID', kind: '实例' }));
+      const actorTargets = blueprintActorInstanceTargets(graph, pin.id, { blueprints: availablePerformanceBlueprints(project) });
+      if (actorTargets.length) {
+        const actorTarget = actorTargets.length === 1 ? actorTargets[0] : undefined;
+        const characterInput = actorTarget ? graph.exposedInputs.findIndex(input => input.dataType === 'character' && blueprintInputTarget(graph, input.id, { blueprints: availablePerformanceBlueprints(project) }).node === actorTarget) : -1;
+        const specified = String(characterInput >= 0 ? values[characterInput + parameterOffset] || graph.exposedInputs[characterInput].defaultValue || '' : actorTarget?.properties.characterId ?? '');
+        const selected = project.characters.find(character => character.id === specified || character.name === argumentName(specified) || specified.endsWith('【' + character.id + '】'))?.id;
+        items = actorNumberItems(project, selected ?? (!specified && actorTarget?.type === 'showCharacter' ? speakerId : undefined));
+      }
+      else if (target.pinId === 'lifetime') items = Object.entries(actorLifetimes).map(([id, name]) => ({ id, label: name, insertText: id, detail: name, kind: '显示范围' }));
       else if (pin.dataType === 'asset') {
         resource = blueprintAssetFilter(withProjectGraphs({ ...project }, availablePerformanceBlueprints(project)), graph, pin);
         const categories = resource.category === 'all' ? undefined : assetCategories(project);

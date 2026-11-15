@@ -1,5 +1,10 @@
+import { mergeBlueprintDebugPacket, type BlueprintBreakpoint, type BlueprintDebugSnapshot } from '../core/blueprint-debug';
+import { projectEditSnapshot, projectReadSnapshot } from '../core/project-mutation';
+import { resolveUiPreviewAction, type UiPreviewAction, type UiPreviewActionResult } from '../core/ui-preview-actions';
+import type { BlueprintUsage } from '../core/blueprint-usages';
+import { blueprintResourceEditedProject } from '../core/blueprint-resource-edit';
 import { graphResourceKey, projectGraphs, addProjectGraphs } from '../core/project-resources';
-import { createTimelinePreset } from '../core/timeline-component';
+import { createTimelinePreset, isTimelineComponent } from '../core/timeline-component';
 import { AssetImportContext, mergeImportedAssets } from './AssetImportContext';
 import { findTimelinePath } from '../core/timeline-navigation';
 import { currentScriptText } from '../core/script-text';
@@ -9,12 +14,20 @@ import type { UiPageSelection, UiAnimationSelection, BlueprintSelection } from '
 import { isBlueprintEditorCommand, runBlueprintEditorAction } from './blueprint-editor-actions';
 import { updateEditorLayout, editorLayoutEvent, editorLayoutNames } from '../core/editor-layout';
 import { resolveAiEditorTarget } from '../core/ai-editor-targets';
+import { blueprintContext } from '../core/blueprint-context';
 import { controlAiPreview } from './ai-preview-control';
+import { aiActivityFor } from './ai-activity';
 import type { UiPreviewWindowControls } from './useUiPreviewWindow';
 import { availableBlueprintName } from '../core/blueprint-names';
 import type { AiEditorResult, AiEditorReporter } from '../core/ai-editor-commands';
-import { applyUiDraft, uiDraftChanged, type UiDraft } from '../core/ui-draft';
+import { applyUiDraft, uiDraftChanged } from '../core/ui-draft';
+import { sameProjectValue } from '../core/project-history';
+import { useUiDraftHistory } from './useUiDraftHistory';
+import { useProjectRecovery } from './useProjectRecovery';
+import { NumericEditContext } from './NumericEditContext';
+import { moduleLineSelection } from './module-line-selection';
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from 'react-dom';
 import { version as studioVersion } from "../../package.json";
 import {
   AlertCircle,
@@ -57,6 +70,7 @@ import {
   makeId,
   newNode,
   connectNode,
+  variableValueType,
   type Diagnostic,
   type NodeKind,
   type Project,
@@ -64,6 +78,7 @@ import {
 } from "../core/model";
 import type { AiEditorAction, AiWorkspaceContext, AssetImportOptions, PreviewMode, PreviewPhase, PreviewOptions, ProjectSession, RunResult, RuntimeEvent } from "../core/bridge";
 import { validateProject } from "../core/validate";
+import { addNodeToStoryGroup, pruneStoryGroups } from '../core/story-groups';
 import { diagnosticLocation, diagnosticSourceLine, uniqueDiagnostics } from '../core/diagnostic-location';
 import { createBlueprintGraph, synchronizeBlueprintSignatures } from "../core/blueprint";
 import { moveContent, type ContentItem } from '../core/content-browser';
@@ -92,8 +107,16 @@ import { WorkspaceTabs } from './WorkspaceTabs';
 import type { PerformanceTarget } from '../core/performance-workspace';
 import { Blueprint } from "./Blueprint";
 import type { BlueprintFocus } from "./BlueprintGraphEditor";
+import { BlueprintNavigationBar } from "./BlueprintNavigationBar";
+import { enterBlueprintVisit, resolveBlueprintReturn, type BlueprintReturnPoint, type BlueprintVisit, type OpenBlueprintGraph } from "./blueprint-navigation";
 import { stageEditedProject, type StageCommit } from '../core/stage-edit';
 import { UiEditor, type UiFocus } from "./UiEditor";
+import { UiFontFaces } from './UiAppearance';
+import type { UiAuthoringSession } from './ui-authoring-session';
+import type { GameFlowFocus } from './GameFlowInspector';
+import type { GameFlowPhase } from '../core/game-flow-schema';
+import type { UiPageUsage } from '../core/game-flow';
+import type { ParameterUsage } from '../core/parameter-usages';
 import { Inspector, type ResourceSelection } from "./Inspector";
 import { Library } from "./Library";
 import { StoryDirectory } from './StoryDirectory';
@@ -105,6 +128,8 @@ import { AiAssistant } from './AiAssistant';
 import { errorMessage } from '../core/error-message';
 import { applyAiChanges, type AiChange } from '../core/ai';
 import { applyAiWorkflow, type AiWorkflowProposal } from '../core/ai-workflow';
+import { storyFlowContentEdit } from '../core/story-flow-authoring';
+import { uiPage } from '../core/ui-pages';
 
 const studio = window.studio ?? browserBridge;
 let draftCache: { inputs: unknown[]; value: boolean } | undefined;
@@ -123,6 +148,10 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
   const [readTextScript] = useState(createTextScriptReader);
   const history = useProjectHistory();
   const { project, reset } = history;
+  const closingRef = useRef(false);
+  const [closing, setClosing] = useState(false);
+  const projectBrowserBusy = useRef(false);
+  const resumeDiscovery = useRef<(() => void) | undefined>(undefined);
   const [projectPath, setProjectPath] = useState<string | null>(null);
   const [locationMissing, setLocationMissing] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<ProjectSession['template']>();
@@ -134,14 +163,14 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
   );
   const [lineId, setLineId] = useState<string>();
   const [view, setViewState] = useState<EditorView>("script");
-  const [uiDraft, setUiDraft] = useState<UiDraft>();
+  const [gameFlowFocus, setGameFlowFocus] = useState<GameFlowFocus>();
+  const [storyFlowFocus, setStoryFlowFocus] = useState<{ nodeId?: string; sceneId?: string; request: number }>();
+  const uiHistory = useUiDraftHistory(project);
+  const { draft: uiDraft, current: uiDraftRef, update: updateUiDraft } = uiHistory;
   const [contentFocus,setContentFocus]=useState<{assetId:string;request:number}>();
   const [uiAdvanced, setUiAdvanced] = useState(false);
-  const uiDraftRef = useRef<UiDraft | undefined>(undefined);
   const uiSaving = useRef(false);
-  const uiPast = useRef<UiDraft[]>([]), uiFuture = useRef<UiDraft[]>([]);
   const [uiLeave, setUiLeave] = useState<{ proceed: () => void; cancel?: () => void; onDecision?: (decision:'save'|'discard'|'cancel')=>void; stay?:boolean }>();
-  const updateUiDraft = (next?: UiDraft) => { if (!next) { uiPast.current = []; uiFuture.current = []; } uiDraftRef.current = next; setUiDraft(next); };
   const leaveUi = (action: () => void) => {
     if (!uiDraftChanged(uiDraftRef.current)) return true;
     setUiLeave({ proceed: action }); return false;
@@ -155,21 +184,36 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
   const [parameterSetFocus,setParameterSetFocus]=useState<string>();
   const [resourceFocus,setResourceFocus]=useState(0);
   const [blueprintFocus, setBlueprintFocus] = useState<BlueprintFocus>();
+  const [blueprintVisits, setBlueprintVisits] = useState<BlueprintVisit[]>([]);
+  useEffect(() => setBlueprintVisits([]), [project.id]);
   const [uiAnimationFocus, setUiAnimationFocus] = useState<UiAnimationFocus>();
   const [uiBlueprintFocus, setUiBlueprintFocus] = useState<BlueprintFocus>();
   const [performanceTarget, setPerformanceTarget] = useState<PerformanceTarget>();
+  const [blueprintEntryRequest, setBlueprintEntryRequest] = useState(0);
   const [textExchange, setTextExchange] = useState<{ imported?: ImportedText; complete?: (result:AiEditorResult)=>void }>();
   const textSource = useMemo(() => project.scriptText?.content ?? projectToText(project), [project]);
   // Once the text editor is open, its source is the draft being edited. Avoid
   // reparsing the complete document just to decide whether to keep that view.
-  const textDraft = useMemo(() => view === 'text' ? true : hasTextDraft(project), [view, project]);
+  const textDraft = useMemo(() => view === 'text' ? true : hasTextDraft(project, readTextScript), [view, project, readTextScript]);
   const [textFocusLine, setTextFocusLine] = useState<{ line: number; request: number }>();
-  const commit: Commit = useCallback((label, edit, options) => history.commit(label, (draft, before) => {
-    const preserveDraft = hasTextDraft(before);
-    edit(draft);
-    synchronizeBlueprintSignatures(draft);
-    if (draft.scriptText && !preserveDraft) draft.scriptText = { ...draft.scriptText, content: projectToText(draft) };
-  }, options), [history.commit]);
+  const [moduleRevealRequest, setModuleRevealRequest] = useState(0);
+  const commit: Commit = useCallback((label, edit, options) => {
+    let regenerated = false;
+    const next = history.commit(label, (draft, before) => {
+      const preserveDraft = hasTextDraft(before);
+      edit(draft);
+      if (draft.nodes !== before.nodes || draft.scenes !== before.scenes) pruneStoryGroups(draft);
+      synchronizeBlueprintSignatures(draft, before);
+      // Read the plain edited project: walking the draft is over ten times slower.
+      if (draft.scriptText && !preserveDraft) { draft.scriptText = { ...draft.scriptText, content: projectToText(projectReadSnapshot(draft)) }; regenerated = true; }
+    }, options);
+    // Text just written from this project needs no parsing to show it matches.
+    if (regenerated) verifiedTextProjects.add(next);
+    return next;
+  }, [history.commit]);
+  const commitBlueprint: Commit = useCallback((label, edit, options) => {
+    history.commitPrepared(label, before => blueprintResourceEditedProject(before, edit, readTextScript), options);
+  }, [history.commitPrepared, readTextScript]);
   const [library, setLibrary] = useState<LibraryKind>("scenes");
   useEffect(()=>{if(view!=='ui'||library!=='scenes')setUiAdvanced(false);},[view, library]);
   const [resource, setResource] = useState<ResourceSelection>();
@@ -191,39 +235,45 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
   }, [uiFocus, view]);
   const uiWorkingProject = useMemo(() => applyUiDraft(project, uiDraft), [project, uiDraft]);
   const uiProject = useMemo(() => uiPreviewInstance === undefined ? uiWorkingProject : { ...uiWorkingProject, ui: { ...uiWorkingProject.ui, activeInstanceId: uiPreviewInstance || undefined } }, [uiWorkingProject, uiPreviewInstance]);
+  // Keep authoring view state when resource/module navigation unmounts UiEditor.
+  const uiAuthoringSessions = useMemo(() => new Map<string, UiAuthoringSession>(), [project.id]);
   // Inspecting a diagnostic must not change the UI instance used by the game.
-  const commitUi: Commit = useCallback((label, edit) => {
+  const commitUi: Commit = useCallback((label, edit, options) => {
     if (uiSaving.current) return;
     if (label === '切换界面实例') setUiPreviewInstance(undefined);
-    const before = applyUiDraft(project, uiDraftRef.current);
-    const draft = structuredClone(before);
-    {
+    let regenerated = false;
+    const next = uiHistory.commit(label, (draft, before) => {
+      if (label === storyFlowContentEdit && hasTextDraft(before)) return;
       const active = draft.ui.activeInstanceId;
       if (uiPreviewInstance !== undefined && label !== '切换界面实例') draft.ui.activeInstanceId = uiPreviewInstance || undefined;
       edit(draft);
       if (uiPreviewInstance !== undefined && label !== '切换界面实例') draft.ui.activeInstanceId = draft.ui.instances?.some(instance => instance.id === active) ? active : undefined;
       const selectedName = (p: Project) => p.ui.instances?.find(instance => instance.id === p.ui.activeInstanceId)?.name;
-      if (draft.scriptText && (draft.ui.activeInstanceId !== before.ui.activeInstanceId || selectedName(draft) !== selectedName(before)) && !hasTextDraft(before)) draft.scriptText = { ...draft.scriptText, content: projectToText(draft) };
-    }
-    if (!uiDraftChanged({ base: before, value: draft })) return;
-    uiPast.current.push(uiDraftRef.current ?? { base: project, value: project });
-    if (uiPast.current.length > 100) uiPast.current.shift();
-    uiFuture.current = [];
-    updateUiDraft({ base: uiDraftRef.current?.base ?? project, value: draft });
-  }, [project, uiPreviewInstance]);
+      if (draft.scriptText && (label === storyFlowContentEdit || label === '流程图节点文字' || draft.ui.activeInstanceId !== before.ui.activeInstanceId || selectedName(draft) !== selectedName(before)) && !hasTextDraft(before)) {
+        draft.scriptText = { ...draft.scriptText, content: projectToText(projectReadSnapshot(draft)) };
+        regenerated = true;
+      }
+    }, options);
+    if (regenerated) verifiedTextProjects.add(next);
+  }, [uiHistory.commit, uiPreviewInstance]);
   const undo = () => {
     if (view !== 'ui') { history.undo(); return; }
     if (uiSaving.current) return;
-    const previous = uiPast.current.pop();
-    if (previous) { if (uiDraftRef.current) uiFuture.current.push(uiDraftRef.current); updateUiDraft(previous); }
+    uiHistory.undo();
   };
   const redo = () => {
     if (view !== 'ui') { history.redo(); return; }
     if (uiSaving.current) return;
-    const next = uiFuture.current.pop();
-    if (next) { if (uiDraftRef.current) uiPast.current.push(uiDraftRef.current); updateUiDraft(next); }
+    uiHistory.redo();
   };
   const [settings, setSettings] = useState(false);
+  const selectUi = useCallback((id?: string) => {
+    setUiId(id);
+    setUiFocus(undefined);
+    setUiSelectionRequest(request => request + 1);
+    setResource(undefined);
+    setSettings(false);
+  }, []);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('project');
   const [navigation, setNavigation] = useState<string[]>([]);
   const [inspectorVisible, setInspectorVisible] = useState(true);
@@ -238,6 +288,8 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
   const [dockSelection, setDockSelection] = useState<string[]>([]);
   const [contentOpen, setContentOpen] = useState(false);
   const [busy, setBusy] = useState("");
+  const operation = useRef("");
+  const [busyNotice, setBusyNotice] = useState("");
   const [status, setStatus] = useState("正在打开工程…");
   const [problemsOpen, setProblemsOpen] = useState(false);
   const [log, setLog] = useState("");
@@ -261,6 +313,16 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
   const [playMode, setPlayMode] = useState<PreviewMode>('embedded');
   const [liveMode, setLiveMode] = useState<PreviewMode>('embedded');
   const lastPreview = useRef<PreviewOptions>({});
+  const [playDebug, setPlayDebug] = useState<BlueprintDebugSnapshot>();
+  const playDebugRef = useRef<BlueprintDebugSnapshot | undefined>(undefined);
+  const playSessionRef = useRef<string | undefined>(undefined);
+  const [firstFramePending, setFirstFramePending] = useState(false);
+  const [debugEnabled, setDebugEnabled] = useState(true), [debugPoints, setDebugPoints] = useState<BlueprintBreakpoint[]>([]);
+  const setDebugSettings = (enabled: boolean, points: BlueprintBreakpoint[]) => {
+    setDebugEnabled(enabled); setDebugPoints(points);
+    lastPreview.current = { ...lastPreview.current, blueprintDebug: enabled, blueprintBreakpoints: points };
+    try { localStorage.setItem('vns:preview-settings:' + project.id, JSON.stringify(lastPreview.current)); } catch { /* Optional local settings, never project data. */ }
+  };
   const playActive = ['compiling', 'starting', 'running', 'paused'].includes(playPhase);
   const [testEntry, setTestEntry] = useState<string>();
   const [testVariables, setTestVariables] = useState<
@@ -270,9 +332,15 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
   const [helpOpen, setHelpOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const aiParsed = useMemo(() => aiOpen ? readTextScript(project, textSource) : undefined, [aiOpen, project, textSource, readTextScript]);
-  const showInspector = view !== 'ui' && inspectorVisible && library !== 'assets' && library !== 'variables' && library !== 'characters' && !hasStoryDirectory && view !== 'blueprint' && !isStoryFlowchart;
+  const hasAppInspector = view !== 'ui' && library !== 'assets' && library !== 'variables' && library !== 'characters' && !hasStoryDirectory && view !== 'blueprint' && !isStoryFlowchart;
+  const showInspector = hasAppInspector && inspectorVisible;
   const closingSnapshot = useRef({ project, dirty: history.dirty });
   closingSnapshot.current = { project: uiWorkingProject, dirty: history.dirty || uiDraftChanged(uiDraft) };
+  const readClosingSnapshot = useRef(() => closingSnapshot.current);
+  readClosingSnapshot.current = () => ({ project: applyUiDraft(history.getProject(), uiDraftRef.current), dirty: history.dirty || uiDraftChanged(uiDraftRef.current) });
+  const closeReady = useRef(ready); closeReady.current = ready;
+  const recovery = useProjectRecovery({ project, workingProject: uiWorkingProject, projectDirty: history.dirty,
+    uiDirty: uiDraftChanged(uiDraft), ready, busy: !!busy || closing, saving: uiSaving, bridge: studio, status: setStatus });
   const statusTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
@@ -292,19 +360,59 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
     clearTimeout(statusTimer.current);
     statusTimer.current = setTimeout(() => setStatus("就绪"), 6000);
   }, []);
-  useEffect(() => studio.onCloseRequested?.(() => closingSnapshot.current), []);
+  useEffect(() => studio.onCloseRequested?.(() => readClosingSnapshot.current(), async () => {
+    if (operation.current || uiSaving.current || projectBrowserBusy.current || !closeReady.current) {
+      const message = `正在${operation.current || (uiSaving.current ? '保存界面' : projectBrowserBusy.current ? '处理项目' : '打开工程')}，请等待完成后再关闭。`;
+      setBusyNotice(message); notify(message);
+      return false;
+    }
+    // Native close does not reliably blur the active field. Commit its normal
+    // blur edit and render the updated project/draft before reading the snapshot.
+    flushSync(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
+    closingRef.current = true;
+    clearTimeout(statusTimer.current);
+    flushSync(() => { setClosing(true); setStatus('正在保存并关闭窗口…'); });
+    // The settings dialog can own an in-flight request or an atomic config save
+    // even while the separate assistant is closed.
+    await aiActivityFor(studio).stopAll();
+    return true;
+  }, error => {
+    const prepared = closingRef.current;
+    closingRef.current = false; setClosing(false);
+    const discovered = resumeDiscovery.current; resumeDiscovery.current = undefined; discovered?.();
+    if (error) notify(`未能关闭：${error}`);
+    else if (prepared) notify('关闭已取消，修改保留。');
+  }), []);
+  useEffect(() => {
+    // Portals and global shortcuts sit outside app-shell; freeze them in the
+    // same synchronous close phase as the main controls.
+    const block = (event: Event) => {
+      if (!closingRef.current) return;
+      event.preventDefault(); event.stopImmediatePropagation();
+    };
+    const events = ['pointerdown', 'pointerup', 'pointermove', 'mousedown', 'mouseup', 'mousemove', 'click', 'dblclick', 'keydown', 'keyup', 'beforeinput', 'input', 'change', 'paste', 'cut', 'drop', 'dragstart', 'dragover', 'contextmenu', 'submit', 'wheel', 'touchstart', 'touchmove', 'touchend'];
+    for (const name of events) window.addEventListener(name, block, { capture: true, passive: false });
+    return () => { for (const name of events) window.removeEventListener(name, block, true); };
+  }, []);
   const adopt = useCallback(
     (session: ProjectSession) => {
-      updateUiDraft(undefined); setUiLeave(undefined);
-      reset(session.project, !session.recovered && session.path !== null);
+      updateUiDraft(undefined); setUiLeave(undefined); setBlueprintVisits([]);
+      setUiPreviewInstance(undefined); setUiId(undefined); setUiFocus(undefined); setUiAdvanced(false);
+      setActiveUiPage(undefined); setActiveUiAnimation(undefined); setActiveBlueprint(undefined);
+      setUiBlueprintFocus(undefined); setUiAnimationFocus(undefined); setBlueprintFocus(undefined); setPerformanceTarget(undefined);
+      setGameFlowFocus(undefined); setStoryFlowFocus(undefined); setParameterSetFocus(undefined); setActiveParameter(undefined);
+      setContentSelection([]); setDockSelection([]);
+      reset(session.project, session.path !== null && (!session.recovered || session.recoveredProjectDirty === false));
+      if (session.recovered) recovery.recovered(session.project);
+      if (session.uiDraft) updateUiDraft({ base: session.project, value: session.uiDraft });
       setProjectPath(session.path);
       setLocationMissing(!!session.locationMissing);
       setEditingTemplate(session.template);
       const recoveredDraft = hasTextDraft(session.project);
       let preferredMode: 'script' | 'text' = 'script';
       try { if (localStorage.getItem(`vns:story-mode:${session.project.id}`) === 'text') preferredMode = 'text'; } catch { /* Optional local view preference. */ }
-      if (recoveredDraft || preferredMode === 'text') setView('text');
-      else setView('script');
+      if (session.uiDraft) setViewState('ui');
+      else setViewState(recoveredDraft || preferredMode === 'text' ? 'text' : 'script');
       let preferredChapter: string | undefined;
       try {
         const choice = JSON.parse(localStorage.getItem(`vns:text-chapter:${session.project.id}`) ?? 'null');
@@ -324,10 +432,14 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
       let previewSettings: PreviewOptions = {};
       try { previewSettings = JSON.parse(localStorage.getItem(`vns:preview-settings:${session.project.id}`) ?? '{}') ?? {}; } catch { /* Optional local playtest settings. */ }
       setPlayMode(previewSettings.mode === 'window' ? 'window' : 'embedded');
+      lastPreview.current = previewSettings;
+      setDebugEnabled(previewSettings.blueprintDebug !== false);
+      setDebugPoints(Array.isArray(previewSettings.blueprintBreakpoints) ? previewSettings.blueprintBreakpoints.filter(point => point && typeof point.graphId === 'string' && typeof point.nodeId === 'string').slice(0, 512) : []);
+      setPlayDebug(undefined); playDebugRef.current = undefined; playSessionRef.current = undefined; setFirstFramePending(false);
       setTestEntry(session.project.nodes.some(node => node.id === previewSettings.entryId) ? previewSettings.entryId : undefined);
       setTestVariables(Object.fromEntries(session.project.variables.flatMap(variable => {
         const value = previewSettings.variables?.[variable.id];
-        return typeof value === variable.type ? [[variable.id, value as VariableValue]] : [];
+        return typeof value === variableValueType(variable) ? [[variable.id, value as VariableValue]] : [];
       })));
       setLibrary("scenes");
       setRuntimeDiagnostics([]);
@@ -358,7 +470,14 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
   useEffect(
     () =>
       studio.onRuntimeEvent((event) => {
+        if (event.kind === 'preview' && event.phase === 'compiling') { playSessionRef.current = event.sessionId; playDebugRef.current = undefined; setPlayDebug(undefined); setFirstFramePending(true); }
+        if (event.sessionId && playSessionRef.current && event.sessionId !== playSessionRef.current) return;
+        if (event.kind === 'blueprintDebug') {
+          if (event.blueprintDebug) { const snapshot = mergeBlueprintDebugPacket(playDebugRef.current, event.blueprintDebug); playDebugRef.current = snapshot; setPlayDebug(snapshot); }
+          return;
+        }
         if (event.kind === 'preview') {
+          if (event.firstFramePending !== undefined) setFirstFramePending(event.firstFramePending);
           if (event.phase) setPlayPhase(event.phase);
           if (event.phase === 'idle') setPlayOpen(false);
           setPlayMessage(event.message);
@@ -379,16 +498,6 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
     [notify],
   );
   useEffect(() => {
-    if (!ready || !history.dirty) return;
-    const timer = setTimeout(() => {
-      studio
-        .autosave(project)
-        .then(result => setStatus(result.locationMissing ? "工程位置已失效，编辑内容已暂存，请重新定位工程" : "恢复副本已自动保存"))
-        .catch((error) => setStatus(`自动保存失败：${String(error)}`));
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, [project, ready, history.dirty]);
-  useEffect(() => {
     if (!ready || !studio.checkProjectLocation) return;
     let active = true;
     const check = () => void studio.checkProjectLocation!().then(result => {
@@ -403,14 +512,20 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
     if (!ready || !projectPath || !studio.discoverAssets) return;
     let active = true, scanning = false;
     const scan = async () => {
-      if (scanning) return; scanning = true;
+      if (scanning || closingRef.current) return; scanning = true;
       const snapshot = closingSnapshot.current.project;
       try {
         const result = await studio.discoverAssets!(snapshot);
-        if (active && result && closingSnapshot.current.project.id === snapshot.id) {
-          const added = result.project.assets.filter(asset => !closingSnapshot.current.project.assets.some(existing => existing.id === asset.id));
-          if (added.length) { commit('发现目录中的素材', draft => mergeImportedAssets(draft, result.project), { separate: true }); notify(`已发现 ${added.length} 项新素材`); }
-        }
+        const accept = () => {
+          if (active && result && closingSnapshot.current.project.id === snapshot.id) {
+            const added = result.project.assets.filter(asset => !closingSnapshot.current.project.assets.some(existing => existing.id === asset.id));
+            if (added.length) { commit('发现目录中的素材', draft => mergeImportedAssets(draft, result.project), { separate: true }); notify(`已发现 ${added.length} 项新素材`); }
+          }
+        };
+        // The scanner remembers discovered files. Keep a late result so a
+        // cancelled close can apply it instead of losing it until restart.
+        if (closingRef.current) resumeDiscovery.current = accept;
+        else accept();
       } catch { /* A missing drive or an in-progress file copy is retried on the next scan. */ }
       finally { scanning = false; }
     };
@@ -419,16 +534,22 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
     window.addEventListener('focus', scan);
     return () => { active = false; clearInterval(timer); window.removeEventListener('focus', scan); };
   }, [ready, projectPath, commit, notify]);
+  const previousSelectionProject = useRef(project);
   useEffect(() => {
+    const previous = previousSelectionProject.current;
+    previousSelectionProject.current = project;
     if (view === 'text') return;
-    if (!project.scenes.some((s) => s.id === sceneId))
-      setSceneId(project.scenes[0]?.id ?? "");
+    const selectedSceneId = project.scenes.some((scene) => scene.id === sceneId) ? sceneId : project.scenes[0]?.id ?? '';
+    if (selectedSceneId !== sceneId) setSceneId(selectedSceneId);
     if (!project.nodes.some((n) => n.id === nodeId)) {
-      const node = project.nodes.find((n) => n.sceneId === sceneId);
+      const node = project.nodes.find((n) => n.sceneId === selectedSceneId);
       setNodeId(node?.id);
       setLineId(undefined);
+      return;
     }
-  }, [project, sceneId, nodeId, view]);
+    const selectedLineId = moduleLineSelection(project, nodeId, lineId, previous);
+    if (selectedLineId !== lineId) setLineId(selectedLineId);
+  }, [project, sceneId, nodeId, lineId, view]);
   useEffect(() => {
     if (library === 'scenes' && (view === 'script' || view === 'text')) {
       setStoryMode(view);
@@ -436,12 +557,32 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
     }
   }, [view, library, ready, project.id]);
   useEffect(() => {
-    if (textDraft && library === "scenes" && view !== "text") setView("text");
+    // Unapplied source protects story editing, not independent resources. A
+    // module may temporarily invalidate a text call while its interface is fixed.
+    if (textDraft && library === "scenes" && (view === "script" || view === "flowchart")) setView("text");
   }, [textDraft, library, view]);
 
+  const beginOperation = (label: string, report?: AiEditorReporter) => {
+    if (closingRef.current) {
+      const message = '主编辑器正在关闭，请等待关闭完成或取消后再试。';
+      report?.({ status: 'failed', message });
+      return false;
+    }
+    if (operation.current) {
+      const message = `正在${operation.current}，请等待完成后再试。`;
+      setBusyNotice(message);
+      report?.({status:'failed',message});
+      return false;
+    }
+    // React state updates are deferred; the ref also blocks a second operation
+    // started by another event before the next render.
+    operation.current = label;
+    setBusyNotice(""); setBusy(label);
+    return true;
+  };
+  const endOperation = () => { operation.current = ""; setBusyNotice(""); setBusy(""); };
   const run = async (label: string, task: () => Promise<void>, report?: AiEditorReporter) => {
-    if (busy) { report?.({status:'failed',message:'主编辑器正在处理其他操作。'}); return; }
-    setBusy(label);
+    if (!beginOperation(label, report)) return;
     try {
       await task();
     } catch (error) {
@@ -451,27 +592,41 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
       notify(`${label}失败：${message}`);
       report?.({status:'failed',message:message.slice(0,6000)});
     } finally {
-      setBusy("");
+      endOperation();
     }
   };
+  const acceptUiSave = (label: string, base: Project, snapshot: Project, session: ProjectSession) => {
+    if (history.getProject().id !== snapshot.id) return;
+    history.checkpoint();
+    // Apply the saved UI changes to today's project, not the old whole-project
+    // snapshot: asset discovery/imports can finish while the save is pending.
+    const current = history.commitPrepared(label, before => applyUiDraft(before, { base, value: snapshot }));
+    history.checkpoint();
+    // Only the snapshot actually written to disk is saved. Concurrent changes
+    // remain dirty, even though this UI draft has now been accepted.
+    const saved = history.acceptAssetRelocations(sameProjectValue(current, snapshot) ? current : snapshot, session.assetRelocations);
+    history.markSaved(saved);
+    setProjectPath(session.path); setEditingTemplate(session.template); updateUiDraft(undefined);
+    return saved;
+  };
   const saveUi = async (saveAs = false, report?: AiEditorReporter): Promise<boolean> => {
-    if (uiSaving.current) return false;
-    uiSaving.current = true; setBusy('保存界面');
+    if (!beginOperation('保存界面', report)) return false;
+    uiSaving.current = true;
     try {
-      const snapshot = applyUiDraft(project, uiDraftRef.current);
+      const base = history.getProject(), snapshot = applyUiDraft(base, uiDraftRef.current);
       const session = await studio.save(snapshot, saveAs || !projectPath);
       if (!session) { report?.({status:'cancelled',message:'已取消保存界面。'}); return false; }
-      history.checkpoint();
-      const saved = history.commit('保存界面', draft => Object.assign(draft, snapshot));
-      history.checkpoint(); history.markSaved(history.acceptAssetRelocations(saved, session.assetRelocations));
-      setProjectPath(session.path); setEditingTemplate(session.template); updateUiDraft(undefined); notify('界面已保存'); report?.({status:'completed',message:'界面已保存。'}); return true;
+      if (!acceptUiSave('保存界面', base, snapshot, session)) return false;
+      notify('界面已保存'); report?.({status:'completed',message:'界面已保存。'}); return true;
     } catch (error) { report?.({status:'failed',message:String(error).slice(0,6000)}); notify('界面保存失败：' + (error instanceof Error ? error.message : String(error))); return false; }
-    finally { uiSaving.current = false; setBusy(''); }
+    finally { uiSaving.current = false; endOperation(); }
   };
-  const save = (saveAs = false, report?: AiEditorReporter) => uiDraftChanged(uiDraftRef.current) ? saveUi(saveAs, report) :
-    run("保存工程", async () => {
+  const save = (saveAs = false, report?: AiEditorReporter) => {
+    // Commit blur-based fields before taking the snapshot, including Ctrl+S.
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    return uiDraftChanged(uiDraftRef.current) ? saveUi(saveAs, report) : run("保存工程", async () => {
       history.checkpoint();
-      const snapshot = project;
+      const snapshot = history.getProject();
       const session = await studio.save(snapshot, saveAs || !projectPath);
       if (session) {
         setProjectPath(session.path);
@@ -482,16 +637,16 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
         report?.({status:'completed',message:'工程已保存。'});
       } else report?.({status:'cancelled',message:'已取消保存工程。'});
     }, report);
+  };
   const openProjectBrowser = (section: ProjectBrowserSection) => void run('保存并打开项目窗口', async () => {
     const changedUi = uiDraftChanged(uiDraftRef.current);
     if (history.dirty || changedUi) {
-      const snapshot = applyUiDraft(project, uiDraftRef.current);
-      const saved = await studio.save(snapshot, !projectPath);
-      if (!saved) return;
-      history.checkpoint();
-      const current = changedUi ? history.commit('保存界面', draft => Object.assign(draft, snapshot)) : snapshot;
-      history.markSaved(history.acceptAssetRelocations(current, saved.assetRelocations));
-      setProjectPath(saved.path); setEditingTemplate(saved.template); updateUiDraft(undefined);
+      uiSaving.current = true;
+      try {
+        const base = history.getProject(), snapshot = applyUiDraft(base, uiDraftRef.current);
+        const saved = await studio.save(snapshot, !projectPath);
+        if (!saved || !acceptUiSave('保存界面', base, snapshot, saved)) return;
+      } finally { uiSaving.current = false; }
     }
     setPlayOpen(false);
     await studio.setPreviewViewport?.({ x: 0, y: 0, width: 0, height: 0, visible: false });
@@ -502,10 +657,10 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
   const relocateCurrent = () => void run('重新定位工程', async () => {
     if (!projectPath || !studio.relocateProject) return;
     const snapshot = applyUiDraft(project, uiDraftRef.current);
-    const next = await studio.relocateProject(projectPath, snapshot);
+    const next = await studio.relocateProject(projectPath, project);
     if (!next) return;
     setProjectPath(next.path); setLocationMissing(false); setEditingTemplate(next.template);
-    if (history.dirty || uiDraftChanged(uiDraftRef.current)) await studio.autosave(snapshot);
+    if (history.dirty || uiDraftChanged(uiDraftRef.current)) await studio.autosave(project, { projectDirty: history.dirty, uiDraft: uiDraftChanged(uiDraftRef.current) ? snapshot : undefined });
     notify('已连接到新位置，当前编辑内容已保留');
   });
   const open = () => { if (!leaveUi(() => { void open(); })) return; return run("打开工程", async () => {
@@ -550,14 +705,17 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
       } else reportResult?.({status:'cancelled',message:'已取消导入素材。'});
     }, reportResult);
   const importPickerAsset = async (options: AssetImportOptions) => {
-    const snapshot = closingSnapshot.current.project;
-    const result = await studio.importAssets(snapshot, options);
-    if (!result || closingSnapshot.current.project.id !== snapshot.id) return;
-    if (result.importReport?.errors.length) throw new Error(result.importReport.errors.join('；'));
-    commit('导入项目外素材', draft => mergeImportedAssets(draft, result.project), { separate: true });
-    setProjectPath(result.path);
-    const id = result.importReport?.assetIds?.[0] ?? result.project.assets.find(asset => !snapshot.assets.some(existing => existing.id === asset.id))?.id;
-    return result.project.assets.find(asset => asset.id === id);
+    if (!beginOperation('导入项目外素材')) throw new Error(`正在${operation.current}，请等待完成后再导入。`);
+    try {
+      const snapshot = closingSnapshot.current.project;
+      const result = await studio.importAssets(snapshot, options);
+      if (!result || closingSnapshot.current.project.id !== snapshot.id) return;
+      if (result.importReport?.errors.length) throw new Error(result.importReport.errors.join('；'));
+      commit('导入项目外素材', draft => mergeImportedAssets(draft, result.project), { separate: true });
+      setProjectPath(result.path);
+      const id = result.importReport?.assetIds?.[0] ?? result.project.assets.find(asset => !snapshot.assets.some(existing => existing.id === asset.id))?.id;
+      return result.project.assets.find(asset => asset.id === id);
+    } finally { endOperation(); }
   };
   const updateTextSource = (source: string, command = false) => {
     setRuntimeDiagnostics(previous => previous.length ? [] : previous);
@@ -640,10 +798,15 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
   const synchronizeText = () => !textDraft || applyParsedText(applyTextScript(project, textSource, project.scriptText?.sourceName), textSource);
   const changeView = (next: EditorView) => {
     if (playOpen) backFromPreview();
-    if (next === view && library === 'scenes') return true;
+    if (next === view && library === 'scenes' && next !== 'blueprint') return true;
     if (!leaveUi(() => changeView(next))) return false;
-    if (next !== "text" && !synchronizeText()) return false;
-    if (next === 'blueprint' && performanceTarget?.nodeId && !performanceTarget.graphId) setPerformanceTarget(undefined);
+    if ((next === "script" || next === "flowchart") && !synchronizeText()) return false;
+    if (next === 'blueprint') {
+      setBlueprintFocus(undefined);
+      setBlueprintEntryRequest(previous => previous + 1);
+      const previous = projectGraphs(project).find(graph => graph.id === performanceTarget?.graphId);
+      setPerformanceTarget(previous && !isTimelineComponent(previous) ? { ...performanceTarget!, editorMode: 'graph' } : undefined);
+    }
     if (next === 'text' && view !== 'text') {
       const parsed = applyTextScript(project, textSource);
       const location = parsed.sourceMap.find(item => !item.reference && item.nodeId === nodeId && item.lineId === lineId && item.actionCount === undefined) ?? parsed.sourceMap.find(item => !item.reference && item.nodeId === nodeId);
@@ -692,17 +855,14 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
       uiSaving.current = true;
       let savedProject: Project;
       try {
-        const snapshot = applyUiDraft(project, uiDraftRef.current);
+        const base = history.getProject(), snapshot = applyUiDraft(base, uiDraftRef.current);
         const session = await studio.save(snapshot, !projectPath);
         if (!session) { notify('已取消保存，未启动试玩'); report?.({status:'cancelled',message:'已取消保存，未启动试玩。'}); return; }
-        history.checkpoint();
-        const saved = uiDraftChanged(uiDraftRef.current) ? history.commit('试玩前保存界面', draft => Object.assign(draft, snapshot)) : snapshot;
-        history.checkpoint();
-        savedProject = history.acceptAssetRelocations(saved, session.assetRelocations);
-        history.markSaved(savedProject);
-        setProjectPath(session.path); setEditingTemplate(session.template); updateUiDraft(undefined);
+        const saved = acceptUiSave('试玩前保存界面', base, snapshot, session);
+        if (!saved) return;
+        savedProject = saved;
       } finally { uiSaving.current = false; }
-      const selected = { entryId: testEntry, variables: testVariables, ...options, mode: options?.mode ?? playMode };
+      const selected = { entryId: testEntry, variables: testVariables, blueprintDebug: debugEnabled, blueprintBreakpoints: debugPoints, ...options, mode: options?.mode ?? playMode };
       try { localStorage.setItem(`vns:preview-settings:${savedProject.id}`, JSON.stringify(selected)); } catch { /* Project data is already saved; local view settings are optional. */ }
       const current = playableProject(savedProject);
       if (!current) { report?.({status:'failed',message:'工程已保存；文本存在错误，无法继续试玩。'}); return; }
@@ -713,13 +873,20 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
       try {
         const result = await studio.preview(current, selected);
         if (result.cancelled) { report?.({status:'cancelled',message:'试玩启动已取消。'}); return; }
-        if (result.ok) { setPlayPhase('running'); notify('试玩已启动'); }
+        if (result.ok) { setPlayPhase(previous => previous === 'paused' ? previous : 'running'); notify(playDebugRef.current?.phase === 'paused' ? '蓝图已暂停，可单步或继续。' : '试玩已启动'); }
         else { setPlayPhase('failed'); setPlayMessage(result.diagnostics.find(d => d.severity === 'error')?.message ?? result.log ?? '试玩未能启动'); handleResult(result, '试玩已启动'); }
         report?.({status:result.ok?'completed':'failed',message:result.ok?'试玩已启动。':(result.diagnostics.filter(d=>d.severity==='error').map(d=>d.message).join('；')||result.log||'试玩启动失败。').slice(0,6000)});
       } catch (error) { setPlayPhase('failed'); setPlayMessage(error instanceof Error ? error.message : String(error)); throw error; }
     }, report);
   const stopPreview = async () => { setPlayOpen(false); await studio.controlPreview?.('stop'); setPlayPhase('idle'); notify('试玩已停止，已返回编辑'); };
-  const resumePreview = async () => { setPlayOpen(true); await studio.controlPreview?.('resume'); await studio.controlPreview?.('focus'); };
+  const resumePreview = async () => {
+    setPlayOpen(true);
+    try {
+      const debug = playDebugRef.current;
+      if (debug?.phase === 'paused') await studio.controlBlueprintDebug?.({ sessionId: debug.sessionId, action: 'continue' });
+      await studio.controlPreview?.('resume'); await studio.controlPreview?.('focus');
+    } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
+  };
   const pausePreview = () => playPhase === 'paused' ? resumePreview() : studio.controlPreview?.('pause');
   const backFromPreview = () => {
     setPlayOpen(false);
@@ -741,7 +908,7 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
     }, report);
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
-      if (projectBrowser) return;
+      if (closingRef.current || projectBrowser || event.defaultPrevented || event.isComposing) return;
       if (event.key === 'F5') { event.preventDefault(); if (event.shiftKey) void stopPreview(); else void preview(); return; }
       if (event.key === 'F6' && playActive) { event.preventDefault(); void pausePreview(); return; }
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
@@ -749,17 +916,18 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
       if (event.key.toLowerCase() === "s") {
         event.preventDefault();
         void save(event.shiftKey);
-      } else if (event.key.toLowerCase() === "z") {
-        if (
-          event.target instanceof HTMLInputElement ||
-          event.target instanceof HTMLTextAreaElement
-        )
-          return;
+      } else if (["z", "y"].includes(event.key.toLowerCase())) {
+        const target = event.target;
+        // UI property values use the same history as canvas transforms. Text
+        // fields and editor-only controls keep their native typing history.
+        const uiValue = view === 'ui' && target instanceof HTMLInputElement
+          && !!target.closest('.ui-inspector, .blueprint-properties, .ui-toolbar-popover')
+          && ['number', 'range', 'checkbox', 'radio', 'color'].includes(target.type)
+          && (target.type !== 'number' || target.value.trim() !== '' && Number.isFinite(target.valueAsNumber));
+        if (target instanceof HTMLInputElement && !uiValue || target instanceof HTMLTextAreaElement
+          || target instanceof HTMLElement && target.isContentEditable) return;
         event.preventDefault();
-        event.shiftKey ? redo() : undo();
-      } else if (event.key.toLowerCase() === "y") {
-        event.preventDefault();
-        redo();
+        event.key.toLowerCase() === 'y' || event.shiftKey ? redo() : undo();
       }
     };
     window.addEventListener("keydown", listener);
@@ -767,8 +935,9 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
   });
 
   const selectNode = (id: string, selectedLine?: string) => {
-    const node = project.nodes.find((n) => n.id === id);
+    const node = history.getProject().nodes.find((n) => n.id === id);
     if (!node) return;
+    setGameFlowFocus(undefined);
     setSceneId(node.sceneId);
     setNodeId(id);
     setLineId(
@@ -778,11 +947,14 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
     setSettings(false);
   };
   const selectTextLocation = useCallback((selection: { sceneId: string; nodeId: string; lineId?: string }) => {
+    setGameFlowFocus(undefined);
     setSceneId(selection.sceneId); setNodeId(selection.nodeId); setLineId(selection.lineId);
   }, []);
   const selectScene = (id: string) => {
+    setGameFlowFocus(undefined);
     setNavigation([]);
     setSceneId(id);
+    if (view === 'script') setModuleRevealRequest(request => request + 1);
     const first =
       project.nodes.find((n) => n.sceneId === id && n.kind === "passage") ??
       project.nodes.find((n) => n.sceneId === id);
@@ -800,6 +972,26 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
     setResource(next);
     setSettings(false);
   };
+  const locateUiParameter = (id: string) => {
+    const effective = applyUiDraft(history.getProject(), uiDraftRef.current);
+    if (!effective.variables.some(variable => variable.id === id)) return;
+    const projectId = effective.id;
+    const navigate = () => {
+      // Saving may accept a newly authored parameter; discarding may remove it.
+      // Resolve the target after that decision, never through the old closure.
+      const current = history.getProject();
+      if (current.id !== projectId || !current.variables.some(variable => variable.id === id)) {
+        notify('来源参数已不在当前工程中，未跳转。'); return;
+      }
+      setParameterSetFocus(undefined);
+      setResourceFocus(value => value + 1);
+      setLibrary('variables');
+      setViewState('script');
+      setResource({ kind: 'variable', id });
+      setSettings(false);
+    };
+    if (leaveUi(navigate)) navigate();
+  };
   const changeLibrary = (next: LibraryKind) => {
     if (playOpen) backFromPreview();
     if (!leaveUi(() => changeLibrary(next))) return false;
@@ -810,6 +1002,7 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
     return true;
   };
   const addNode = (kind: NodeKind) => {
+    setGameFlowFocus(undefined);
     const node = kind === 'chapterTitle' ? { ...newNode('passage', sceneId), kind: 'passage' as const, name: '独立演出', lines: [{ id: makeId('line'), text: '', silent: true, actions: [] }] } : newNode(kind, sceneId, project.variables[0]?.id);
     node.x =
       80 +
@@ -829,33 +1022,35 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
   const openLinkedNode = (target: string, sourceId = nodeId) => {
     if (sourceId) setNavigation(previous => [...previous, sourceId]);
     selectNode(target);
+    setStoryFlowFocus(previous => ({ nodeId: target, request: (previous?.request ?? 0) + 1 }));
     setLibrary("scenes");
     setView("flowchart");
   };
-  const createSubgraph = () => setNameDialog({
+  const createSubgraph = (groupId?: string, targetSceneId = sceneId, sourceId?: string) => setNameDialog({
     title: "新建可复用段落", value: "共同剧情",
     submit: name => {
-      const chapterId = project.scenes.find(scene => scene.id === sceneId)?.chapterId;
+      const chapterId = project.scenes.find(scene => scene.id === targetSceneId)?.chapterId;
       if (!chapterId) return;
       const graphScene = makeId("scene");
       const passage = newNode("passage", graphScene);
       const back = newNode("return", graphScene);
-      const call = newNode("call", sceneId);
+      const call = newNode("call", targetSceneId);
       if (passage.kind !== "passage" || call.kind !== "call") return;
       passage.name = name;
       passage.x = 40; passage.y = 100; passage.next = back.id;
       back.x = 350; back.y = 100;
-      const source = project.nodes.find(node => node.id === nodeId);
+      const source = project.nodes.find(node => node.id === sourceId && node.sceneId === targetSceneId && (groupId ? project.storyGroups?.find(group => group.id === groupId)?.nodeIds.includes(node.id) : !project.storyGroups?.some(group => group.nodeIds.includes(node.id))));
       call.name = `调用 · ${name}`;
       call.target = passage.id;
-      call.next = source && "next" in source ? source.next : project.nodes.find(node => node.sceneId === sceneId && node.kind === "end")?.id;
+      call.next = source && "next" in source ? source.next : project.nodes.find(node => node.sceneId === targetSceneId && node.kind === "end")?.id;
       call.x = (source?.x ?? 0) + 310; call.y = source?.y ?? 100;
       commit("创建可复用段落", draft => {
         draft.scenes.push({ id: graphScene, chapterId, name });
         if (source && ["start", "passage", "set", "call"].includes(source.kind)) draft.nodes = draft.nodes.map(node => node.id === source.id ? connectNode(node, "next", call.id) : node);
         draft.nodes.push(call, passage, back);
+        addNodeToStoryGroup(draft, call.id, groupId);
       });
-      setNodeId(call.id); setLineId(undefined); setResource(undefined); setSettings(false);
+      setSceneId(targetSceneId); setNodeId(call.id); setLineId(undefined); setResource(undefined); setSettings(false);
     },
   });
   const addScene = () => {
@@ -924,6 +1119,7 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
           type: "number",
           initial: 0,
           persistent: false,
+          resetWithSettings: false,
         });
       if (folderId) moveContent(p, [kind + ':' + id], folderId);
     });
@@ -937,20 +1133,24 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
     return url.startsWith('studio-asset:') ? `${url}?project=${encodeURIComponent(projectPath ?? project.id)}` : url;
   };
   const locate = (diagnostic: Diagnostic) => {
-    if (!leaveUi(() => locate(diagnostic))) return;
-    const parsed = applyTextScript(project, textSource);
-    const { destination } = diagnosticLocation(parsed.project, diagnostic, parsed);
+    const parsed = applyTextScript(applyUiDraft(project, uiDraftRef.current), textSource);
+    const { destination, label } = diagnosticLocation(parsed.project, diagnostic, parsed);
+    if (!destination && diagnostic.ui) { notify(label); return; }
+    const staysInUi = destination?.kind === 'ui' || destination?.kind === 'blueprint' && !!blueprintContext(parsed.project, destination.graphId, destination.nodeId).ui;
+    if (!staysInUi && !leaveUi(() => locate(diagnostic))) return;
     const sourceLine = diagnosticSourceLine(diagnostic, parsed);
     if (destination && playOpen) backFromPreview();
     if (destination?.kind === 'settings') {
-      if (!synchronizeText()) return;
       setSettingsSection('project'); setSettings(true);
+    } else if (destination?.kind === 'gameFlow') {
+      openGameFlow(destination.target.phase, destination.target.stepId);
     } else if (destination?.kind === 'ui') {
-      if (!synchronizeText()) return;
       setLibrary('scenes'); setView('ui'); setResource(undefined); setSettings(false); setInspectorVisible(true);
       setUiPreviewInstance(destination.target.instanceId ?? ''); setUiId(destination.target.componentId);
       setUiFocus(previous => ({ target: destination.target, request: (previous?.request ?? 0) + 1, field: diagnostic.code === 'ui.button.unbound' ? 'action' : undefined }));
       notify('已定位：' + diagnosticLocation(parsed.project, diagnostic, parsed).label + ' · 在右侧属性中调整');
+    } else if (destination?.kind === 'blueprint') {
+      openBlueprint(destination.graphId, destination.nodeId);
     } else if (sourceLine && (view === 'text' || !!diagnostic.sourceLine || destination?.kind === 'text')) {
       setView("text");
       setLibrary("scenes");
@@ -961,17 +1161,14 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
     } else if (destination?.kind === 'asset') {
       setLibrary("assets");
       selectResource({ kind: "asset", id: destination.assetId });
-    } else if (destination?.kind === 'blueprint') {
-      if (!synchronizeText()) return;
-      setLibrary("scenes");
-      setResource(undefined); setSettings(false); setView("blueprint"); setPerformanceTarget({ nodeId: "", graphId: destination.graphId });
-      setBlueprintFocus(previous => ({ graphId: destination.graphId, nodeId: destination.nodeId, request: (previous?.request ?? 0) + 1 }));
     } else if (destination?.kind === 'story') {
+      setGameFlowFocus(undefined);
       if (!synchronizeText()) return;
       const node = parsed.project.nodes.find(node => node.id === destination.nodeId);
       if (!node) return;
       setLibrary("scenes"); setResource(undefined); setSettings(false);
-      setView("script");
+      setView(view === 'flowchart' ? 'flowchart' : 'script');
+      if (view === 'flowchart') setStoryFlowFocus(previous => ({ nodeId: node.id, request: (previous?.request ?? 0) + 1 }));
       setSceneId(node.sceneId); setNodeId(node.id);
       setLineId(destination.lineId ?? (node.kind === 'passage' ? node.lines[0]?.id : undefined));
       setTimeout(
@@ -987,6 +1184,63 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
       );
     }
   };
+  const openGameFlow = (phase: GameFlowPhase = 'beforeTitle', stepId?: string) => {
+    const open = () => {
+      if (!synchronizeText()) return;
+      const entry = project.nodes.find(node => node.id === project.entryId);
+      if (entry) setSceneId(entry.sceneId);
+      setLibrary('scenes'); setResource(undefined); setSettings(false); setViewState('flowchart');
+      setGameFlowFocus(previous => ({ phase, stepId, request: (previous?.request ?? 0) + 1 }));
+    };
+    if (leaveUi(open)) open();
+  };
+  const locatePageUsage = (usage: UiPageUsage) => {
+    if (usage.setting === 'menuShortcut') { setSettingsSection('interface'); setSettings(true); }
+    else if (usage.phase) openGameFlow(usage.phase, usage.stepId);
+    else if (usage.componentId && usage.pageId) locate({ severity: 'warning', message: '', ui: { page: usage.pageId.startsWith('ui:') ? usage.pageId.slice(3) as NonNullable<Diagnostic['ui']>['page'] : 'custom', customPageId: usage.pageId.startsWith('ui:') ? undefined : usage.pageId, componentId: usage.componentId, instanceId: usage.instanceId === 'base' ? undefined : usage.instanceId } });
+    else if (usage.storyNodeId) locate({ severity: 'warning', message: '', nodeId: usage.storyNodeId, lineId: usage.lineId });
+    else if (usage.graphId) openBlueprint(usage.graphId, usage.nodeId);
+    else if (usage.pageId) locate({ severity: 'warning', message: '', ui: { page: usage.pageId.startsWith('ui:') ? usage.pageId.slice(3) as NonNullable<Diagnostic['ui']>['page'] : 'custom', customPageId: usage.pageId.startsWith('ui:') ? undefined : usage.pageId } });
+  };
+  const locateBlueprintUsage = (usage: BlueprintUsage) => {
+    const target = usage.location;
+    if (target.kind === 'blueprint') { openBlueprint(target.graphId, target.nodeId); return; }
+    if (target.kind === 'story') { locate({ severity: 'warning', message: '', nodeId: target.nodeId, lineId: target.lineId }); return; }
+    if (target.kind === 'ui') { locate({ severity: 'warning', message: '', ui: target.target }); return; }
+    if (target.kind === 'gameFlow') { openGameFlow(target.phase, target.stepId); return; }
+    if (target.kind === 'character') {
+      if (!leaveUi(() => locateBlueprintUsage(usage))) return;
+      if (!history.getProject().characters.some(character => character.id === target.characterId)) { notify('调用位置已不存在。'); return; }
+      setBlueprintVisits([]); setView('script'); setLibrary('characters'); setResource({ kind: 'character', id: target.characterId }); setSettings(false); setInspectorVisible(true);
+    }
+  };
+  const locateParameterUsage = (usage: ParameterUsage) => {
+    const target = usage.location;
+    if (target.kind === 'blueprint') { openBlueprint(target.graphId, target.nodeId); return; }
+    if (target.kind === 'ui') { locate({ severity: 'warning', message: '', ui: target.target }); return; }
+    if (!leaveUi(() => locateParameterUsage(usage))) return;
+    if (playOpen) backFromPreview();
+    setLibrary('scenes'); setResource(undefined); setSettings(false);
+    if (target.kind === 'text') {
+      setView('text'); setTextFocusLine(previous => ({ line: target.sourceLine, request: (previous?.request ?? 0) + 1 }));
+    } else {
+      // Browsing a reference must not apply or replace a pending text draft.
+      const current = history.getProject();
+      const node = current.nodes.find(node => node.id === target.nodeId);
+      if (!node) { notify('引用位置已不存在。'); return; }
+      if (hasTextDraft(current)) {
+        const parsed = readTextScript(current, current.scriptText!.content);
+        const line = parsed.nodeLocations.find(location => location.nodeId === node.id)?.sourceLine;
+        setView('text');
+        if (line) setTextFocusLine(previous => ({ line, request: (previous?.request ?? 0) + 1 }));
+        else notify('这处结构化引用在未应用的文本中已改变，请先处理文本草稿。');
+        return;
+      }
+      setGameFlowFocus(undefined); setSceneId(node.sceneId); setNodeId(node.id); setLineId(undefined);
+      setStoryFlowFocus(previous => ({ nodeId: node.id, request: (previous?.request ?? 0) + 1 }));
+      setView('flowchart'); setInspectorVisible(true);
+    }
+  };
   const tabs = [
     { id: "script" as const, label: "剧本", Icon: MessageSquare },
     { id: "flowchart" as const, label: "流程图", Icon: GitBranch },
@@ -998,52 +1252,133 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
     { id: 'characters' as const, label: '角色', Icon: UserRound },
     { id: 'variables' as const, label: '参数集', Icon: SlidersHorizontal },
   ];
-  // The editor's hidden IDs and performances must use a source map for the
-  // exact text being edited. Share one parse with the directory; stage preview
-  // caching avoids replaying the story when only dialogue prose changes.
+  // The text editor's hidden IDs and performances must use a source map for the
+  // exact text being edited. Share one parse with the text-mode directory.
   // A projection and its source map must describe the same revision, including
   // the render immediately after deleting a chapter. The shared reader reuses
   // parses already performed while preparing the edit.
-  const directoryParse = useMemo(() => hasStoryDirectory && (view === 'text' || view === 'script') ? readTextScript(project, textSource) : undefined, [hasStoryDirectory, view, project, textSource, readTextScript]);
-  const diagnosticDocument = useMemo(() => directoryParse ? textDocument(textSource, directoryParse.sourceMap) : undefined, [directoryParse, textSource]);
+  const directoryParse = useMemo(() => hasStoryDirectory && view === 'text' ? readTextScript(project, textSource) : undefined, [hasStoryDirectory, view, project, textSource, readTextScript]);
+  // Module rows and their directory already have structured data. Source maps
+  // are only needed by the text surface or an opened diagnostic panel.
+  const diagnosticParse = useMemo(() => directoryParse ?? (problemsOpen && view === 'script' ? readTextScript(diagnosticProject, diagnosticProject.scriptText?.content ?? projectToText(diagnosticProject)) : undefined), [directoryParse, problemsOpen, view, diagnosticProject, readTextScript]);
+  const diagnosticDocument = useMemo(() => problemsOpen && diagnosticParse ? textDocument(diagnosticParse.project.scriptText?.content ?? textSource, diagnosticParse.sourceMap) : undefined, [problemsOpen, diagnosticParse, textSource]);
   const selectDirectoryNode = (id: string, selectedLine?: string) => {
-    if (view !== 'text') { selectNode(id, selectedLine); return; }
+    setGameFlowFocus(undefined);
+    if (view !== 'text') {
+      if (view === 'script') setModuleRevealRequest(request => request + 1);
+      selectNode(id, selectedLine); return;
+    }
     const node = directoryParse?.project.nodes.find(node => node.id === id);
     if (node) { setSceneId(node.sceneId); setNodeId(node.id); setLineId(selectedLine); }
     const location = directoryParse?.sourceMap.find(item => !item.reference && item.nodeId === id && (!selectedLine || item.lineId === selectedLine && item.actionCount === undefined));
     const sourceLine = location?.sourceLine ?? directoryParse?.nodeLocations.find(item => item.nodeId === id)?.sourceLine;
     if (sourceLine) setTextFocusLine(previous => ({ line: sourceLine, request: (previous?.request ?? 0) + 1 }));
   };
-  const openBlueprint = (graphId: string) => {
-    if (!leaveUi(() => openBlueprint(graphId))) return;
-    if (!synchronizeText()) return;
-    setLibrary('scenes'); setResource(undefined); setSettings(false); setView('blueprint'); setPerformanceTarget({ nodeId: '', graphId });
-    setBlueprintFocus(previous => ({ graphId, request: (previous?.request ?? 0) + 1 }));
+  const openBlueprint = (graphId: string, selectedNodeId?: string, objectInstanceId?: string, navigation?: { from?: BlueprintReturnPoint; back?: BlueprintVisit[]; ui?: NonNullable<Diagnostic['ui']> }) => {
+    // Save-and-continue callbacks may run before React renders the accepted UI draft.
+    // Read the history's synchronous snapshot, not the render that opened the prompt.
+    const snapshot = applyUiDraft(history.getProject(), uiDraftRef.current);
+    const back = navigation?.back && resolveBlueprintReturn(snapshot, navigation.back);
+    if (back && !back.point) { setBlueprintVisits(back.remaining); notify('原调用位置已删除或改变，没有跳转到其他蓝图。'); return; }
+    if (navigation?.from && navigation.from.projectId !== snapshot.id) { notify('工程已切换，本次模块跳转已取消。'); return; }
+    const origin = back?.point?.origin;
+    const id = origin?.graphId ?? graphId, selected = origin?.primaryNodeId ?? selectedNodeId;
+    const temporary = origin?.performance?.temporary;
+    const contextProject = temporary?.workspace.project ?? snapshot;
+    const matches = projectGraphs(contextProject).filter(graph => graph.id === id);
+    if (matches.length !== 1) { notify(matches.length ? '目标蓝图标识不唯一，请先修复冲突；本次没有跳转。' : '目标蓝图已不存在或已随未保存草稿放弃，本次没有跳转。'); return; }
+    const context = blueprintContext(contextProject, id, selected), ui = back?.point?.ui ?? navigation?.ui ?? context.ui;
+    if (!ui && !leaveUi(() => openBlueprint(graphId, selectedNodeId, objectInstanceId, navigation))) return;
+    // Resource navigation is read-only and must also work while text calls need repair.
+    if (back) setBlueprintVisits(back.remaining);
+    else if (navigation?.from) setBlueprintVisits(visits => enterBlueprintVisit(visits, navigation.from!, id));
+    else setBlueprintVisits([]);
+    if (ui) {
+      setLibrary('scenes'); setResource(undefined); setSettings(false); setView('ui'); setUiAdvanced(true);
+      setUiPreviewInstance(ui.instanceId ?? ''); setUiId(ui.componentId);
+      setUiFocus(previous => ({ target: ui, request: (previous?.request ?? 0) + 1 }));
+      setUiBlueprintFocus(previous => ({ graphId: id, nodeId: selected, restore: origin, request: (previous?.request ?? 0) + 1 }));
+    } else {
+      setLibrary('scenes'); setResource(undefined); setSettings(false); setView('blueprint');
+      setPerformanceTarget(origin?.performance?.target ?? { nodeId: '', graphId: id, editorMode: isTimelineComponent(matches[0]) && !selected ? 'timeline' : 'graph' });
+      setBlueprintFocus(previous => ({ graphId: id, nodeId: selected, objectInstanceId, restore: origin, request: (previous?.request ?? 0) + 1 }));
+    }
+    if (back?.changed) notify('已返回仍存在的调用位置；失效的旧节点或连线不再选中。');
+    else if (back) notify('已返回调用位置，编辑内容保留。');
+    else if (context.problem) notify(context.problem);
   };
+  const openCanvasBlueprint: OpenBlueprintGraph = (id, selectedNodeId, origin) => {
+    let ui: NonNullable<Diagnostic['ui']> | undefined;
+    if (origin && view === 'ui') {
+      const pageId = activeUiPage?.pageId;
+      ui = pageId ? { page: pageId.startsWith('ui:') ? pageId.slice(3) as NonNullable<Diagnostic['ui']>['page'] : 'custom', customPageId: pageId.startsWith('ui:') ? undefined : pageId,
+        instanceId: pageId.startsWith('ui:') ? uiProject.ui.activeInstanceId : undefined, componentId: uiId } : blueprintContext(uiProject, origin.graphId, origin.primaryNodeId).ui;
+    }
+    openBlueprint(id, selectedNodeId, undefined, origin ? { from: { projectId: project.id, origin, ui } } : undefined);
+  };
+  const backBlueprint = () => openBlueprint('', undefined, undefined, { back: blueprintVisits });
+  const uiPreviewEpoch = useRef(0);
+  const uiPreviewAction = useRef<(action: UiPreviewAction, epoch?: number, nativeSession?: string) => Promise<UiPreviewActionResult>>(async () => ({ status: 'cancelled', message: '编辑器尚未准备就绪。' }));
+  uiPreviewAction.current = async (raw, requestedEpoch = uiPreviewEpoch.current, nativeSession) => {
+    if (closingRef.current) return { status: 'cancelled', message: '主编辑器正在关闭，请等待关闭完成或取消后再试。' };
+    if (nativeSession && nativeSession !== playSessionRef.current) return { status: 'cancelled', message: '试玩会话已改变，旧记录定位请求已取消。' };
+    if (requestedEpoch !== uiPreviewEpoch.current) return { status: 'cancelled', message: '预览已关闭，本次定位或试玩请求已取消。' };
+    if (!ready) throw new Error('编辑器尚未准备就绪，请稍后重试。');
+    if (busy || uiSaving.current) throw new Error('主编辑器正在处理操作，请稍后重试。');
+    if (uiLeave) throw new Error('请先处理主编辑器中已经打开的保存提示。');
+    const snapshot = applyUiDraft(history.getProject(), uiDraftRef.current);
+    const { action, ui } = resolveUiPreviewAction(snapshot, raw);
+    if ((action.kind === 'play' || !ui) && uiDraftChanged(uiDraftRef.current)) {
+      return await new Promise<UiPreviewActionResult>((resolve, reject) => setUiLeave({
+        cancel: () => resolve({ status: 'cancelled', message: '已取消，界面草稿与当前定位保留。' }),
+        proceed: () => setTimeout(() => { void uiPreviewAction.current(action, requestedEpoch, nativeSession).then(resolve, reject); }, 0),
+      }));
+    }
+    if (action.kind === 'play') {
+      let result: UiPreviewActionResult = { status: 'failed', message: '试玩没有启动，请检查主编辑器中的提示。' };
+      await preview({ flowStart: 'launch', entryId: snapshot.entryId, variables: {} }, value => {
+        result = { status: value.status === 'completed' ? 'completed' : value.status === 'cancelled' ? 'cancelled' : 'failed', message: value.message };
+      });
+      return result;
+    }
+    if (playOpen) backFromPreview();
+    setSettings(false); setInspectorVisible(true);
+    if (action.graphId) openBlueprint(action.graphId, action.nodeId, undefined, ui ? { ui } : undefined);
+    else if (ui) {
+      setLibrary('scenes'); setResource(undefined); setView('ui'); setUiAdvanced(false);
+      setUiPreviewInstance(ui.instanceId ?? ''); setUiId(ui.componentId);
+      setUiFocus(previous => ({ target: ui, request: (previous?.request ?? 0) + 1 }));
+    }
+    const message = action.graphId ? '已定位轨迹中的蓝图' + (action.nodeId ? '节点。' : '。') : action.componentId ? '已定位原页面／方案中的触发控件。' : '已定位轨迹来源页面。';
+    notify(message);
+    return { status: 'completed', message };
+  };
+  useEffect(() => studio.onUiPreviewAction?.(action => uiPreviewAction.current(action)), []);
+  useEffect(() => studio.onUiPreviewWindowState?.(open => { if (!open) uiPreviewEpoch.current++; }), []);
   const selectPerformance = (target: PerformanceTarget) => {
     setPerformanceTarget(target);
     if (target.nodeId) { setNodeId(target.nodeId); setLineId(target.lineId); const node = project.nodes.find(node => node.id === target.nodeId); if (node) setSceneId(node.sceneId); }
   };
   const openPerformance = (target: PerformanceTarget) => {
     if (!leaveUi(() => openPerformance(target))) return;
-    if (!synchronizeText()) return;
-    selectPerformance(target); setLibrary('scenes'); setResource(undefined); setSettings(false); setView('blueprint');
+    const namedResource = target.graphId && projectGraphs(history.getProject()).some(graph => graph.id === target.graphId);
+    if (target.nodeId && !namedResource && !synchronizeText()) return;
+    setBlueprintVisits([]); setBlueprintFocus(undefined); selectPerformance(target); setLibrary('scenes'); setResource(undefined); setSettings(false); setView('blueprint');
   };
   const openContent = (item: ContentItem) => {
-    if (!leaveUi(() => openContent(item))) return;
     if (item.kind === 'timeline') { openPerformance({ nodeId: '', graphId: item.id, editorMode: 'timeline' }); return; }
     if (item.kind === 'blueprint') { const graph = projectGraphs(project).find(graph => graph.id === item.id); if (graph?.kind === 'effect') openPerformance({ nodeId: '', graphId: item.id }); else openBlueprint(item.id); return; }
-    if (item.kind === 'scene') { if (!synchronizeText()) return; selectScene(item.id); setView('flowchart'); return; }
+    if (!leaveUi(() => openContent(item))) return;
+    if (item.kind === 'scene') { if (!synchronizeText()) return; selectScene(item.id); setStoryFlowFocus(previous => ({ sceneId: item.id, request: (previous?.request ?? 0) + 1 })); setView('flowchart'); return; }
     setInspectorVisible(true); setSettings(false);
     if (item.kind === 'character' || item.kind === 'variable') { setLibrary(item.kind === 'character' ? 'characters' : 'variables'); setView('script'); setResource({ kind: item.kind, id: item.id }); }
     else { setLibrary('assets'); setView('script'); setResource({ kind: 'asset', id: item.id }); }
   };
   const createResourceBlueprint = (kind: Project['blueprints'][number]['kind'] | 'timeline', folderId?: string) => {
-    if (!synchronizeText()) return;
     if (projectGraphs(project).length >= 256) { notify('蓝图数量已达到上限'); return; }
     const graph = kind === 'timeline' ? createTimelinePreset(project) : createBlueprintGraph(kind, availableBlueprintName(project, kind === 'effect' ? '新的演出' : kind === 'macro' ? '新的用户节点' : '新的蓝图'));
-    commit(kind === 'timeline' ? '新建时间轴预设' : '新建资源蓝图', draft => { addProjectGraphs(draft, graph); if (folderId) moveContent(draft, [graphResourceKey(graph)], folderId); });
-    if (kind === 'effect' || kind === 'timeline') openPerformance({ nodeId: '', graphId: graph.id }); else openBlueprint(graph.id);
+    commitBlueprint(kind === 'timeline' ? '新建时间轴预设' : '新建资源蓝图', draft => { addProjectGraphs(draft, graph); if (folderId) moveContent(draft, [graphResourceKey(graph)], folderId); });
+    if (kind === 'effect' || kind === 'timeline') openPerformance({ nodeId: '', graphId: graph.id, editorMode: kind === 'timeline' ? 'timeline' : 'graph' }); else openBlueprint(graph.id);
   };
   const dropResourceFiles = (transfer: DataTransfer, options: AssetImportOptions) => {
     const files = [...transfer.files];
@@ -1061,9 +1396,9 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
     selectedUiComponentId: view === 'ui' ? uiId : undefined,
     selectedUiPage: view==='ui'&&library==='scenes'&&!settings&&!playOpen?activeUiPage:undefined,
     selectedUiAnimation: view === 'ui' && uiAdvanced ? activeUiAnimation : undefined,
-    project: view === 'ui' ? uiProject : aiParsed?.project ?? project, sceneId, lineId, canUndo: view === 'ui' ? uiPast.current.length > 0 : history.canUndo,
+    project: view === 'ui' ? uiProject : aiParsed?.project ?? project, sceneId, lineId, canUndo: view === 'ui' ? uiHistory.canUndo : history.canUndo,
     readOnlyMessage: aiParsed?.issues.some(issue => issue.severity === 'error') ? '请先修正文本文法错误，再生成或应用修改建议。仍可询问用法。' : undefined,
-  }), [aiParsed, project, uiProject, activeParameter, resource, library, contentSelection, contentOpen, playOpen, dockSelection, activeBlueprint, activeUiPage, activeUiAnimation, settings, uiAdvanced, view, uiDraft, uiId, sceneId, lineId, history.canUndo]);
+  }), [aiParsed, project, uiProject, activeParameter, resource, library, contentSelection, contentOpen, playOpen, dockSelection, activeBlueprint, activeUiPage, activeUiAnimation, settings, uiAdvanced, view, uiDraft, uiId, sceneId, lineId, history.canUndo, uiHistory.canUndo]);
   useEffect(() => studio.onAiWindowState?.(setAiOpen), []);
   useEffect(() => {
     if (aiOpen) void studio.updateAiContext?.(aiContext).catch(error => notify(`同步 AI 上下文失败：${String(error)}`));
@@ -1111,6 +1446,7 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
   };
   const aiEditorAction = useRef<(action: AiEditorAction) => void | Promise<void | AiEditorResult>>(() => {});
   aiEditorAction.current = async action => {
+    if (closingRef.current) throw new Error('主编辑器正在关闭，请等待关闭完成或取消后再试。');
     if (!ready || action.projectId !== project.id) throw new Error('工程已切换，请根据当前工程重新操作。');
     if (busy && !(action.kind === 'command' && action.command === 'stopPreview')) throw new Error('主编辑器正在处理操作，请稍后重试。');
     if (action.kind === 'apply') applyAiProposal(action.changes);
@@ -1122,12 +1458,11 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
     }
     else if (action.kind === 'navigate') {
       const destination=resolveAiEditorTarget(applyUiDraft(project,uiDraftRef.current),action.target);
-      const keepUiSelection=destination.kind==='blueprintSelection'&&(!!destination.ui||view==='ui'&&uiAdvanced&&!!findTimelinePath(applyUiDraft(project,uiDraftRef.current),activeBlueprint?.graphId,destination.graphId));
+      const keepUiSelection=(destination.kind==='blueprintSelection'||destination.kind==='blueprint')&&(!!destination.ui||view==='ui'&&uiAdvanced&&!!findTimelinePath(applyUiDraft(project,uiDraftRef.current),activeBlueprint?.graphId,destination.graphId));
       if(destination.kind!=='ui'&&destination.kind!=='uiAnimation'&&!keepUiSelection&&uiDraftChanged(uiDraftRef.current)){
         if(uiLeave)throw new Error('请先处理主编辑器中已打开的保存提示。');
         return await new Promise<AiEditorResult>((resolve,reject)=>setUiLeave({cancel:()=>resolve({status:'cancelled',message:'已取消定位，界面草稿保留。'}),proceed:()=>setTimeout(()=>{Promise.resolve(aiEditorAction.current(action)).then(result=>resolve(result??{status:'pending',message:'尚未收到定位结果。'}),reject);},0)}));
       }
-      if(!synchronizeText())return {status:'failed',message:'文本尚有错误，请先修正后重新定位。'};
       if(playOpen)backFromPreview();
       setSettings(false);setInspectorVisible(true);
       if(destination.kind==='uiAnimation'){
@@ -1144,7 +1479,7 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
           if(keepUiSelection){
             setView('ui');setUiAdvanced(true);
             if(destination.ui&&!(view==='ui'&&uiAdvanced&&activeBlueprint?.graphId===destination.graphId)){
-              setUiId(undefined);setUiPreviewInstance(destination.ui.instanceId??'');
+              setUiId(destination.ui.componentId);setUiPreviewInstance(destination.ui.instanceId??'');
               setUiFocus(previous=>({target:destination.ui!,request:(previous?.request??0)+1}));
             }
             setUiBlueprintFocus(previous=>({graphId:destination.graphId,selection,request:(previous?.request??0)+1}));
@@ -1154,9 +1489,7 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
           }
         });
       }else if(destination.kind==='blueprint'){
-
-        setLibrary('scenes');setResource(undefined);setView('blueprint');setPerformanceTarget({nodeId:'',graphId:destination.graphId});
-        setBlueprintFocus(previous=>({graphId:destination.graphId,nodeId:destination.nodeId,objectInstanceId:destination.objectInstanceId,request:(previous?.request??0)+1}));
+        openBlueprint(destination.graphId,destination.nodeId,destination.objectInstanceId);
       }else if(destination.kind==='ui'){
         setLibrary('scenes');setResource(undefined);setView('ui');setUiAdvanced(destination.advanced);setUiId(destination.target.componentId);setUiPreviewInstance(destination.target.instanceId??'');
         setUiFocus(previous=>({target:destination.target,request:(previous?.request??0)+1}));
@@ -1181,7 +1514,7 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
       switch(action.command) {
         case 'undo': case 'redo': {
           if (uiSaving.current) throw new Error('界面正在保存，请稍后重试。');
-          const available = view === 'ui' ? (action.command === 'undo' ? uiPast.current.length : uiFuture.current.length) > 0 : action.command === 'undo' ? history.canUndo : history.canRedo;
+          const available = view === 'ui' ? (action.command === 'undo' ? uiHistory.canUndo : uiHistory.canRedo) : action.command === 'undo' ? history.canUndo : history.canRedo;
           if (!available) { report({status:'cancelled',message:action.command === 'undo' ? '没有可撤销的修改。' : '没有可重做的修改。'}); break; }
           if (action.command === 'undo') undo(); else redo();
           report({status:'completed',message:(view === 'ui' ? '界面草稿' : '工程') + (action.command === 'undo' ? '已撤销上次修改。' : '已重做上次修改。')}); break;
@@ -1232,8 +1565,10 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
     <button type="button" aria-pressed={view === 'script'} onClick={() => changeView('script')} title="按段落和对白块编辑"><Layers size={14} />模块编辑</button>
     <button type="button" aria-pressed={view === 'text'} onClick={() => changeView('text')} title="编辑剧情脚本和演出指令"><FileText size={14} />文本编辑</button>
   </div>;
+  const blueprintNavigation = library === 'scenes' && !settings && !playOpen && blueprintVisits.length > 0 && activeBlueprint?.graphId === blueprintVisits.at(-1)?.targetId ? <BlueprintNavigationBar compact project={uiWorkingProject} visits={blueprintVisits} onBack={backBlueprint} /> : undefined;
   return (
-    <AssetImportContext.Provider value={importPickerAsset}><div className={`app-shell ${problemsOpen ? "has-problems" : ""}`} inert={!!projectBrowser}>
+    <AssetImportContext.Provider value={importPickerAsset}><div className={`app-shell ${problemsOpen ? "has-problems" : ""}`} inert={!!projectBrowser || closing} aria-busy={closing}>
+      {ready && <UiFontFaces project={uiWorkingProject} assetUrl={assetUrl} warmDialogue />}
       <header className="app-header">
         <nav className="view-tabs" aria-label="工作区">
             {navigation.length > 0 && <IconButton title="返回调用处" onClick={() => { const previous = navigation.at(-1); if (previous && synchronizeText()) { selectNode(previous); setNavigation(stack => stack.slice(0, -1)); setView("flowchart"); } }}><ArrowLeft size={16} /></IconButton>}
@@ -1242,7 +1577,7 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
               ...resourceTabs.map(tab => ({ ...tab, active: library === tab.id, select: () => changeLibrary(tab.id) })),
             ]} />
             <div className="spacer" />
-            {library !== 'assets' && !hasStoryDirectory && view !== 'blueprint' && !isStoryFlowchart && <IconButton
+            {hasAppInspector && <IconButton
               title={inspectorVisible ? "收起属性" : "展开属性"}
               onClick={() => setInspectorVisible(!inspectorVisible)}
             >
@@ -1272,14 +1607,14 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
           <span className="toolbar-divider" />
           <IconButton
             title="撤销"
-            disabled={(view === 'ui' ? !uiPast.current.length : !history.canUndo) || !!busy}
+            disabled={(view === 'ui' ? !uiHistory.canUndo : !history.canUndo) || !!busy}
             onClick={undo}
           >
             <Undo2 size={18} />
           </IconButton>
           <IconButton
             title="重做"
-            disabled={(view === 'ui' ? !uiFuture.current.length : !history.canRedo) || !!busy}
+            disabled={(view === 'ui' ? !uiHistory.canRedo : !history.canRedo) || !!busy}
             onClick={redo}
           >
             <Redo2 size={18} />
@@ -1326,9 +1661,9 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
           </IconButton>
         </div>
       </header>
-      {playOpen && <PlayWorkspace project={playProject} bridge={studio} phase={playPhase} message={playMessage} mode={playActive ? liveMode : playMode} setMode={setPlayMode} position={runtimePosition} blocked={!!projectBrowser || newDialog || !!nameDialog || settings || helpOpen || !!uiLeave || !!textExchange || aiOpen && !studio.openAiWindow} onBack={backFromPreview} onRestart={() => void preview({ ...lastPreview.current, mode: playMode })} onPause={() => void pausePreview()} onStop={() => void stopPreview()} onFocus={() => void (playPhase === 'paused' ? resumePreview() : studio.controlPreview?.('focus'))} onLocate={() => { backFromPreview(); if (runtimePosition?.nodeId) locate({ severity: 'warning', message: '', nodeId: runtimePosition.nodeId, lineId: runtimePosition.lineId }); }} />}
+      {playOpen && <PlayWorkspace project={playProject} bridge={studio} phase={playPhase} message={playMessage} mode={playActive ? liveMode : playMode} setMode={setPlayMode} options={lastPreview.current} position={runtimePosition} blocked={!!projectBrowser || newDialog || !!nameDialog || settings || helpOpen || !!uiLeave || !!textExchange || aiOpen && !studio.openAiWindow} onBack={backFromPreview} debug={playDebug} firstFramePending={firstFramePending} debugEnabled={debugEnabled} onDebugEnabled={value => setDebugSettings(value, debugPoints)} debugPoints={debugPoints} onDebugPoints={value => setDebugSettings(debugEnabled, value)} onDebugAction={action => uiPreviewAction.current(action, undefined, playDebug?.sessionId)} onRestart={() => void preview({ ...lastPreview.current, blueprintDebug: debugEnabled, blueprintBreakpoints: debugPoints, mode: playMode })} onPause={() => void pausePreview()} onStop={() => void stopPreview()} onFocus={() => void (playPhase === 'paused' && playDebug?.phase !== 'paused' ? resumePreview() : studio.controlPreview?.('focus'))} onLocate={() => { backFromPreview(); if (runtimePosition?.nodeId) locate({ severity: 'warning', message: '', nodeId: runtimePosition.nodeId, lineId: runtimePosition.lineId }); }} />}
       <div
-        inert={!!uiLeave || !!projectBrowser || busy === '启动试玩'}
+        inert={!!uiLeave || !!projectBrowser || uiSaving.current || busy === '启动试玩'}
         className={`editor-layout sidebar-hidden ${showInspector ? "" : "inspector-hidden"} ${playOpen ? 'play-covered' : ''}`}
       >
         <main className="main-workspace">
@@ -1342,6 +1677,7 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
             {library === 'assets' ? <ContentBrowser onRevealAsset={studio.revealAsset ? id => studio.revealAsset!(project, id) : undefined} focus={contentFocus} onActiveSelection={setContentSelection} variant="workspace" project={project} commit={commit} open onClose={() => changeView('script')} assetUrl={assetUrl} onOpen={openContent} onImport={(options, spine) => importAssets(spine, true, options)} onDropFiles={dropResourceFiles} onCreateBlueprint={createResourceBlueprint} busy={!!busy} /> : library !== "scenes" ? (
               <Library key={resourceFocus} initialSetId={parameterSetFocus}
                 onParameterSelection={setActiveParameter}
+                locateParameterUsage={locateParameterUsage}
                 kind={library}
                 project={project}
                 resource={resource}
@@ -1349,7 +1685,14 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
                 commit={commit}
                 assetUrl={assetUrl}
                 addResource={addResource}
-                openUi={id => { setLibrary('scenes'); setResource(undefined); setView('ui'); setUiId(id); setUiFocus({ target: { page: 'preferences', componentId: id, instanceId: project.ui.activeInstanceId }, request: Date.now() }); }}
+                onOpenBlueprint={openBlueprint}
+                openUi={(id, pageId = 'ui:preferences') => {
+                  const page = uiPage(project, pageId);
+                  if (!page) return;
+                  setUiPreviewInstance(undefined);
+                  setLibrary('scenes'); setResource(undefined); setView('ui'); setUiId(id);
+                  setUiFocus({ target: { page: page.kind, componentId: id, ...(page.template ? { instanceId: project.ui.activeInstanceId } : { customPageId: page.id }) }, request: Date.now() });
+                }}
               />
             ) : view === "text" || view === "script" ? (
               <TextEditor
@@ -1382,44 +1725,63 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
                 modeControls={storyModeControls}
                 onSelectionChange={selectTextLocation}
                 previewSuspended={playOpen || settings}
-                moduleEditor={view === 'script' ? <ScriptEditor project={project} sceneId={sceneId} selectedNodeId={nodeId} selectedLineId={lineId} commit={commit} playbackCommit={commitStage} select={selectNode} addNode={addNode} assetUrl={assetUrl} openBlueprint={openBlueprint} openPerformance={openPerformance} embedded /> : undefined}
+                moduleEditor={view === 'script' ? <ScriptEditor project={project} sceneId={sceneId} selectedNodeId={nodeId} selectedLineId={lineId} revealRequest={moduleRevealRequest} commit={commit} playbackCommit={commitStage} select={selectNode} addNode={addNode} assetUrl={assetUrl} openBlueprint={openBlueprint} openPerformance={openPerformance} embedded /> : undefined}
                 moduleToolbar={view === 'script' ? <ScriptEditorActions project={project} sceneId={sceneId} addNode={addNode} /> : undefined}
                 moduleSelection={view === 'script' ? { nodeId: nodeId ?? '', lineId: lineId ?? '' } : undefined}
               />
             ) : view === 'blueprint' ? (
-              <PerformanceWorkspace onActiveSelection={setActiveBlueprint} project={project} target={performanceTarget} onTarget={openPerformance} commit={(label, edit) => commitStage(label, draft => { edit(draft); synchronizeBlueprintSignatures(draft); })} assetUrl={assetUrl} focus={blueprintFocus} onNotice={notify} suspended={playOpen || settings} />
+              <PerformanceWorkspace entryRequest={blueprintEntryRequest} navigation={blueprintNavigation} onLocateUsage={locateBlueprintUsage} onOpenGraph={openCanvasBlueprint} onActiveSelection={setActiveBlueprint} project={project} target={performanceTarget} onTarget={openPerformance} commit={commitBlueprint} commitMaterialized={(label, edit) => {
+                if (!commitStage(label, draft => { const before = projectEditSnapshot(draft); edit(draft); synchronizeBlueprintSignatures(draft, before); })) throw new Error('演出修改未应用，请先修复文本剧本中的错误。');
+              }} assetUrl={assetUrl} focus={blueprintFocus} onNotice={notify} suspended={playOpen || settings} />
             ) : view === "flowchart" ? (
               <Blueprint
-                key={`${project.id}:${sceneId}`}
+                key={project.id}
                 project={project}
                 sceneId={sceneId}
                 selectedNodeId={nodeId}
+                diagnostics={diagnostics}
                 commit={commit}
                 select={selectNode}
-                addNode={addNode}
                 createSubgraph={createSubgraph}
-                openLinkedNode={openLinkedNode}
+                focus={gameFlowFocus}
+                storyFocus={storyFlowFocus}
+                openBlueprint={openBlueprint}
+                openPage={(id, saveMode, componentId) => { setUiAdvanced(false); locate({ severity: 'warning', message: '', ui: { page: id.startsWith('ui:') ? id.slice(3) as NonNullable<Diagnostic['ui']>['page'] : 'custom', customPageId: id.startsWith('ui:') ? undefined : id, componentId } }); if (saveMode) setUiFocus(previous => previous && ({ ...previous, saveMode })); }}
+                preview={start => void preview({ flowStart: start, entryId: undefined, variables: {} })}
+                busy={!!busy}
+                storyInspector={id => <Inspector project={project} nodeId={id} view="flowchart" projectSettings={false} commit={commit} assetUrl={assetUrl} selectNode={selectNode} selectResource={selectResource} hideDialogue />}
                 openPassage={(id) => {
                   selectNode(id);
                   setView("script");
                 }}
               />
             ) : (
-              <UiEditor
-                inspector={<Inspector
+              <UiEditor key={project.id} authoringSessions={uiAuthoringSessions} navigation={blueprintNavigation} textPending={hasTextDraft(uiProject, readTextScript)}
+                      onPreviewAction={action => uiPreviewAction.current(action)}
+                      onPreviewClosed={() => { uiPreviewEpoch.current++; }}
+                onLocateUsage={locateBlueprintUsage}
+                storyPosition={{ nodeId, lineId }}
+                onOpenGameFlow={openGameFlow}
+                onLocatePageUsage={locatePageUsage}
+                onLocateStory={id => locate({ severity: 'warning', message: '', nodeId: id })}
+                onOpenGlobalSettings={() => { setSettingsSection('interface'); setSettings(true); }}
+                onOpenPerformance={openPerformance}
+                inspector={pageContext => <NumericEditContext.Provider value={uiHistory.numericEdit}><Inspector
+            uiPageContext={pageContext}
+            onParameter={locateUiParameter}
             project={uiProject}
             nodeId={nodeId}
             lineId={lineId}
             resource={resource}
             view="ui"
-            uiId={uiId} selectUi={setUiId}
+            uiId={uiId} selectUi={selectUi}
             uiSelectionRequest={`${uiSelectionRequest}:${uiFocus?.request ?? ''}`}
             projectSettings={false}
             commit={commitUi}
             assetUrl={assetUrl}
             selectNode={selectNode}
             selectResource={selectResource}
-          />}
+          /></NumericEditContext.Provider>}
                 blueprintFocus={uiBlueprintFocus}
                 animationFocus={uiAnimationFocus}
                 advanced={uiAdvanced}
@@ -1432,18 +1794,12 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
                 dirty={uiDraftChanged(uiDraft)}
                 saving={!!busy}
                 onSave={() => { void saveUi(); }}
-                onNavigate={action => { if (leaveUi(action)) action(); }}
                 commit={commitUi}
                 focus={uiFocus}
                 selectedId={uiId}
-                select={(id) => {
-                  setUiId(id);
-                  setUiSelectionRequest(request => request + 1);
-                  setResource(undefined);
-                  setSettings(false);
-                }}
+                select={selectUi}
                 assetUrl={assetUrl}
-                openBlueprint={openBlueprint}
+                openBlueprint={openCanvasBlueprint}
               />
             )}
             </div>
@@ -1456,7 +1812,7 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
             lineId={lineId}
             resource={resource}
             view={view}
-            uiId={uiId} selectUi={setUiId}
+            uiId={uiId} selectUi={selectUi}
             uiSelectionRequest={`${uiSelectionRequest}:${uiFocus?.request ?? ''}`}
             projectSettings={false}
             commit={commit}
@@ -1482,7 +1838,7 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
           </div>
           <div className="problems-content">
             {runtimePosition && <div className="runtime-position"><button className="runtime-location" onClick={() => { if (runtimePosition.nodeId) locate({ severity: "warning", message: "", nodeId: runtimePosition.nodeId, lineId: runtimePosition.lineId }); }}><Play size={13} /><strong>{project.nodes.find(node => node.id === runtimePosition.nodeId)?.name ?? "运行位置"}</strong>{runtimePosition.lineId && <span>第 {(() => { const node = project.nodes.find(node => node.id === runtimePosition.nodeId); return node?.kind === "passage" ? node.lines.findIndex(line => line.id === runtimePosition.lineId) + 1 : ""; })()} 行</span>}</button><div className="runtime-state">{Object.entries(runtimePosition.variables ?? {}).map(([id, value]) => <span key={id}><b>{project.variables.find(variable => variable.id === id)?.name ?? id}</b><output>{typeof value === "boolean" ? value ? "是" : "否" : String(value)}</output></span>)}</div></div>}
-            <DiagnosticList issues={allDiagnostics} project={directoryParse?.project ?? project} parsed={directoryParse} document={diagnosticDocument} mode={view === 'text' ? 'text' : view === 'script' ? 'script' : 'other'} onLocate={locate} />
+            <DiagnosticList issues={allDiagnostics} project={diagnosticParse?.project ?? project} parsed={diagnosticParse} document={diagnosticDocument} mode={view === 'text' ? 'text' : view === 'script' ? 'script' : 'other'} onLocate={locate} />
             {!allDiagnostics.length && (
               <div className="no-problems">
                 <Check size={14} />
@@ -1523,7 +1879,7 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
           {busy ? (
             <>
               <LoaderCircle size={13} className="spin" />
-              {busy}…
+              {busyNotice || `${busy}…`}
             </>
           ) : (
             status
@@ -1541,10 +1897,16 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
       {uiLeave && <div className="modal-backdrop"><section className="dialog" role="dialog" aria-modal="true" aria-label="保存界面修改">
         <h2>保存界面修改？</h2><p>{uiLeave.stay ? '界面有未保存的修改。选择保存、放弃修改，或取消并保留草稿。' : '界面有未保存的修改。保存后离开，或放弃这些修改。'}</p>
         <div className="dialog-actions"><button disabled={!!busy} onClick={() => { uiLeave.cancel?.(); uiLeave.onDecision?.('cancel'); setUiLeave(undefined); }}>取消</button>
-        <button disabled={!!busy} onClick={() => { const next = uiLeave.proceed; updateUiDraft(undefined); setUiLeave(undefined); next(); uiLeave.onDecision?.('discard'); }}>不保存</button>
+        <button disabled={!!busy} onClick={() => { const decision = uiLeave; let discarded = false; void run('放弃界面修改', async () => {
+          // Flush the decision before a callback can open another project or
+          // window. A debounce alone can be cancelled by that navigation.
+          const base = history.getProject();
+          await studio.autosave(base, { projectDirty: history.dirty, clear: !history.dirty });
+          updateUiDraft(undefined); setUiLeave(undefined); discarded = true;
+        }).then(() => { if (discarded) { decision.proceed(); decision.onDecision?.('discard'); } }); }}>不保存</button>
         <button className="primary" disabled={!!busy} onClick={() => { const next = uiLeave.proceed; void saveUi().then(saved => { if (saved) { setUiLeave(undefined); next(); uiLeave.onDecision?.('save'); } }); }}>保存并继续</button></div>
       </section></div>}
-      {projectBrowser && <ProjectBrowser bridge={studio} initialSection={projectBrowser} onReturn={() => setProjectBrowser(undefined)} onOpen={session => { adopt(session); setProjectBrowser(undefined); }} />}
+      {projectBrowser && <ProjectBrowser bridge={studio} initialSection={projectBrowser} closing={closing} onBusyChange={value => { projectBrowserBusy.current = value; }} onReturn={() => setProjectBrowser(undefined)} onOpen={session => { adopt(session); setProjectBrowser(undefined); }} />}
       {newDialog && (
         <div className="modal-backdrop">
           <form
@@ -1653,7 +2015,7 @@ export default function App({ initialSession }: { initialSession?: ProjectSessio
       )}
       {aiOpen && !studio.openAiWindow && <AiAssistant {...aiContext} bridge={studio} assetUrl={assetUrl} onApply={applyAiProposal} onApplyWorkflow={applyAiWorkflowProposal} onLayout={layout=>aiEditorAction.current({projectId:project.id,kind:'layout',layout})} onNavigate={target=>aiEditorAction.current({projectId:project.id,kind:'navigate',target})} onCommand={command=>aiEditorAction.current({projectId:project.id,kind:'command',command})} onUndo={undo} onClose={() => setAiOpen(false)} onLocate={locateAiLine} />}
       {textExchange && <TextExchange project={project} imported={textExchange.imported} bridge={studio} onClose={() => {textExchange.complete?.({status:'cancelled',message:'已取消导入，工程没有修改。'});setTextExchange(undefined);}} onNotice={notify} onApply={(next, label) => { history.checkpoint(); history.commit(label, draft => Object.assign(draft, next)); history.checkpoint(); setSceneId(next.scenes[0]?.id ?? ''); setNodeId(next.nodes.find(node => node.kind === 'passage')?.id); setLineId(undefined); setView('text'); setLibrary('scenes'); setResource(undefined); notify(`${label}，可撤销`);textExchange.complete?.({status:'completed',message:`${label}已应用，可撤销；工程尚未保存。`}); }} />}
-      {settings && <ProjectSettings project={project} commit={commit} playMode={playMode} setPlayMode={setPlayMode} testEntry={testEntry} setTestEntry={setTestEntry} testVariables={testVariables} setTestVariables={setTestVariables} selectedNodeId={nodeId} busy={!!busy} initialSection={settingsSection} bridge={studio} assetUrl={assetUrl} onExport={() => { setSettings(false); void exportGame(); }} onClose={() => setSettings(false)} onPreview={() => { setSettings(false); void preview(); }} />}
+      {settings && <ProjectSettings themeProject={uiProject} commitTheme={view === 'ui' ? commitUi : commit} project={project} commit={commit} playMode={playMode} setPlayMode={setPlayMode} testEntry={testEntry} setTestEntry={setTestEntry} testVariables={testVariables} setTestVariables={setTestVariables} selectedNodeId={nodeId} busy={!!busy} initialSection={settingsSection} bridge={studio} assetUrl={assetUrl} onExport={() => { setSettings(false); void exportGame(); }} onClose={() => setSettings(false)} onPreview={() => { setSettings(false); void preview(); }} />}
       {helpOpen && (
         <div className="modal-backdrop">
           <div className="dialog">

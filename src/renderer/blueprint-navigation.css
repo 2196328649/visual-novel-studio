@@ -1,0 +1,5 @@
+.blueprint-navigation-bar { flex: none; display: flex; align-items: center; min-width: 0; gap: 12px; padding: 7px 12px; border-bottom: 1px solid var(--border); background: var(--panel, #20262b); }
+.blueprint-navigation-bar > button { flex: 0 1 auto; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.blueprint-navigation-bar > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
+.blueprint-navigation-bar > small { color: var(--muted); white-space: nowrap; }
+@media (max-width: 900px) { .blueprint-navigation-bar > small { display: none; } }

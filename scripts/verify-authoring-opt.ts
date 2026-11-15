@@ -13,6 +13,7 @@ import { currentScriptText } from '../src/core/script-text';
 import type { RuntimeEvent } from '../src/core/bridge';
 import { enterFixtureProject, installedExecutable, launchDesktopFixture } from './lib/desktop-fixture';
 import { openStoryMode } from './lib/story-workspace';
+import { openContentFilters } from './lib/ui-disclosures';
 
 const root = path.resolve('.'), output = path.join(root, 'artifacts/authoring-opt-20261009', new Date().toISOString().replaceAll(':', '-') + '-' + randomUUID().slice(0, 6));
 const projectFile = path.join(output, 'project/project.vns.json');
@@ -60,7 +61,7 @@ await server?.listen();
 let app: ElectronApplication | undefined, page: Page | undefined, phase = 'launch';
 const checks: string[] = [], errors: string[] = [], nativeEvidence: unknown[] = [], layoutEvidence: unknown[] = [];
 const measureCards = (browser: Locator) => browser.locator('.content-items [data-content-key]').evaluateAll(elements => elements.map(element => {
-  const [card, thumbnail, name, glyph] = [element, element.querySelector('.content-thumbnail'), element.querySelector('strong'), element.querySelector('.content-type-icon')].map(target => target ? { width: target.getBoundingClientRect().width, height: target.getBoundingClientRect().height } : undefined);
+  const [card, thumbnail, name, glyph] = [element, element.querySelector('.content-thumbnail'), element.querySelector('strong'), element.querySelector('.content-type-icon')].map(target => target ? { width: Math.round(target.getBoundingClientRect().width * 100) / 100, height: Math.round(target.getBoundingClientRect().height * 100) / 100 } : undefined);
   const image = element.querySelector<HTMLImageElement>('.content-thumbnail img');
   return { key: (element as HTMLElement).dataset.contentKey, card: card!, thumbnail: thumbnail!, name: name!, glyph, image: image ? { loaded: image.complete && image.naturalWidth > 0, fit: getComputedStyle(image).objectFit } : undefined };
 }));
@@ -106,18 +107,18 @@ try {
   await expect(cards).toHaveCount(1); await browser.locator('[data-content-key="folder:qa_mixed"]').dblclick();
   await expect(cards).toHaveCount(1); await browser.locator('[data-content-key="folder:qa_nested"]').dblclick();
   await expect(cards).toHaveCount(2);
-  await browser.getByRole('button', { name: '全部匹配', exact: true }).click(); await expect(cards).toHaveCount(2);
-  await browser.getByLabel('筛选图片', { exact: true }).check(); await expect(cards).toHaveCount(5);
-  await browser.getByRole('button', { name: '在文件夹内', exact: true }).click(); await expect(cards).toHaveCount(2);
+  await browser.getByLabel('资源显示范围', { exact: true }).selectOption('all'); await expect(cards).toHaveCount(2);
+  await openContentFilters(browser); await browser.getByLabel('筛选图片', { exact: true }).check(); await expect(cards).toHaveCount(5);
+  await browser.getByLabel('资源显示范围', { exact: true }).selectOption('folder'); await expect(cards).toHaveCount(2);
   await expect(browser.getByLabel('筛选图片', { exact: true })).toBeChecked();
-  await browser.getByRole('button', { name: '全部匹配', exact: true }).click();
+  await browser.getByLabel('资源显示范围', { exact: true }).selectOption('all');
   await page.screenshot({ path: path.join(output, '01-unified-filters.png') });
   checks.push('资源树统一，类型可多选；层级模式保留匹配祖先，全部匹配平铺所有所选类型。');
   phase = 'resource tile layout';
   await checkGrid(browser);
-  await browser.getByRole('button', { name: '显示全部类型', exact: true }).click(); await browser.getByLabel('搜索资源和蓝图').fill('');
+  await openContentFilters(browser); await browser.getByRole('button', { name: '显示全部类型', exact: true }).click(); await browser.getByLabel('搜索资源和蓝图').fill('');
   await browser.locator('.content-breadcrumb').getByRole('button', { name: '项目资源', exact: true }).click();
-  await browser.getByRole('button', { name: '类型筛选' }).click();
+  if (await browser.locator('.content-filter-toggle').getAttribute('aria-expanded') === 'true') await browser.getByRole('button', { name: '类型筛选' }).click();
   await browser.locator('[data-content-key="folder:qa_mixed"]').dblclick();
   const regularCards = await checkGrid(browser); assert.ok(regularCards.some(card => card.key?.startsWith('folder:'))); assert.ok(regularCards.some(card => card.key === 'asset:qa_portrait'));
   await page.screenshot({ path: path.join(output, '01-resource-grid.png') });
@@ -139,7 +140,7 @@ try {
   const dock = page.locator('.content-dock'); await expect(dock).toBeVisible();
   const resize = dock.getByRole('separator', { name: '调整资源管理器高度' });
   for (let index = 0; index < 5; index++) await resize.press('ArrowDown');
-  await dock.getByRole('button', { name: '类型筛选' }).click(); await dock.getByLabel('筛选蓝图', { exact: true }).check(); await dock.getByRole('button', { name: '全部匹配', exact: true }).click();
+  await dock.getByRole('button', { name: '类型筛选' }).click(); await dock.getByLabel('筛选蓝图', { exact: true }).check(); await dock.getByLabel('资源显示范围', { exact: true }).selectOption('all');
   const dockBounds = await dock.locator('.content-items').boundingBox(); assert.ok(dockBounds && dockBounds.height >= 50, JSON.stringify(dockBounds));
   await expect(dock.locator('.content-items [data-content-key="blueprint:qa_graph"]')).toBeVisible();
   assert.deepEqual((await checkGrid(dock))[0].card, regularCards[0].card);
@@ -170,7 +171,7 @@ try {
   await expect(page.locator('[data-parameter-id="qa_score"]')).toBeVisible();
   await page.locator('[data-parameter-id="qa_score"]').click({ button: 'right' }); await menu('移至参数集…').click(); await menu('游戏设置').click();
   await expect(page.locator('[data-parameter-id="qa_score"]')).toBeVisible();
-  await page.locator('.builtin-parameters > summary').click(); await page.getByLabel('初始音乐音量', { exact: true }).fill('0.41'); await page.getByLabel('初始音乐音量', { exact: true }).press('Tab');
+  await page.locator('[data-builtin-preference="musicVolume"]').click(); await page.getByLabel('初始音乐音量', { exact: true }).fill('41'); await page.getByLabel('初始音乐音量', { exact: true }).press('Tab');
   await page.keyboard.press('Control+s'); await expect(page.locator('.dirty-dot')).toHaveCount(0);
   const parameterSaved = await saved(); assert.equal(parameterSaved.variables.find(variable => variable.id === 'qa_score')!.parameterSetId, 'parameters_game'); assert.equal(parameterSaved.variables.find(variable => variable.id === 'qa_score')!.persistent, false); assert.equal(parameterSaved.playerDefaults?.musicVolume, .41);
   await page.locator('.parameter-sets-workspace').getByRole('button', { name: '参数集', exact: true }).click(); await page.locator('[data-parameter-set-id="parameters_game"]').click({ button: 'right' }); await expect(menu('移除分组（保留参数）')).toBeDisabled(); await page.keyboard.press('Escape');
@@ -178,7 +179,7 @@ try {
   checks.push('参数集右键重命名、复制粘贴，参数快捷键复制/重命名/删除/撤销、剪切和跨集移动有效，内置组受保护。');
 
   phase = 'selected control save dialog'; await clickTab('ui');
-  const selectOverlay = async () => { await currentPage.getByLabel('设计页面', { exact: true }).selectOption('custom'); await currentPage.getByLabel('选择自定义页面', { exact: true }).selectOption('qa_overlay'); await currentPage.locator('[data-hierarchy-id="qa_overlay_control"]').click(); };
+  const selectOverlay = async () => { await currentPage.getByLabel('设计页面', { exact: true }).selectOption('qa_overlay'); await currentPage.locator('[data-hierarchy-id="qa_overlay_control"]').click(); };
   await selectOverlay(); await page.getByLabel('控件显示名称', { exact: true }).fill('取消时保留');
   const beforeBounds = await page.locator('.ui-canvas [data-component-id="qa_overlay_control"]').boundingBox();
   await clickTab('assets'); const saveDialog = page.getByRole('dialog', { name: '保存界面修改', exact: true }); await expect(saveDialog).toBeVisible();

@@ -1,3 +1,6 @@
+import { uiPageTheme } from './ui-page-settings';
+import { uiMenuButtons } from './ui-page-catalog';
+import { uiActionAvailable } from './ui-availability';
 import { declaredUiComponents, effectiveUiTheme, type Project, type UiComponent } from './model';
 import { dialogueLayout } from './ui';
 import type { NativePreferenceLayout } from './ui-native-preview';
@@ -5,7 +8,7 @@ import type { NativePreferenceLayout } from './ui-native-preview';
 /** Native history and favorites use temporary collections with the same controls as authored lists. */
 export function nativeHistoryPreview(project: Project, pageId: string, authored: UiComponent[]): NativePreferenceLayout | undefined {
  if (pageId !== 'ui:history' && pageId !== 'ui:voiceCollection') return;
- const page = pageId === 'ui:history' ? 'history' : 'voiceCollection', theme = effectiveUiTheme(project.ui);
+ const page = pageId === 'ui:history' ? 'history' : 'voiceCollection', theme = uiPageTheme(project, pageId);
  if (theme.pages?.[page]?.layout === 'custom') return;
  const { width, height } = project, { margin, contentWidth } = dialogueLayout(width, height, theme), font = Math.min(24, theme.fontSize);
  const components: UiComponent[] = [], bodyIds: string[] = [], occupied = new Set([...declaredUiComponents(project), ...authored].map(c => c.id));
@@ -18,7 +21,7 @@ export function nativeHistoryPreview(project: Project, pageId: string, authored:
  add('title', 'text', page === 'history' ? '历史' : '语音收藏', margin, 22, contentWidth * .6, buttonH);
  add('return', 'button', '返回', width - margin - 150, 22, 150, buttonH, { action: 'return' });
  let navX = margin;
- for (const [action, text] of [['save','存档'],['load','读档'],['preferences','设置'],['history','历史'],['gallery','画廊'],['music','音乐'],['mainMenu','标题']] as const) {
+ for (const [action, text] of uiMenuButtons.filter(([action]) => uiActionAvailable(theme, action))) {
   const w = Math.min(96, (contentWidth - 30) / 7);
   add('nav_' + action, 'button', text, navX, 22 + buttonH + 12, w, buttonH, { action }); navX += w + 5;
  }

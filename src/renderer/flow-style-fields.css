@@ -1,0 +1,23 @@
+.flow-style-field { min-width: 0; }
+.flow-style-field > .field { margin-bottom: 8px; }
+.flow-style-field:focus-within > .field .field-label { color: var(--editor-text); }
+.flow-style-note { display: block; margin: 4px 0 9px; color: var(--editor-muted); font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
+.flow-style-notice { margin: 0 0 10px; padding: 8px 10px; border-left: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--editor-text); font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
+.flow-style-section-reset { display: block; font-size: 10px; margin-top: 5px; }
+.flow-style-fields .flow-style-field .ui-design-color-field { margin-bottom: 8px; }
+.flow-style-fields .flow-style-compact-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.flow-caption-text-tabs { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 8px; }
+.flow-caption-text-tabs > button { flex: 1 1 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 7px 9px; background: var(--editor-raised); border: 1px solid var(--editor-border); border-radius: 4px; color: var(--editor-text); font: inherit; font-size: 12px; cursor: pointer; }
+.flow-caption-text-tabs > button.is-active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, var(--editor-raised)); }
+.flow-caption-text-tabs > button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.flow-caption-selected-fields { min-width: 0; }
+.flow-caption-slot-list { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
+.flow-caption-slot-row { display: flex; gap: 5px; align-items: center; padding-bottom: 4px; border-bottom: 1px solid var(--editor-border); }
+.flow-caption-slot-link { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 5px; text-align: left; color: var(--editor-text); font: inherit; font-size: 11px; background: transparent; border: 0; cursor: pointer; }
+.flow-caption-slot-link small { max-width: 100%; color: var(--editor-muted); overflow-wrap: anywhere; }
+.flow-caption-unused-editor, .flow-caption-mapping-preview { border: 1px solid var(--editor-border); padding: 8px; margin: 8px 0; border-radius: 4px; font-size: 11px; }
+.flow-caption-mapping-preview > div:not(.button-row) { display: flex; flex-direction: column; gap: 2px; margin-top: 7px; overflow-wrap: anywhere; }
+.flow-caption-mapping-preview small { color: var(--editor-muted); line-height: 1.5; }
+.flow-caption-mapping-preview .button-row { margin-top: 9px; }
+.flow-style-shadow-mode > .field .field-control { flex-wrap: nowrap; }
+.flow-style-shadow-mode > .field .field-control > .field-label { flex-basis: 54px; }

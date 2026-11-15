@@ -1,3 +1,4 @@
+import { selectUiDesignScheme } from './lib/ui-design-controls';
 import { clickUiButtonEvent } from './lib/ui-disclosures';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
@@ -18,7 +19,7 @@ const control=(id:string)=>page.getByLabel('当前页面控件',{exact:true}).lo
 const mode=(name:string)=>page.getByLabel('界面编辑模式',{exact:true}).getByRole('button',{name,exact:true});
 const enter=async()=>{await expect(page.locator('.project-title strong')).toHaveText(project.name,{timeout:45000});await page.locator('[data-workspace-tab="ui"]').click();await mode('事件图').click();await page.getByLabel('事件图页面',{exact:true}).selectOption('ui:preferences');};
 const chooseParent=async()=>{await graphs.selectOption(parent.id);await expect(graphs).toHaveValue(parent.id);};
-const save=async()=>{await button('保存界面').click();await expect(button('保存界面')).toBeDisabled();return projectSchema.parse(JSON.parse(await fs.readFile(projectFile,'utf8')));};
+const save=async()=>{await button('保存界面').click();await expect(page.locator('.ui-save-status')).toHaveText('已保存');await expect(button('保存界面')).toBeDisabled();return projectSchema.parse(JSON.parse(await fs.readFile(projectFile,'utf8')));};
 try{
  await enter();await expect(graphs).toHaveValue(parent.id);await expect(page.locator('.ui-event-notice')).toContainText('方案「父方案」');
  await control('trigger').click();await clickUiButtonEvent(page, '悬停时 · OnHovered');await expect(graphs).toHaveValue(parent.id);
@@ -42,12 +43,12 @@ try{
  assert.ok(child.nodes.filter(n=>n.type!=='event').every(n=>n.properties.uiInstanceId==='child'));assert.deepEqual(compileProject(saved).diagnostics.filter(d=>d.severity==='error'),[]);
  await page.reload();await enter();await graphs.selectOption(childId);await expect(page.locator('.react-flow__node')).toHaveCount(6);await control('input').click();await button('文字提交时 · OnTextCommitted').click();await expect(graphs).toHaveValue(childId);await expect(button('保存界面')).toBeDisabled();
  await page.screenshot({path:path.join(output,'local-events.png')});
- for(const id of ['parent','sibling']){await mode('设计').click();await page.getByLabel('选择界面实例',{exact:true}).selectOption(id);await mode('事件图').click();await expect(graphs.locator('option')).toHaveCount(1);await expect(graphs).toHaveValue(parent.id);await expect(page.locator('.react-flow__node')).toHaveCount(3);await control('trigger').click();await clickUiButtonEvent(page, '悬停时 · OnHovered');await expect(graphs).toHaveValue(parent.id);}
+ for(const id of ['parent','sibling']){await mode('设计').click();await selectUiDesignScheme(page, id);await mode('事件图').click();await expect(graphs.locator('option')).toHaveCount(1);await expect(graphs).toHaveValue(parent.id);await expect(page.locator('.react-flow__node')).toHaveCount(3);await control('trigger').click();await clickUiButtonEvent(page, '悬停时 · OnHovered');await expect(graphs).toHaveValue(parent.id);}
  // A narrow sidebar must wrap the new inherited-event actions.
  await app.evaluate(({BrowserWindow})=>{const window=BrowserWindow.getAllWindows()[0];window.setMinimumSize(800,600);window.setSize(1024,768);});
  await button('为当前方案添加悬停事件').scrollIntoViewIfNeeded();await expect(button('为当前方案添加悬停事件')).toBeInViewport();const overflow=await inherited.evaluate(el=>({width:el.clientWidth,content:el.scrollWidth}));assert.ok(overflow.content<=overflow.width+1,JSON.stringify(overflow));assert.ok(await page.locator('.ui-event-library').evaluate(el=>el.scrollWidth<=el.clientWidth+1));
  await page.screenshot({path:path.join(output,'inherited-events-narrow.png')});
- await mode('设计').click();await page.getByLabel('选择界面实例',{exact:true}).selectOption('child');await mode('事件图').click();await graphs.selectOption(childId);await expect(page.locator('.react-flow__node')).toHaveCount(6);
+ await mode('设计').click();await selectUiDesignScheme(page, 'child');await mode('事件图').click();await graphs.selectOption(childId);await expect(page.locator('.react-flow__node')).toHaveCount(6);
  await expect(button('保存界面')).toBeDisabled();const final=projectSchema.parse(JSON.parse(await fs.readFile(projectFile,'utf8')));assert.equal(final.ui.activeInstanceId,'child');assert.deepEqual(final.blueprints,saved.blueprints);assert.deepEqual(errors,[]);
  await fs.writeFile(path.join(output,'report.json'),JSON.stringify({status:'passed',renderer:'dist',checks:['继承事件来源与添加当前方案事件说明','按下事件新建子方案图及撤销重做','值改变事件复用本方案图且重复定位不新增','继承文字提交与悬停事件独立新增、优先定位本方案','点击事件复用本方案图','保存前磁盘未改、保存重开保留事件作用域和节点','父方案图完整未改、父方案与兄弟方案不显示子方案图','1024宽侧栏继承事件按钮换行'],parentGraphId:parent.id,childGraphId:childId},null,2));
 }catch(error){await page.screenshot({path:path.join(output,'failure.png')}).catch(()=>undefined);await fs.writeFile(path.join(output,'failure.txt'),String(error)+'\n'+errors.join('\n'));throw error;}

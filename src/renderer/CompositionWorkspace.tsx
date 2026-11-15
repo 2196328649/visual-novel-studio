@@ -1,9 +1,10 @@
+import { cloneData } from "../core/project-mutation";
 import { projectGraphs } from '../core/project-resources';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { ArrowDown, ArrowLeft, ArrowUp, ChevronRight, Copy, GripVertical, Layers, Plus, Trash2 } from 'lucide-react';
 import type { BlueprintGraph, Project, VisualObject } from '../core/model';
 import type { BlueprintSelection } from '../core/ai-selection';
-import { addCompositionChild, compositionFieldBinding, compositionTimeline, duplicateCompositionChild, editCompositionEffects, patchCompositionObject, removeCompositionChild, reorderCompositionChild, setCompositionCurve, setCompositionField, setCompositionPose, setCompositionTiming, toggleCompositionKeyframe, type CompositionObjectView } from '../core/composition-timeline';
+import { addCompositionChild, compositionFieldBinding, compositionTimeline, duplicateCompositionSelection, editCompositionEffects, patchCompositionObject, removeCompositionChild, reorderCompositionChild, setCompositionCurve, setCompositionField, setCompositionPose, setCompositionTiming, toggleCompositionKeyframe, type CompositionObjectView } from '../core/composition-timeline';
 import { editTimelineProject } from '../core/timeline-edit-validation';
 import { createCharacterVisualObject, createVisualObject, visualCurveFields, type VisualCurveProperty } from '../core/visual-object';
 import type { Commit } from './editor';
@@ -14,32 +15,32 @@ import { PerformanceDock } from './PerformanceDock';
 import { PerformanceLibrary } from './PerformanceLibrary';
 import { PropertyFrameTimeline } from './PropertyFrameTimeline';
 import { VisualClipInspector } from './VisualClipInspector';
-import { ClipMenuItems, TimelineCreateMenu } from './TimelineCreateMenu';
+import { ClipMenuItems, TimelineContextMenu, TimelineCreateMenu } from './TimelineCreateMenu';
 import { TrackPreviewControls } from './TrackPreviewControls';
-import { createPortal } from 'react-dom';
 import { addCompositionGlyphParticles, detachCompositionResource, exposeCompositionProperty, groupCompositionSelection, removeCompositionParameter, renameCompositionParameter, saveCompositionResource } from '../core/composition-authoring';
 import { instantiateVisualComposition, materializeVisualCompositions } from '../core/visual-composition';
 import { exposePerformanceInputs, performanceInputs } from '../core/blueprint-authoring';
 import { makeId } from '../core/model';
 import { readVideoDuration } from './audio-metadata';
+import { releaseTimelinePointer, useTimelineGestureCancellation, type TimelinePointerCapture } from './useTimelineGestureCancellation';
 import './composition-workspace.css';
 
 const labelWidth = 200;
 const contentNames = { image: '图片', video: '视频', text: '文字', solid: '色块', group: '组合', particles: '粒子' };
 const seconds = (value: number) => Math.round(value * 1000) / 1000;
 type Timing = { startAt: number; duration: number };
-type Gesture = {
+type Gesture = TimelinePointerCapture & {
   id: string; mode: 'move' | 'start' | 'end'; x: number; scroll: number; zoom: number;
-  initial: Timing; current: Timing; project: Project; moved: boolean;
-  element: HTMLElement; pointerId: number;
+  initial: Timing; current: Timing; project: Project; scope: object; moved: boolean;
 };
 
-export function CompositionWorkspace({ project, graph, nodeId, groupId, initialSelection, commit, assetUrl, time, onSeek, preview, onPreviewProject, onNavigate, onExit, onOpenResource, onNotice, onActiveSelection }: {
+export function CompositionWorkspace({ project, graph, nodeId, groupId, initialSelection, commit, assetUrl, time, onSeek, preview, onPreviewProject, onNavigate, onExit, onOpenResource, onNotice, onActiveSelection, onTogglePlayback }: {
   project: Project; graph: BlueprintGraph; nodeId: string; groupId: string; initialSelection?: string;
   commit: Commit; assetUrl: AssetUrl; time: number; onSeek: (time: number) => void; preview?: ReactNode;
   onPreviewProject?: (project?: Project) => void;
   onNavigate: (groupId: string, selectedId?: string) => void; onExit: () => void; onOpenResource: (id: string) => void;
   onNotice: (text: string) => void; onActiveSelection?: (selection?: BlueprintSelection) => void;
+  onTogglePlayback?: () => void;
 }) {
   const [selectedId, setSelectedId] = useState(initialSelection);
   const [selectedIds, setSelectedIds] = useState<string[]>(initialSelection ? [initialSelection] : []);
@@ -55,11 +56,15 @@ export function CompositionWorkspace({ project, graph, nodeId, groupId, initialS
   const [showFrames, setShowFrames] = useState(false);
   const [dropId, setDropId] = useState<string>();
   const [dragging, setDragging] = useState(false);
-  const mediaRequest = useRef<AbortController | undefined>(undefined);
+  const navigationScope = useMemo(() => ({}), [project.id, graph.id, nodeId, groupId]);
+  const currentNavigation = useRef(navigationScope); currentNavigation.current = navigationScope;
+  const editScope = useMemo(() => ({}), [project, navigationScope]);
+  const currentScope = useRef(editScope); currentScope.current = editScope;
+  const mediaRequest = useRef<{ controller: AbortController; scope: object } | undefined>(undefined);
   const surface = useRef<HTMLDivElement>(null);
   const inspector = useRef<HTMLElement>(null);
   const gesture = useRef<Gesture | undefined>(undefined);
-  const scrub = useRef(false);
+  const scrub = useRef<(TimelinePointerCapture & { scope: object }) | undefined>(undefined);
   const pointer = useRef({ x: 0, shift: false });
   const extent = useRef(1);
   const read = useMemo(() => {
@@ -69,12 +74,15 @@ export function CompositionWorkspace({ project, graph, nodeId, groupId, initialS
     } catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
   }, [project, previewDraft, graph.id, nodeId, groupId]);
   const model = read.model;
-  const selected = model?.children.find(child => child.object.instanceId === selectedId);
+  const childIds = useMemo(() => new Set(model?.children.map(child => child.object.instanceId) ?? []), [model?.children]);
+  const selectionIds = selectedIds.filter(id => childIds.has(id));
+  const activeId = selectedId && selectionIds.includes(selectedId) ? selectedId : selectionIds.at(-1);
+  const selected = model?.children.find(child => child.object.instanceId === activeId);
   const target = selected ?? model?.group;
   const groupAt = model?.group.at ?? 0, duration = model?.group.action.duration ?? 0;
   const localTime = Math.max(0, time - groupAt);
   const visibleEnd = Math.max(0, (model?.group.until ?? 0) - groupAt);
-  const frameRows = showFrames && target ? (Object.keys(visualCurveFields) as VisualCurveProperty[]).flatMap(key => {
+  const frameRows = showFrames && selectionIds.length <= 1 && target ? (Object.keys(visualCurveFields) as VisualCurveProperty[]).flatMap(key => {
     const frames = target.action.curves?.[key]; return frames?.length ? [{ key, frames }] : [];
   }) : [];
   const requiredEnd = Math.max(1, duration, ...(model?.children ?? []).map(child => child.at - groupAt + child.action.duration), ...frameRows.flatMap(row => row.frames.map(frame => frame.at + (target?.at ?? groupAt) - groupAt))) + .4;
@@ -85,31 +93,35 @@ export function CompositionWorkspace({ project, graph, nodeId, groupId, initialS
     try { commit(label, draft => { result = { value: editTimelineProject(draft, graph.id, edit) }; }, { separate }); return result; }
     catch (error) { onNotice(error instanceof Error ? error.message : String(error)); return; }
   };
-  const cancelDrag = () => {
-    const current = gesture.current; gesture.current = undefined;
+  const cancelGestures = () => {
+    const current = gesture.current, currentScrub = scrub.current;
+    gesture.current = undefined; scrub.current = undefined;
     setDragging(false); setPreviewDraft(undefined); onPreviewProject?.(undefined);
-    if (current?.element.hasPointerCapture(current.pointerId)) current.element.releasePointerCapture(current.pointerId);
+    releaseTimelinePointer(current); releaseTimelinePointer(currentScrub);
   };
-  const latest = useRef({ run, cancelDrag, onSeek, project }); latest.current = { run, cancelDrag, onSeek, project };
+  useTimelineGestureCancellation(cancelGestures, () => [gesture.current, scrub.current], [editScope]);
+  useLayoutEffect(() => () => {
+    const request = mediaRequest.current;
+    if (request?.scope === editScope) { mediaRequest.current = undefined; request.controller.abort(); }
+  }, [editScope]);
+  useEffect(() => () => onPreviewProject?.(undefined), [onPreviewProject]);
   useEffect(() => {
-    if (gesture.current && gesture.current.project !== project) cancelDrag();
-  }, [project]);
-  useEffect(() => {
-    const cancel = () => latest.current.cancelDrag();
-    const key = (event: KeyboardEvent) => { if (event.key === 'Escape' && gesture.current) { event.preventDefault(); event.stopPropagation(); cancel(); } };
-    window.addEventListener('blur', cancel); window.addEventListener('keydown', key);
-    return () => { window.removeEventListener('blur', cancel); window.removeEventListener('keydown', key); onPreviewProject?.(undefined); };
-  }, [onPreviewProject]);
-  useEffect(() => () => mediaRequest.current?.abort(), []);
-  useEffect(() => {
-    if (model) onActiveSelection?.({ graphId: graph.id, nodeId, objectInstanceId: selected?.object.instanceId ?? groupId });
+    onActiveSelection?.(model ? { graphId: graph.id, nodeId, objectInstanceId: selected?.object.instanceId ?? groupId } : undefined);
   }, [graph.id, nodeId, groupId, selected?.object.instanceId, !!model, onActiveSelection]);
   useEffect(() => {
     inspector.current?.scrollTo({ top: 0 });
     const row = Array.from(surface.current?.querySelectorAll<HTMLElement>('.composition-track-row') ?? []).find(row => row.dataset.instanceId === selected?.object.instanceId);
     row?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [selected?.object.instanceId]);
-  useEffect(() => { setSelectedId(initialSelection); setSelectedIds(initialSelection ? [initialSelection] : []); setShowFrames(false); setHiddenIds([]); setSoloIds([]); setContext(undefined); }, [groupId, initialSelection]);
+  useEffect(() => {
+    if (selectionIds.length !== selectedIds.length) setSelectedIds(selectionIds);
+    if (activeId !== selectedId) setSelectedId(activeId);
+    setHiddenIds(current => current.every(id => childIds.has(id)) ? current : current.filter(id => childIds.has(id)));
+    setSoloIds(current => current.every(id => childIds.has(id)) ? current : current.filter(id => childIds.has(id)));
+    if (context && !childIds.has(context.id)) setContext(undefined);
+    if (dropId && !childIds.has(dropId)) setDropId(undefined);
+  }, [childIds, selectedIds, selectedId, context, dropId]);
+  useEffect(() => { setSelectedId(initialSelection); setSelectedIds(initialSelection ? [initialSelection] : []); setShowFrames(false); setHiddenIds([]); setSoloIds([]); setContext(undefined); }, [project.id, graph.id, nodeId, groupId, initialSelection]);
   useEffect(() => {
     if (!context) return;
     const close = (event: Event) => { if (!(event.target as Element).closest('.timeline-context-menu')) setContext(undefined); };
@@ -153,42 +165,54 @@ export function CompositionWorkspace({ project, graph, nodeId, groupId, initialS
   };
   const select = (child: CompositionObjectView, multiple = false) => {
     const id = child.object.instanceId;
-    if (multiple) { const next = selectedIds.includes(id) ? selectedIds.filter(item => item !== id) : [...selectedIds, id]; setSelectedIds(next); setSelectedId(next.at(-1)); return; }
+    if (multiple) { const next = selectionIds.includes(id) ? selectionIds.filter(item => item !== id) : [...selectionIds, id]; setSelectedIds(next); setSelectedId(next.at(-1)); return; }
     setSelectedId(id); setSelectedIds([id]);
     if (time < child.at || time >= child.until) onSeek(child.at + Math.min(.05, Math.max(0, child.until - child.at) / 2));
   };
   const timing = (id: string, next: Partial<Timing>, separate = false) => run('调整组合片段时间', (draft, graph) => setCompositionTiming(draft, graph, nodeId, id, next), separate);
+  const focusSelection = (id?: string) => {
+    const scope = navigationScope;
+    requestAnimationFrame(() => {
+      if (currentNavigation.current !== scope) return;
+      const element = Array.from(surface.current?.querySelectorAll<HTMLElement>('.composition-track-clip[data-instance-id]') ?? []).find(item => item.dataset.instanceId === id);
+      (element ?? surface.current)?.focus({ preventScroll: true });
+    });
+  };
   const remove = () => {
-    const ids = selectedIds.length ? selectedIds : selectedId ? [selectedId] : [];
-    if (run('删除组合片段', (draft, graph) => { for (const id of ids) removeCompositionChild(draft, graph, nodeId, groupId, id); }, true)) { setSelectedId(undefined); setSelectedIds([]); }
+    const ids = selectionIds;
+    if (!ids.length) return;
+    if (run('删除组合片段', (draft, graph) => { for (const id of ids) removeCompositionChild(draft, graph, nodeId, groupId, id); }, true)) { setSelectedId(undefined); setSelectedIds([]); focusSelection(); }
   };
   const duplicate = () => {
-    if (!selected) return;
-    const result = run('复制组合片段', (draft, graph) => duplicateCompositionChild(draft, graph, nodeId, groupId, selected.object.instanceId), true);
-    if (result) { setSelectedId(result.value); setSelectedIds([result.value]); }
+    if (!selectionIds.length) return;
+    const result = run('复制组合片段', (draft, graph) => duplicateCompositionSelection(draft, graph, nodeId, groupId, selectionIds), true);
+    if (result) { setSelectedId(result.value[0]); setSelectedIds(result.value); focusSelection(result.value[0]); }
   };
-  const makeGroup = () => { const result = run('制作演出组合', (draft, graph) => groupCompositionSelection(draft, graph, nodeId, groupId, selectedIds.length ? selectedIds : selectedId ? [selectedId] : []), true); if (result) { setSelectedId(result.value); setSelectedIds([result.value]); setContext(undefined); } };
-  const saveGroup = () => { if (!target) return; const result = run('保存组合资源', (draft, graph) => saveCompositionResource(draft, graph, nodeId, target.object.instanceId), true); if (result) { onNotice('已保存到素材库的“组合”和资源管理器。'); setContext(undefined); } };
+  const makeGroup = () => { if (!selectionIds.length) return; const result = run('制作演出组合', (draft, graph) => groupCompositionSelection(draft, graph, nodeId, groupId, selectionIds), true); if (result) { setSelectedId(result.value); setSelectedIds([result.value]); setContext(undefined); focusSelection(result.value); } };
+  const saveGroup = (id = target?.object.instanceId) => { if (!id) return; const result = run('保存组合资源', (draft, graph) => saveCompositionResource(draft, graph, nodeId, id), true); if (result) { onNotice('已保存到素材库的“组合”和资源管理器。'); setContext(undefined); } };
   const addResource = (id: string, at = localTime) => {
     const result = run('添加组合资源', (draft, graph) => { const object = instantiateVisualComposition(draft, id, makeId('object')); materializeVisualCompositions(draft, object, [graph.id]); return addCompositionChild(draft, graph, nodeId, groupId, object, at); }, true);
     if (result) { setSelectedId(result.value); setSelectedIds([result.value]); onSeek(groupAt + at + .01); }
   };
   const add = async (content: VisualObject['content'], assetId?: string, at = localTime, characterId?: string) => {
+    let request: { controller: AbortController; scope: object } | undefined;
     try {
       let sourceDuration: number | undefined;
       const resolvedAssetId = assetId ?? (content === 'image' ? project.assets.find(asset => asset.kind === 'image')?.id : content === 'video' ? project.assets.find(asset => asset.kind === 'video')?.id : undefined);
       if (content === 'video') {
         const asset = project.assets.find(item => item.id === resolvedAssetId && item.kind === 'video');
         if (!asset) { onNotice('先在素材库导入视频。'); return; }
-        mediaRequest.current?.abort(); const controller = new AbortController(); mediaRequest.current = controller;
-        sourceDuration = await readVideoDuration(assetUrl(asset.id) ?? '', controller.signal);
+        mediaRequest.current?.controller.abort(); request = { controller: new AbortController(), scope: editScope }; mediaRequest.current = request;
+        sourceDuration = await readVideoDuration(assetUrl(asset.id) ?? '', request.controller.signal);
+        if (request.controller.signal.aborted || mediaRequest.current !== request || currentScope.current !== request.scope) return;
       }
       const object = characterId ? createCharacterVisualObject(project, characterId) : createVisualObject(content, resolvedAssetId);
       if (assetId) object.name = project.assets.find(asset => asset.id === assetId)?.name ?? object.name;
       if (sourceDuration !== undefined) { object.sourceDuration = sourceDuration; object.duration = sourceDuration; object.imageFit = 'contain'; }
       const result = run('添加组合片段', (draft, graph) => addCompositionChild(draft, graph, nodeId, groupId, object, seconds(at)), true);
       if (result) { setSelectedId(result.value); setSelectedIds([result.value]); onSeek(groupAt + at + .01); }
-    } catch (error) { if (!(error instanceof DOMException && error.name === 'AbortError')) onNotice(error instanceof Error ? error.message : String(error)); }
+    } catch (error) { if ((!request || !request.controller.signal.aborted && currentScope.current === request.scope) && !(error instanceof DOMException && error.name === 'AbortError')) onNotice(error instanceof Error ? error.message : String(error)); }
+    finally { if (request && mediaRequest.current === request) mediaRequest.current = undefined; }
   };
   const snap = (value: number, id: string, otherEdge?: number) => {
     if (!snapping || pointer.current.shift || !model) return seconds(value);
@@ -202,6 +226,7 @@ export function CompositionWorkspace({ project, graph, nodeId, groupId, initialS
   const updateDrag = (x: number, shift: boolean) => {
     pointer.current = { x, shift };
     const current = gesture.current; if (!current) return;
+    if (current.scope !== editScope) { cancelGestures(); return; }
     const delta = (x - current.x + (surface.current?.scrollLeft ?? 0) - current.scroll) / current.zoom;
     if (!current.moved && Math.abs(delta * current.zoom) < 3) return;
     const initial = current.initial, end = initial.startAt + initial.duration;
@@ -211,7 +236,7 @@ export function CompositionWorkspace({ project, graph, nodeId, groupId, initialS
     else { const startAt = Math.max(0, Math.min(end - .05, snap(initial.startAt + delta, current.id))); next = { startAt, duration: seconds(end - startAt) }; }
     current.current = next; current.moved = true; setDragging(true);
     try {
-      const draft = structuredClone(current.project), graphDraft = projectGraphs(draft).find(item => item.id === graph.id)!;
+      const draft = cloneData(current.project), graphDraft = projectGraphs(draft).find(item => item.id === graph.id)!;
       setCompositionTiming(draft, graphDraft, nodeId, current.id, current.mode === 'move' ? { startAt: next.startAt } : next);
       setPreviewDraft(draft); onPreviewProject?.(draft);
     } catch { /* Commit reports a validation failure without publishing the draft. */ }
@@ -233,27 +258,27 @@ export function CompositionWorkspace({ project, graph, nodeId, groupId, initialS
     frame = requestAnimationFrame(scroll); return () => cancelAnimationFrame(frame);
   }, [dragging]);
   const begin = (event: PointerEvent<HTMLDivElement>, child: CompositionObjectView) => {
-    if (event.button !== 0) return;
-    event.preventDefault(); event.stopPropagation(); if (event.ctrlKey || event.metaKey || event.shiftKey) { select(child, true); return; } select(child);
-    event.currentTarget.focus({ preventScroll: true }); event.currentTarget.setPointerCapture(event.pointerId);
+    if (event.button !== 0 || gesture.current || scrub.current) return;
+    event.preventDefault(); event.stopPropagation(); event.currentTarget.focus({ preventScroll: true }); if (event.ctrlKey || event.metaKey || event.shiftKey) { select(child, true); return; } select(child);
+    event.currentTarget.setPointerCapture(event.pointerId);
     const initial = { startAt: child.at - groupAt, duration: child.action.duration };
-    gesture.current = { id: child.object.instanceId, mode: (event.target as HTMLElement).dataset.trim as 'start' | 'end' ?? 'move', x: event.clientX, scroll: surface.current?.scrollLeft ?? 0, zoom, initial, current: initial, project, moved: false, element: event.currentTarget, pointerId: event.pointerId };
+    gesture.current = { id: child.object.instanceId, mode: (event.target as HTMLElement).dataset.trim as 'start' | 'end' ?? 'move', x: event.clientX, scroll: surface.current?.scrollLeft ?? 0, zoom, initial, current: initial, project, scope: editScope, moved: false, element: event.currentTarget, pointerId: event.pointerId };
   };
   const finish = (event: PointerEvent<HTMLDivElement>) => {
-    const current = gesture.current; if (!current) return;
+    const current = gesture.current; if (!current || current.pointerId !== event.pointerId) return;
     updateDrag(event.clientX, event.shiftKey);
+    if (gesture.current !== current) return;
     const next = current.current;
+    cancelGestures();
     if (current.moved && (next.startAt !== current.initial.startAt || next.duration !== current.initial.duration)) timing(current.id, current.mode === 'move' ? { startAt: next.startAt } : next, true);
-    cancelDrag();
   };
   const scrubEvents = {
     onPointerDown: (event: PointerEvent<HTMLElement>) => {
-      if (event.button !== 0 || (event.target as Element).closest('.composition-track-head, .composition-track-clip, .composition-property-row')) return;
-      event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); scrub.current = true; onSeek(groupAt + atPointer(event.clientX));
+      if (event.button !== 0 || gesture.current || scrub.current || (event.target as Element).closest('.composition-track-head, .composition-track-clip, .composition-property-row')) return;
+      event.preventDefault(); event.stopPropagation(); surface.current?.focus({ preventScroll: true }); event.currentTarget.setPointerCapture(event.pointerId); scrub.current = { element: event.currentTarget, pointerId: event.pointerId, scope: editScope }; onSeek(groupAt + atPointer(event.clientX));
     },
-    onPointerMove: (event: PointerEvent<HTMLElement>) => { if (scrub.current) onSeek(groupAt + atPointer(event.clientX)); },
-    onPointerUp: (event: PointerEvent<HTMLElement>) => { if (scrub.current) { scrub.current = false; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); } },
-    onPointerCancel: () => { scrub.current = false; },
+    onPointerMove: (event: PointerEvent<HTMLElement>) => { if (scrub.current?.pointerId !== event.pointerId) return; if (scrub.current.scope !== editScope) { cancelGestures(); return; } onSeek(groupAt + atPointer(event.clientX)); },
+    onPointerUp: (event: PointerEvent<HTMLElement>) => { if (scrub.current?.pointerId !== event.pointerId) return; if (scrub.current.scope === editScope) onSeek(groupAt + atPointer(event.clientX)); cancelGestures(); },
   };
   if (!model || !target) return <div className="performance-empty"><p>{read.error}</p><button onClick={onExit}>返回外层时间轴</button></div>;
   const back = () => model.group.trail.length > 1 ? onNavigate(model.group.trail.at(-2)!.instanceId, groupId) : onExit();
@@ -264,12 +289,12 @@ export function CompositionWorkspace({ project, graph, nodeId, groupId, initialS
   const tickStep = [1, 2, 5, 10].map(value => value * tickBase).find(value => value * zoom >= 60) ?? tickBase * 10;
   const open = (child: CompositionObjectView) => { select(child); if (child.object.compositionId) onOpenResource(child.object.compositionId); else if (child.object.content === 'group') onNavigate(child.object.instanceId); };
   const frames = (view: CompositionObjectView) => view === target && frameRows.map(({ key, frames }) => <div key={key} className="composition-property-row">
-    <span>{visualCurveFields[key][0]}</span><PropertyFrameTimeline frames={frames} duration={view.action.duration} label={visualCurveFields[key][0]} start={view.at - groupAt} zoom={zoom} labelWidth={labelWidth} onSeek={at => onSeek(groupAt + at)} onChange={next => run('移动组合关键帧', (draft, graph) => setCompositionCurve(draft, graph, nodeId, view.object.instanceId, key, next), true)} />
+    <span>{visualCurveFields[key][0]}</span><PropertyFrameTimeline context={editScope} frames={frames} duration={view.action.duration} label={visualCurveFields[key][0]} start={view.at - groupAt} zoom={zoom} labelWidth={labelWidth} onSeek={at => onSeek(groupAt + at)} onChange={next => run('移动组合关键帧', (draft, graph) => setCompositionCurve(draft, graph, nodeId, view.object.instanceId, key, next), true)} />
   </div>);
   const toolbar = <div className="timeline-toolbar composition-tools">
     <TimelineCreateMenu onCreate={content => void add(content)} />
-    {!!selectedIds.length && <button className="small-button" onClick={makeGroup}>制作组合{selectedIds.length > 1 ? `（${selectedIds.length}）` : ''}</button>}
-    <button className="icon-button" aria-label="复制组合片段" title="复制片段 · Ctrl+D" disabled={!selected || model.children.length >= 128} onClick={duplicate}><Copy size={15} /></button>
+    {!!selectionIds.length && <button className="small-button" onClick={makeGroup}>制作组合{selectionIds.length > 1 ? `（${selectionIds.length}）` : ''}</button>}
+    <button className="icon-button" aria-label="复制组合片段" title={`复制${selectionIds.length > 1 ? ` ${selectionIds.length} 个` : ''}片段 · Ctrl+D`} disabled={!selectionIds.length || model.children.length + selectionIds.length > 128} onClick={duplicate}><Copy size={15} /></button>
     <button className="icon-button" aria-label="删除组合片段" title="删除片段 · Delete" disabled={!selected} onClick={remove}><Trash2 size={15} /></button>
     <label><input type="checkbox" aria-label="组合时间轴吸附" checked={snapping} onChange={event => setSnapping(event.target.checked)} />吸附</label>
     <label><input type="checkbox" aria-label="显示组合关键帧" checked={showFrames} onChange={event => setShowFrames(event.target.checked)} />关键帧</label>
@@ -278,8 +303,14 @@ export function CompositionWorkspace({ project, graph, nodeId, groupId, initialS
     <div className="composition-view-tools"><output aria-label="组合当前时间">{localTime.toFixed(2)} / {duration.toFixed(2)} 秒</output><button className="small-button" aria-pressed={autoFit} onClick={fit}>适合窗口</button><label>缩放<input aria-label="组合轨道缩放" type="range" min={10} max={300} step={1} value={Math.max(10, zoom)} onChange={event => changeZoom(Number(event.target.value))} /></label></div>
   </div>;
   const tracks = <div className="timeline-scroll composition-scroll" ref={surface} tabIndex={0} aria-label="组合轨道画布" data-zoom={zoom}
+    onKeyDownCapture={event => {
+      if (event.code !== 'Space' || event.ctrlKey || event.metaKey || event.altKey || event.nativeEvent.isComposing || (event.target as Element).closest('input, textarea, select, [contenteditable="true"], [role="textbox"]')) return;
+      event.preventDefault(); event.stopPropagation();
+      if (!event.repeat && !gesture.current && !scrub.current) onTogglePlayback?.();
+    }}
     onKeyDown={event => {
-      if ((event.target as Element).closest('input, textarea, select, .property-frame-marker')) return;
+      if (event.nativeEvent.isComposing || (event.target as Element).closest('input, textarea, select, [contenteditable="true"], [role="textbox"], .property-frame-marker')) return;
+      if (gesture.current || scrub.current) return;
       if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); event.stopPropagation(); remove(); }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') { event.preventDefault(); event.stopPropagation(); duplicate(); }
     }}
@@ -299,7 +330,7 @@ export function CompositionWorkspace({ project, graph, nodeId, groupId, initialS
       <div className="composition-visible-end" style={{ left: labelWidth + visibleEnd * zoom }} title="组合可见区间结束" />
       {!selected && frames(model.group)}
       {model.children.map((child, index) => {
-        const id = child.object.instanceId, startAt = child.at - groupAt, duration = child.action.duration, active = selectedIds.includes(id);
+        const id = child.object.instanceId, startAt = child.at - groupAt, duration = child.action.duration, active = selectionIds.includes(id);
         const locked = compositionFieldBinding(graph, child, ['duration']).computed;
         return <Fragment key={id}><div className={'composition-track-row' + (active ? ' selected' : '') + (dropId === id ? ' drop-target' : '') + (!childVisible(id) ? ' preview-hidden' : '')} data-instance-id={id}
           onDragOver={event => { if (event.dataTransfer.types.includes('application/vns-composition-track')) { event.preventDefault(); event.stopPropagation(); setDropId(id); } }}
@@ -315,12 +346,20 @@ export function CompositionWorkspace({ project, graph, nodeId, groupId, initialS
             {child.object.content === 'group' ? <button className="composition-enter" aria-label={'进入组合 ' + child.object.name} onClick={() => open(child)}>进入</button> : <div className="composition-order">{([-1, 1] as const).map(direction => <button key={direction} aria-label={(direction < 0 ? '上移图层 ' : '下移图层 ') + child.object.name} disabled={index + direction < 0 || index + direction >= model.children.length} onClick={() => run('调整组合图层顺序', (draft, graph) => reorderCompositionChild(draft, graph, nodeId, groupId, id, index + direction))}>{direction < 0 ? <ArrowUp size={11} /> : <ArrowDown size={11} />}</button>)}</div>}
           </div>
           <div role="button" tabIndex={0} className={'composition-track-clip content-' + child.object.content + (active ? ' selected' : '') + (child.until <= child.at ? ' outside' : '')} aria-label={'组合片段 ' + child.object.name} aria-pressed={active} data-instance-id={id} data-start={startAt} data-duration={duration} style={{ left: labelWidth + startAt * zoom, width: Math.max(26, duration * zoom) }} title={`${child.object.name} · ${startAt.toFixed(2)}–${(startAt + duration).toFixed(2)} 秒；拖动移动，两端调整时长${child.object.content === 'group' ? '，双击进入组合' : ''}`}
-            onPointerDown={event => begin(event, child)} onPointerMove={event => { if (gesture.current?.id === id) updateDrag(event.clientX, event.shiftKey); }} onPointerUp={finish} onPointerCancel={cancelDrag} onLostPointerCapture={() => { if (gesture.current) cancelDrag(); }}
+            onPointerDown={event => begin(event, child)} onPointerMove={event => { if (gesture.current?.id === id && gesture.current.pointerId === event.pointerId) updateDrag(event.clientX, event.shiftKey); }} onPointerUp={finish}
             onDoubleClick={event => { event.stopPropagation(); open(child); }}
-            onContextMenu={event => { event.preventDefault(); event.stopPropagation(); if (!selectedIds.includes(id)) select(child); setContext({ x: event.clientX, y: event.clientY, id }); }}
+            onContextMenu={event => { event.preventDefault(); event.stopPropagation(); if (!selectionIds.includes(id)) select(child); setContext({ x: event.clientX, y: event.clientY, id }); }}
             onKeyDown={event => {
-              if (event.key === 'Enter') { event.preventDefault(); open(child); }
-              if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); const delta = (event.key === 'ArrowLeft' ? -1 : 1) * (event.shiftKey ? 1 : .1); if (!event.altKey || !locked) timing(id, event.altKey ? { duration: Math.max(.05, seconds(duration + delta)) } : { startAt: Math.max(0, seconds(startAt + delta)) }); }
+              if (gesture.current || scrub.current || event.nativeEvent.isComposing) return;
+              if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); if (selectionIds.length === 1 && selected) open(selected); }
+              if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                event.preventDefault(); event.stopPropagation();
+                // Copy can replace the selection before the next animation frame
+                // moves focus. Never edit the old DOM row in that interval.
+                if (selectionIds.length !== 1 || !selected) return;
+                const delta = (event.key === 'ArrowLeft' ? -1 : 1) * (event.shiftKey ? 1 : .1);
+                if (!event.altKey || !compositionFieldBinding(graph, selected, ['duration']).computed) timing(selected.object.instanceId, event.altKey ? { duration: Math.max(.05, seconds(selected.action.duration + delta)) } : { startAt: Math.max(0, seconds(selected.at - groupAt + delta)) });
+              }
             }}>
             {!locked && <i className="composition-trim start" data-trim="start" aria-label={'调整片段起点 ' + child.object.name} title="调整开始时间" />}
             {child.object.content === 'image' && child.action.assetId && <img src={assetUrl(child.action.assetId)} alt="" draggable={false} />}
@@ -338,10 +377,14 @@ export function CompositionWorkspace({ project, graph, nodeId, groupId, initialS
     </div>
   </div>;
   const properties = <section ref={inspector} className="timeline-inspector composition-inspector" aria-label="组合片段属性">
-    <header><strong>{selectedIds.length > 1 ? `已选择 ${selectedIds.length} 个片段` : selected ? contentNames[target.object.content] + '属性' : '当前组合'}</strong><div className="spacer" />{selected && <button className="small-button" onClick={() => { setSelectedId(undefined); setSelectedIds([]); }}>选择当前组合</button>}</header>
-    <label className="timeline-clip-name">名称<input aria-label="组合片段名称" value={target.object.name} maxLength={120} onChange={event => run('重命名组合片段', (draft, graph) => patchCompositionObject(draft, graph, nodeId, target.object.instanceId, { name: event.target.value }))} /></label>
-    {selected && <label className="timeline-clip-duration">开始（秒）<NumberInput aria-label="组合片段开始时间" value={seconds(target.at - groupAt)} step={.1} onChange={event => timing(target.object.instanceId, { startAt: Math.max(0, Number(event.target.value)) })} /></label>}
-    <label className="timeline-clip-duration">时长（秒）<NumberInput aria-label="组合片段时长" disabled={durationBinding.computed} value={seconds(target.action.duration)} step={.1} onChange={event => timing(target.object.instanceId, { duration: Math.max(.05, Number(event.target.value)) })} /></label>
+    <header><strong>{selectionIds.length > 1 ? `已选择 ${selectionIds.length} 个片段` : selected ? contentNames[target.object.content] + '属性' : '当前组合'}</strong><div className="spacer" />{selected && <button className="small-button" onClick={() => { setSelectedId(undefined); setSelectedIds([]); }}>选择当前组合</button>}</header>
+    {selectionIds.length > 1 ? <div aria-label="组合多选操作">
+      <p className="muted">选中的片段可一起复制、组合或删除。单击一个片段后编辑它的属性。</p>
+      <div className="field-row"><button className="small-button" disabled={model.children.length + selectionIds.length > 128} onClick={duplicate}><Copy size={15} />复制 {selectionIds.length} 个片段</button><button className="small-button" onClick={makeGroup}><Layers size={15} />制作组合</button><button className="small-button danger-text" onClick={remove}><Trash2 size={15} />删除所选</button></div>
+    </div> : <>
+    <label className="timeline-clip-identity">名称<input aria-label="组合片段名称" value={target.object.name} maxLength={120} onChange={event => run('重命名组合片段', (draft, graph) => patchCompositionObject(draft, graph, nodeId, target.object.instanceId, { name: event.target.value }))} /></label>
+    <div className="timeline-timing-fields">{selected && <label>开始（秒）<NumberInput aria-label="组合片段开始时间" value={seconds(target.at - groupAt)} step={.1} onChange={event => timing(target.object.instanceId, { startAt: Math.max(0, Number(event.target.value)) })} /></label>}
+    <label>时长（秒）<NumberInput aria-label="组合片段时长" disabled={durationBinding.computed} value={seconds(target.action.duration)} step={.1} onChange={event => timing(target.object.instanceId, { duration: Math.max(.05, Number(event.target.value)) })} /></label></div>
     {!visible && <div className="composition-visibility-note">{target.until <= target.at ? <><span>片段超出组合可见范围</span>{selected && <button onClick={() => { timing(selected.object.instanceId, { startAt: 0 }); onSeek(groupAt + .01); }}>移到开头</button>}</> : <button onClick={() => onSeek(target.at + Math.min(.05, (target.until - target.at) / 2))}>定位到片段</button>}</div>}
     <VisualClipInspector key={target.object.instanceId} project={project} graph={graph} view={target} assetUrl={assetUrl} time={time} onSeek={onSeek}
       onChange={patch => run('编辑组合片段', (draft, graph) => patchCompositionObject(draft, graph, nodeId, target.object.instanceId, patch))}
@@ -352,8 +395,9 @@ export function CompositionWorkspace({ project, graph, nodeId, groupId, initialS
       onExpose={(field, existingId) => run('公开组合参数', (draft, graph) => { if (target.path.length) exposeCompositionProperty(draft, graph, nodeId, target.trail.at(-2)!.instanceId, target.object.instanceId, field.path, field.name, field.type as 'number' | 'string' | 'boolean' | 'asset', field.value, existingId); else { const input = performanceInputs(graph).find(input => input.nodeId === nodeId && input.pinId === 'object_' + field.key)!; let name = field.name, index = 2; while (graph.exposedInputs.some(pin => pin.name === name)) name = field.name + ' ' + index++; exposePerformanceInputs(graph, [{ ...input, name }]); } })}
       onRemoveParameter={target.object.compositionId ? undefined : id => run('移除组合参数', (draft, graph) => removeCompositionParameter(draft, graph, nodeId, target.object.instanceId, id))}
       onRenameParameter={target.object.compositionId ? undefined : (id, name) => run('组合参数名称', (draft, graph) => renameCompositionParameter(draft, graph, nodeId, target.object.instanceId, id, name))}
-      onOpen={target.object.compositionId ? () => onOpenResource(target.object.compositionId!) : selected ? () => open(selected) : undefined} onSave={saveGroup} onResource={() => onOpenResource(target.object.compositionId!)} onDetach={() => run('转为本地组合', (draft, graph) => detachCompositionResource(draft, graph, nodeId, target.object.instanceId))}
+      onOpen={target.object.compositionId ? () => onOpenResource(target.object.compositionId!) : selected ? () => open(selected) : undefined} onSave={() => saveGroup()} onResource={() => onOpenResource(target.object.compositionId!)} onDetach={() => run('转为本地组合', (draft, graph) => detachCompositionResource(draft, graph, nodeId, target.object.instanceId))}
       onGlyphParticles={() => { const result = run('生成字形粒子', (draft, graph) => addCompositionGlyphParticles(draft, graph, nodeId, groupId, target.object.instanceId), true); if (result) { setSelectedId(result.value); setSelectedIds([result.value]); } }} />
+    </>}
   </section>;
   const isolating = hideUnrelated || !!soloIds.length, allowedIds = new Set(model.group.trail.map(item => item.instanceId));
   const allow = (object: VisualObject) => { allowedIds.add(object.instanceId); object.children?.forEach(allow); };
@@ -361,7 +405,7 @@ export function CompositionWorkspace({ project, graph, nodeId, groupId, initialS
   const contextChild = model.children.find(child => child.object.instanceId === context?.id);
   return <div className="composition-workspace" aria-label="组合剪辑工作区" data-group-id={groupId}>
     <nav className="composition-breadcrumbs" aria-label="组合编辑路径"><button onClick={back}><ArrowLeft size={15} />返回上层</button><button onClick={onExit}>{graph.name}</button>{model.group.trail.map((item, index) => <Fragment key={item.instanceId}><ChevronRight size={13} /><button aria-current={index === model.group.trail.length - 1 ? 'location' : undefined} onClick={() => { if (index === model.group.trail.length - 1) { setSelectedId(undefined); setSelectedIds([]); } else onNavigate(item.instanceId); }}>{item.name}</button></Fragment>)}</nav>
-    {context && contextChild && createPortal(<div className="timeline-context-menu" role="menu" aria-label="片段右键菜单" style={{ position: 'fixed', left: Math.max(8, Math.min(context.x, innerWidth - 240)), top: Math.max(8, Math.min(context.y, innerHeight - 280)) }}><ClipMenuItems onSeek={() => { onSeek(contextChild.at + .01); setContext(undefined); }} onProperties={() => { select(contextChild); setContext(undefined); inspector.current?.focus(); }} onDuplicate={() => { duplicate(); setContext(undefined); }} onGroup={makeGroup} onEnter={contextChild.object.content === 'group' ? () => { open(contextChild); setContext(undefined); } : undefined} onSave={contextChild.object.content === 'group' ? saveGroup : undefined} onRemove={() => { remove(); setContext(undefined); }} /></div>, document.body)}
+    {context && contextChild && <TimelineContextMenu point={context} label="片段右键菜单"><ClipMenuItems onSeek={() => { onSeek(contextChild.at + .01); setContext(undefined); }} onProperties={() => { select(contextChild); setContext(undefined); inspector.current?.focus(); }} onDuplicate={() => { duplicate(); setContext(undefined); }} onGroup={makeGroup} onEnter={contextChild.object.content === 'group' ? () => { open(contextChild); setContext(undefined); } : undefined} onSave={contextChild.object.content === 'group' ? () => saveGroup(contextChild.object.instanceId) : undefined} onRemove={() => { remove(); setContext(undefined); }} /></TimelineContextMenu>}
     <CompositionEditingContext.Provider value={{
       canSelect: (root, id) => root === model.group.root.instanceId && (model.children.some(child => child.object.instanceId === id) || id === groupId && !selected),
       selected: (root, id) => root === model.group.root.instanceId && id === target.object.instanceId,

@@ -1,0 +1,23 @@
+.page-flow-route-summary { margin: 10px 0; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.page-flow-route-summary > strong { color: var(--editor-text); font-weight: 500; }
+.page-flow-route-summary > p { margin: 4px 0 0; color: var(--editor-muted); }
+.page-flow-routes { display: grid; gap: 8px; min-width: 0; }
+.page-flow-route-card { min-width: 0; padding: 9px; border: 1px solid var(--editor-border); border-radius: 5px; }
+.page-flow-route-card .page-flow-route > strong { flex: 1 1 100px; min-width: 0; font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+.page-flow-route-card .text-button { flex: none; font-size: 11px; }
+.page-flow-route-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.page-flow-route-badges > span { border-radius: 3px; background: var(--editor-raised); color: var(--editor-muted); padding: 2px 5px; font-size: 10px; }
+.page-flow-route-opening { margin: 6px 0; color: var(--editor-muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.page-flow-paths { min-width: 0; margin-top: 6px; font-size: 11px; line-height: 1.6; }
+.page-flow-paths > summary { color: var(--editor-muted); cursor: pointer; user-select: none; }
+.page-flow-paths > summary:hover { color: var(--editor-text); }
+.page-flow-paths > summary:focus-visible { outline: 2px solid var(--editor-accent, var(--accent)); outline-offset: 2px; }
+.page-flow-path { margin-top: 8px; min-width: 0; }
+.page-flow-path + .page-flow-path { border-top: 1px solid var(--editor-border); padding-top: 8px; }
+.page-flow-path > small { color: var(--editor-muted); }
+.page-flow-path ol { margin: 5px 0 0; padding-left: 20px; }
+.page-flow-path li { margin: 4px 0; overflow-wrap: anywhere; }
+.page-flow-path li::marker { color: var(--editor-muted); }
+.page-flow-path li > .text-button { margin-left: 5px; }
+.page-flow-path li[data-route-step="condition"] > span { color: var(--editor-accent, var(--accent)); }
+.page-flow-path li[data-route-step="target"] > strong { font-weight: 500; }

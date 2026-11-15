@@ -1,17 +1,28 @@
+import { uiLayoutProblem } from './ui-layout';
+import { uiSpineSpeedProblem } from './ui-spine';
+import { uiControlDefinition, uiControlRangeProblem } from './ui-control-properties';
+import { uiPropertyControlProblems } from './ui-property-control';
+import { uiPropertyControlDesignSnapshot } from './ui-property-control-snapshot';
 import { projectGraphs } from './project-resources';
 import { uiHierarchyProblems } from './ui-hierarchy';
 import { uiAnimationClipProblems } from './ui-animation-clips';
 import { uiComponentSchema } from './model';
-import { assetFiles, characterFeatureActions, effectiveCharacter, effectiveUiComponents, effectiveUiTheme, targets, type Asset, type Condition, type Diagnostic, type Project, type StageAction, type UiComponent, type Variable } from './model';
+import { assetFiles, characterFeatureActions, effectiveCharacter, effectiveUiComponents, effectiveUiTheme, targets, variableAssetKind, variableValueType, type Asset, type Condition, type Diagnostic, type Project, type StageAction, type UiComponent, type Variable } from './model';
 import { textCommandAction } from './text-script';
+import { uiAssetBindingProblem } from './ui-asset-binding';
 import { validateBlueprints } from './blueprint-validation';
+import { gameFlowDiagnostics } from './game-flow';
 import { blueprintInputTarget, savedBlueprintAction, rawSavedBlueprintAction } from './blueprint-authoring';
 import { applyVisualInputs, visualInputFields } from './visual-object';
 import { visualAssetKind } from './visual-parameters';
 import { materializeVisualCompositions } from './visual-composition';
-import { validPlayerPreference } from './preferences';
-import { parameterSets, parameterRange, settingsParameters, validParameterSetting } from './parameter-sets';
+import { playerPreferenceKeys, playerPreferences, preferenceInfo, preferenceInRange, preferenceRangeProblem, validPlayerPreference } from './preferences';
+import { parameterSets, parameterTypeName } from './parameter-sets';
 import { characterDisplayPreset } from './character-presets';
+import { textPresentationProblems } from './text-presentation';
+import { textMarksProblems } from './text-spans';
+import { flowTransitionSchema, storyTransitionPorts } from './flow-transitions';
+import { storyPortLabel } from './story-graph';
 
 export function validateProject(project: Project): Diagnostic[] {
   const out: Diagnostic[] = [];
@@ -27,6 +38,14 @@ export function validateProject(project: Project): Diagnostic[] {
   }
   const characters = new Map(project.characters.map(c => [c.id, c]));
   for (const [key, value] of Object.entries(project.playerDefaults ?? {})) if (!validPlayerPreference(key, value)) add('玩家初始设置的值无效，请在界面主题中检查。');
+  for (const key of playerPreferenceKeys) {
+    const own = project.playerPreferenceSettings?.[key], info = preferenceInfo(project, key);
+    if (own && playerPreferences[key].type === 'number' && (own.min !== undefined || own.max !== undefined || own.step !== undefined)) {
+      const problem = preferenceRangeProblem(key, { min: own.min ?? playerPreferences[key].min!, max: own.max ?? playerPreferences[key].max!, step: own.step ?? playerPreferences[key].step! });
+      if (problem) add(`游戏设置“${info.name}”的范围无效：${problem}游戏中使用默认范围。`, undefined, undefined, 'warning');
+    }
+    if (project.playerDefaults?.[key] !== undefined && validPlayerPreference(key, info.initial) && !preferenceInRange(info, info.initial)) add(`游戏设置“${info.name}”的初始值不在滑条范围内，玩家第一次打开游戏时会调整到范围内。`, undefined, undefined, 'warning');
+  }
   const variables = new Map(project.variables.map(v => [v.id, v]));
   const scenes = new Set(project.scenes.map(s => s.id));
   const chapters = new Set(project.chapters.map(c => c.id));
@@ -35,7 +54,10 @@ export function validateProject(project: Project): Diagnostic[] {
     if (!found || (kind !== undefined && found.kind !== kind)) add(`素材不存在或格式不匹配：${found?.name ?? assetId}`, nodeId, lineId);
   };
   const variableValue = (variable: Variable, input: unknown, nodeId?: string) => {
-    if (typeof input !== variable.type) add(`“${variable.name}”需要${{ number: '数值', boolean: '开关', string: '文字' }[variable.type]}。`, nodeId);
+    if (typeof input !== variableValueType(variable)) { add(`“${variable.name}”需要${parameterTypeName(variable)}。`, nodeId); return; }
+    // Asset parameters hold an asset id of their media kind, or '' for none.
+    const kind = variableAssetKind(variable);
+    if (kind && input !== '' && assets.get(String(input))?.kind !== kind) add(`“${variable.name}”的${parameterTypeName(variable)}不存在或格式不匹配：${assets.get(String(input))?.name ?? input}`, nodeId);
   };
   const condition = (test: Condition, nodeId?: string, depth = 0): void => {
     if (depth > 32) { add('条件嵌套超过 32 层，请拆分为多个条件节点。', nodeId); return; }
@@ -137,6 +159,7 @@ export function validateProject(project: Project): Diagnostic[] {
     }
   }
   for (const c of project.characters) {
+    for (const problem of textPresentationProblems(project, c.textPresentation)) add(`角色“${c.name}”的${problem}`, undefined, undefined, 'warning');
     unique(c.id, c.name);
     if (!characterDisplayPreset(project, c.id)) add(`角色“${c.name}”的默认站位预设不存在。`);
     const presetIds = new Set<string>();
@@ -175,10 +198,6 @@ export function validateProject(project: Project): Diagnostic[] {
   const parameterGroups = parameterSets(project);
   for (const group of project.parameterSets ?? []) unique(group.id, group.name);
   for (const variable of project.variables) if (variable.parameterSetId && !parameterGroups.some(group => group.id === variable.parameterSetId)) add('参数“' + variable.name + '”所属参数集不存在。');
-  for (const variable of settingsParameters(project)) {
-    if (variable.type === 'number' && parameterRange(variable).max <= parameterRange(variable).min) add('设置“' + variable.name + '”的滑条最大值必须大于最小值。');
-    if (!validParameterSetting(variable, variable.initial)) add('设置“' + variable.name + '”的初始值不在设置范围或选项中。');
-  }
   for (const effect of project.effects) unique(effect.id, effect.name);
   for (const graph of projectGraphs(project) ?? []) {
     unique(graph.id, `蓝图 ${graph.name}`);
@@ -199,7 +218,7 @@ export function validateProject(project: Project): Diagnostic[] {
       }
     }
   }
-  out.push(...validateBlueprints(project));
+  out.push(...validateBlueprints(project), ...gameFlowDiagnostics(project));
   for (const c of project.chapters) unique(c.id, c.name);
   for (const s of project.scenes) {
     unique(s.id, s.name);
@@ -224,10 +243,34 @@ export function validateProject(project: Project): Diagnostic[] {
   for (const node of project.nodes) {
     unique(node.id, node.name, node.id);
     if (!scenes.has(node.sceneId)) add('节点所属场景不存在。', node.id);
-    for (const edge of targets(node)) {
+    const exits = targets(node);
+    for (const edge of exits) {
       if (!edge.target && ((node.kind === 'interaction' && (edge.port === 'cancel' || (edge.port === 'timeout' && node.timeoutSeconds === 0))) || (node.kind === 'minigame' && edge.port === 'cancel'))) continue;
       if (!edge.target) add(`“${node.name}”有未连接的出口。`, node.id);
       else if (!nodes.has(edge.target)) add(`“${node.name}”连接的节点已不存在。`, node.id);
+    }
+    const transitionExits = node.transitions ? storyTransitionPorts(node, project) : [];
+    for (const [port, transition] of Object.entries(node.transitions ?? {})) {
+      if (!flowTransitionSchema.safeParse(transition).success) {
+        out.push({ severity: 'error', code: 'flow-transition-value', nodeId: node.id,
+          message: `“${node.name}”的连线过渡设置无效。`,
+          help: '过渡时长必须是有限的非负数，纯色过渡需要六位颜色。请在连线属性中重新设置。' });
+        continue;
+      }
+      const exit = transitionExits.find(item => item.port === port);
+      if (!exit) {
+        out.push({ severity: 'warning', code: 'flow-transition-port', nodeId: node.id,
+          message: `“${node.name}”保留了不再适用的出口过渡（${port}），该设置不会执行。`,
+          help: '返回标题和返回调用处使用动态导航；已移除的选项也没有可执行出口。可在模块属性的未启用过渡中移除此设置。' });
+        continue;
+      }
+      const disabledTimeout = node.kind === 'interaction' && port === 'timeout' && node.timeoutSeconds === 0;
+      if (!exit.target || disabledTimeout) {
+        const portName = storyPortLabel(node, port);
+        out.push({ severity: 'warning', code: 'flow-transition-inactive', nodeId: node.id,
+          message: `“${node.name}”的“${portName}”过渡已保留，${disabledTimeout ? '尚未启用超时' : '出口尚未连接'}时不会执行。`,
+          help: disabledTimeout ? '为点击互动设置大于 0 的超时时间并连接超时出口，或移除该出口过渡。' : '重新连接此出口会继续使用该过渡；也可在模块属性的未启用过渡中移除。' });
+      }
     }
     switch (node.kind) {
       case 'jump': {
@@ -244,6 +287,8 @@ export function validateProject(project: Project): Diagnostic[] {
           unique(line.id, '对白', node.id);
           if (line.speakerId && !characters.has(line.speakerId)) add('对白角色不存在。', node.id, line.id);
           if (line.voiceId) asset(line.voiceId, 'audio', node.id, line.id);
+          for (const problem of textPresentationProblems(project, line.textPresentation)) add(problem, node.id, line.id, 'warning');
+          for (const problem of textMarksProblems(project, line)) add(problem, node.id, line.id, 'warning');
           line.actions.forEach(a => action(a, node.id, line.id));
         }
         break;
@@ -291,30 +336,38 @@ export function validateProject(project: Project): Diagnostic[] {
   }
   if (project.ui.menuBackgroundId) asset(project.ui.menuBackgroundId, 'image');
   if (project.ui.menuMusicId) asset(project.ui.menuMusicId, 'audio');
-  if (project.ui.hoverSoundId) asset(project.ui.hoverSoundId, 'audio');
+  if (project.ui.hoverSoundId) asset(project.ui.hoverSoundId, 'audio'); if (project.ui.clickSoundId) asset(project.ui.clickSoundId, 'audio');
   if (project.ui.chapterTransition?.overlayId) asset(project.ui.chapterTransition.overlayId, 'image');
   if (project.ui.chapterTransition?.maskId) asset(project.ui.chapterTransition.maskId, 'image');
   if (project.ui.chapterTransition?.dissolveId) asset(project.ui.chapterTransition.dissolveId, 'image');
   if (project.ui.fontAssetId) asset(project.ui.fontAssetId, 'font');
   if (project.ui.continueIndicatorId) asset(project.ui.continueIndicatorId, 'image');
   for (const theme of [project.ui, ...(project.ui.instances ?? [])]) {
-    for (const page of Object.values(theme.pages ?? {})) if (page.backgroundId) asset(page.backgroundId, 'image');
+    for (const page of Object.values(theme.pages ?? {})) {
+      if (page.backgroundId) asset(page.backgroundId, 'image');
+      if (page.appearance?.fontAssetId) asset(page.appearance.fontAssetId, 'font');
+      if (page.appearance?.hoverSoundId) asset(page.appearance.hoverSoundId, 'audio'); if (page.appearance?.clickSoundId) asset(page.appearance.clickSoundId, 'audio');
+    }
   }
   for (const style of project.ui.flowStyles ?? []) {
     unique(style.id, style.name);
     for (const state of ['idle', 'hover', 'pressed', 'selected', 'disabled'] as const) if (style.skin?.[state]) asset(style.skin[state], 'image');
-    if (style.style?.fontAssetId) asset(style.style.fontAssetId, 'font');
+    if (style.style?.fontAssetId) asset(style.style.fontAssetId, 'font'); for (const part of style.style?.captionParts ?? []) if (part.fontAssetId) asset(part.fontAssetId, 'font');
   }
   for (const item of [...project.chapters, ...project.scenes, ...project.nodes]) if (item.flowchart?.styleId && !project.ui.flowStyles?.some(s => s.id === item.flowchart?.styleId)) add('流程图样式已不存在：' + item.name, project.nodes.some(n => n.id === item.id) ? item.id : undefined);
   for (const components of [project.ui.components, ...(project.ui.instances ?? []).map(i => effectiveUiComponents({ ...project.ui, activeInstanceId: i.id })), ...project.ui.customPages.map(p => p.components)]) for (const problem of uiHierarchyProblems(components)) add('界面子对象：' + problem.message);
   const clickSources = new Set(projectGraphs(project).flatMap(graph => graph.nodes.filter(node => node.type === 'eventClick').map(node => node.properties.componentId)));
   const uiComponent = (c: UiComponent, owner: Pick<NonNullable<Diagnostic['ui']>, 'instanceId' | 'customPageId'> = {}) => {
     const firstIssue = out.length;
+    const layoutProblem = uiLayoutProblem(c);
+    if (layoutProblem) out.push({ severity: 'error', code: 'ui.layout.version', message: layoutProblem, help: '定位控件后打开“通用布局、容器与滚动”，明确恢复默认布局；旧数据会保留，操作可以撤销。' });
     const complete = uiComponentSchema.safeParse(c);
     if (!complete.success) for (const issue of complete.error.issues) if (issue.code === 'custom') add(issue.message);
     if (c.kind === 'image') { if (!c.assetId) add('界面图片组件尚未选择素材。'); else asset(c.assetId, 'image'); }
     if (c.kind === 'video') { if (!c.assetId) add('界面视频组件尚未选择素材。'); else asset(c.assetId, 'video'); }
     if (c.kind === 'spine') {
+      const speedProblem = uiSpineSpeedProblem(c.spine?.speed ?? 1);
+      if (speedProblem) add(speedProblem);
       if (!c.assetId) add('骨骼动画组件尚未选择素材。'); else asset(c.assetId, 'spine');
       const data = assets.get(c.assetId ?? '')?.spine;
       if (c.spine?.animation && data && !data.animations.some(animation => animation.name === c.spine?.animation)) add(`骨骼素材没有动画“${c.spine.animation}”。`);
@@ -322,13 +375,25 @@ export function validateProject(project: Project): Diagnostic[] {
     }
     if (c.posterId) asset(c.posterId, 'image');
     if (c.hoverSoundId) asset(c.hoverSoundId, 'audio');
-    for (const skin of [c.skin, c.slider?.thumb, c.selector?.itemSkin, c.list?.voiceReplaySkin, c.list?.voiceFavoriteSkin, c.list?.pageSkin, c.list?.flowEndSkin, c.list?.flowChapterSkin, c.list?.flowScrollbar?.thumb, c.list?.slotActionSkin, c.list?.slotSaveSkin, c.list?.autoSlotSkin, c.list?.numberSkin]) for (const state of ['idle', 'hover', 'pressed', 'selected', 'disabled'] as const) if (skin?.[state]) asset(skin[state], 'image');
+    if (c.clickSoundId) asset(c.clickSoundId, 'audio');
+    for (const skin of [c.skin, c.slider?.thumb, c.selector?.itemSkin, c.list?.voiceReplaySkin, c.list?.voiceFavoriteSkin, c.list?.pageSkin, c.list?.flowEndSkin, c.list?.flowChapterSkin, c.list?.flowScrollbar?.thumb, c.list?.historyScrollbar?.thumb, c.list?.slotActionSkin, c.list?.slotSaveSkin, c.list?.autoSlotSkin, c.list?.numberSkin]) for (const state of ['idle', 'hover', 'pressed', 'selected', 'disabled'] as const) if (skin?.[state]) asset(skin[state], 'image');
     for (const id of [c.slider?.trackId, c.slider?.fillId, c.selector?.popupBackgroundId, c.selector?.arrowId]) if (id) asset(id, 'image');
     if (c.preferenceCharacterId && !characters.has(c.preferenceCharacterId)) add('玩家设置引用的配音角色不存在。');
     if (c.parameterId && !variables.has(c.parameterId)) add('控件绑定的参数已不存在，请在组件设置中重新选择。');
-    if (c.style?.fontAssetId) asset(c.style.fontAssetId, 'font');
+    for (const problem of uiPropertyControlProblems(project, c)) out.push({ severity: 'error', code: 'ui.property-control.source', message: problem.message, help: '右键属性名称，重新选择关联参数或恢复默认设置；原默认值与关联记录均已保留。' });
+    { const problem = uiAssetBindingProblem(project, c); if (problem) add(problem); }
+    if (c.parameterId && variables.get(c.parameterId)?.type === 'asset') add(`设置控件不能绑定${parameterTypeName(variables.get(c.parameterId)!)}参数“${variables.get(c.parameterId)!.name}”，请在组件设置中重新选择。`);
+    if (c.controlRange || ['preference', 'preferenceChoice'].includes(c.kind)) {
+      const effective = c.propertyControls ? uiPropertyControlDesignSnapshot(project, c).component : c;
+      const control = uiControlDefinition(project, effective);
+      const range = effective.controlRange ?? control?.range;
+      const rangeProblem = c.controlRange && (!control || control.type !== 'number') ? '范围覆盖只适用于已绑定的数值控件。' : range ? uiControlRangeProblem(control, range) : undefined;
+      if (rangeProblem) add(rangeProblem);
+    }
+    if (c.style?.fontAssetId) asset(c.style.fontAssetId, 'font'); for (const part of c.style?.captionParts ?? []) if (part.fontAssetId) asset(part.fontAssetId, 'font');
     if (c.list?.lockedAssetId) asset(c.list.lockedAssetId, 'image');
     if (c.list?.pageFontAssetId) asset(c.list.pageFontAssetId, 'font');
+    for (const style of Object.values(c.list?.textStyles ?? {})) if (style?.fontAssetId) asset(style.fontAssetId, 'font');
     if (c.list?.emptyAssetId) asset(c.list.emptyAssetId, 'image');
     if (c.list?.hoverOverlayId) asset(c.list.hoverOverlayId, 'image');
     if (c.list?.thumbnailFrame?.assetId) asset(c.list.thumbnailFrame.assetId, 'image');
@@ -336,6 +401,7 @@ export function validateProject(project: Project): Diagnostic[] {
     if (c.list?.flowVerticalLineAssetId) asset(c.list.flowVerticalLineAssetId, 'image');
     if (c.list?.flowCurrentMarker) asset(c.list.flowCurrentMarker.assetId, 'image');
     if (c.list?.flowScrollbar?.trackId) asset(c.list.flowScrollbar.trackId, 'image');
+    if (c.list?.historyScrollbar?.trackId) asset(c.list.historyScrollbar.trackId, 'image');
     for (const id of c.list?.assetIds ?? []) asset(id, ['musicTrackList', 'voiceCollection'].includes(c.kind) ? 'audio' : 'image');
     for (const group of c.list?.galleryGroups ?? []) {
       if (group.thumbnailAssetId) asset(group.thumbnailAssetId, 'image');
@@ -348,12 +414,13 @@ export function validateProject(project: Project): Diagnostic[] {
     if (c.visibleWhen) condition(c.visibleWhen);
     if (c.enabledWhen) condition(c.enabledWhen);
     if (c.selectedWhen) condition(c.selectedWhen);
-    if (c.kind === 'button' && !c.action && !c.events?.onClick && !clickSources.has(c.id)) out.push({
+    if (c.kind === 'button' && !c.action && !c.events?.beforeClick && !c.events?.onClick && !clickSources.has(c.id)) out.push({
       severity: 'warning', code: 'ui.button.unbound', message: `按钮“${c.name || c.text || c.id}”尚未绑定点击行为。`,
       help: '点击“定位控件”会打开所属页面、选中层级中的按钮并显示属性。在“点击行为”中选择操作，或在“点击事件蓝图”中选择蓝图；也可以在蓝图中添加“点击控件时”节点并选择此按钮。装饰用元素可改用图片或文字控件。',
     });
     if (c.action === 'blueprint' && c.blueprintId && !projectGraphs(project)?.some(graph => graph.id === c.blueprintId)) add('界面按钮调用的蓝图不存在。');
     if (c.events?.onClick && !projectGraphs(project)?.some(graph => graph.id === c.events?.onClick)) add('界面组件的点击事件蓝图不存在。');
+    if (c.events?.beforeClick && !projectGraphs(project)?.some(graph => graph.id === c.events?.beforeClick)) add('界面组件接入的页面入口蓝图不存在。');
     if (c.events?.onShow && !projectGraphs(project)?.some(graph => graph.id === c.events?.onShow)) add('界面组件的显示事件蓝图不存在。');
     if (c.action?.startsWith('minigame') && c.page !== 'custom') add('结束小游戏动作只能用于自定义交互页面。');
     for (let index = firstIssue; index < out.length; index++) {
@@ -392,13 +459,15 @@ export function validateProject(project: Project): Diagnostic[] {
   for (const page of project.ui.customPages ?? []) {
     unique(page.id, `自定义页面 ${page.name}`);
     if (page.backgroundId) asset(page.backgroundId, 'image');
+    if (page.appearance?.fontAssetId) asset(page.appearance.fontAssetId, 'font');
+    if (page.appearance?.hoverSoundId) asset(page.appearance.hoverSoundId, 'audio'); if (page.appearance?.clickSoundId) asset(page.appearance.clickSoundId, 'audio');
     if (page.onShowBlueprintId && !projectGraphs(project)?.some(graph => graph.id === page.onShowBlueprintId)) add(`自定义页面“${page.name}”的显示事件蓝图不存在。`);
     for (const component of page.components) {
       unique(component.id, `自定义页面 ${page.name} / 组件`);
       if (component.page !== 'custom') add(`自定义页面“${page.name}”包含了错误页面类型的组件。`);
       uiComponent(component, { customPageId: page.id });
     }
-    const eventBlueprintIds = [page.onShowBlueprintId, ...page.components.flatMap(component => [component.blueprintId, component.events?.onClick, component.events?.onShow])].filter((id): id is string => !!id);
+    const eventBlueprintIds = [page.onShowBlueprintId, ...page.components.flatMap(component => [component.blueprintId, component.events?.beforeClick, component.events?.onClick, component.events?.onShow])].filter((id): id is string => !!id);
     const hasBlueprintExit = eventBlueprintIds.some(id => projectGraphs(project)?.find(graph => graph.id === id)?.nodes.some(node => node.type === 'finishMinigame')) || projectGraphs(project).some(graph => graph.nodes.some(node => node.type === 'closeUiPage' && node.properties.pageId === page.id));
     const hasDirectExit = page.components.some(component => ['minigameSuccess', 'minigameFailure', 'minigameCancel'].includes(component.action ?? ''));
     if (!hasDirectExit && !hasBlueprintExit && project.minigames.some(game => game.uiPageId === page.id)) add(`小游戏页面“${page.name}”没有结束按钮或关闭界面节点；可添加关闭操作。`, undefined, undefined, 'warning');
@@ -421,14 +490,15 @@ export function validateProject(project: Project): Diagnostic[] {
   const effectiveComponents = effectiveUiComponents(project.ui);
   if (effectiveUi.fontAssetId) asset(effectiveUi.fontAssetId, 'font');
   if (effectiveUi.menuMusicId) asset(effectiveUi.menuMusicId, 'audio');
-  if (effectiveUi.hoverSoundId) asset(effectiveUi.hoverSoundId, 'audio');
+  if (effectiveUi.hoverSoundId) asset(effectiveUi.hoverSoundId, 'audio'); if (effectiveUi.clickSoundId) asset(effectiveUi.clickSoundId, 'audio');
   if (effectiveUi.continueIndicatorId) asset(effectiveUi.continueIndicatorId, 'image');
-  if (effectiveUi.pages?.say?.layout === 'custom' && !effectiveComponents.some(c => c.page === 'say' && c.binding === 'dialogue')) add('自定义对话页需要“当前对白”文字组件。');
-  if (effectiveUi.pages?.choice?.layout === 'custom' && !effectiveComponents.some(c => c.page === 'choice' && c.kind === 'choiceList')) add('自定义选项页需要“选项列表”组件。');
-  if (effectiveUi.pages?.messageBox?.layout === 'custom') {
+  const customPageEnabled = (page: UiComponent['page']) => !effectiveUi.disabledPages?.includes(page) && effectiveUi.pages?.[page]?.layout === 'custom';
+  if (customPageEnabled('say') && !effectiveComponents.some(c => c.page === 'say' && c.binding === 'dialogue')) add('自定义对话页需要“当前对白”文字组件。');
+  if (customPageEnabled('choice') && !effectiveComponents.some(c => c.page === 'choice' && c.kind === 'choiceList')) add('自定义选项页需要“选项列表”组件。');
+  if (customPageEnabled('messageBox')) {
     const messages = effectiveComponents.filter(c => c.page === 'messageBox');
-    if (!messages.some(c => c.binding === 'confirmation')) add('自定义消息框需要“确认提示”文字组件。');
-    for (const action of ['confirmYes', 'confirmNo'] as const) if (!messages.some(c => c.action === action)) add(`自定义消息框需要“${action === 'confirmYes' ? '确认' : '取消'}”按钮。`);
+    if (!messages.some(c => c.binding === 'confirmation')) add('自定义确认对话框需要“确认提示”文字组件。');
+    for (const action of ['confirmYes', 'confirmNo'] as const) if (!messages.some(c => c.action === action)) add(`自定义确认对话框需要“${action === 'confirmYes' ? '确认' : '取消'}”按钮。`);
   }
   const reachable = new Set<string>();
   const pending = [project.entryId];

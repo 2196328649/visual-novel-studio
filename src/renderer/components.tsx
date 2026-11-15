@@ -1,7 +1,10 @@
 import { useEffect, useId, useRef, useState, isValidElement, cloneElement, type ButtonHTMLAttributes, type ReactNode, type ReactElement } from "react";
 import { ChevronDown, CircleHelp, Plus, Trash2 } from "lucide-react";
 import { NumberInput } from './NumberInput';
-import { parameterSets, parameterSetFor } from '../core/parameter-sets';
+import { useUiPropertyControlField } from './UiPropertyControl';
+import type { UiProperty } from '../core/ui-properties';
+import { parameterKind, parameterKindNames, parameterSets, parameterSetFor, setParameterKind, type ParameterKind } from '../core/parameter-sets';
+import { AssetReferenceInput } from './AssetReferenceInput';
 import type {
   Condition,
   Project,
@@ -31,21 +34,34 @@ export function Field({
   label,
   children,
   hint,
+  layout = 'auto',
+  uiProperty,
 }: {
   label: string;
   children: ReactNode;
   hint?: string;
+  /** Simple fields may share a row with their label where the inspector has room. */
+  layout?: 'auto' | 'stacked';
+  /** The runtime property represented by this root-control field. */
+  uiProperty?: UiProperty;
 }) {
   const labelId = useId();
-  const toggle = isValidElement<{ type?: string }>(children) && children.type === 'input' && children.props.type === 'checkbox';
+  const propertyControl = useUiPropertyControlField(uiProperty, label);
+  const toggle = !propertyControl.bound && isValidElement<{ type?: string }>(children) && children.type === 'input' && children.props.type === 'checkbox';
+  const simple = propertyControl.bound || layout === 'auto' && isValidElement<{ type?: string; multiple?: boolean; size?: number }>(children) && (
+    children.type === NumberInput
+    || children.type === 'input' && ['text', 'number', 'email', 'tel', 'url', 'search', 'password'].includes(children.props.type ?? 'text')
+    || children.type === 'select' && !children.props.multiple && (children.props.size ?? 1) <= 1
+    || !!uiProperty && children.type === 'span'
+  );
   const explicitLabel = isValidElement<{ 'aria-label'?: string; 'aria-labelledby'?: string }>(children) && (children.props['aria-label'] || children.props['aria-labelledby']);
   const control = !explicitLabel && isValidElement(children) && (children.type === NumberInput || typeof children.type === 'string' && ['input', 'select', 'textarea'].includes(children.type))
     ? cloneElement(children as ReactElement<Record<string, unknown>>, { 'aria-labelledby': labelId }) : children;
   return (
-    <div className={`field${toggle ? ' field-toggle' : ''}${hint ? ' field-with-help' : ''}`}>
+    <div className={`field${toggle ? ' field-toggle' : ''}${simple ? ' field-simple' : ''}${hint ? ' field-with-help' : ''}`} data-ui-property={propertyControl.enabled ? uiProperty : undefined} data-ui-property-bound={propertyControl.bound || undefined} onContextMenu={propertyControl.onContextMenu} onKeyDown={propertyControl.onFieldKeyDown}>
       <label className="field-control">
-        <span className="field-label" id={labelId}>{label}</span>
-        {control}
+        <span className="field-label" id={labelId} tabIndex={propertyControl.labelTabIndex}>{label}</span>
+        {propertyControl.bound ? propertyControl.replacement : control}
       </label>
       {hint && <details className="field-help"><summary aria-label={`${label}说明`} title={hint}><CircleHelp size={13} aria-hidden="true" /></summary><small>{hint}</small></details>}
     </div>
@@ -83,18 +99,32 @@ export function Empty({
     </div>
   );
 }
+/** One select for every parameter kind; changing it restarts the initial value. */
+export function ParameterKindSelect({ variable, onChange, onKindChange, label = '参数类型' }: { variable: Variable; onChange?: (change: (variable: Variable) => void) => void; onKindChange?: (kind: ParameterKind) => void; label?: string }) {
+  return <select aria-label={label} value={parameterKind(variable)} onChange={event => { const kind = event.target.value as ParameterKind; if (onKindChange) onKindChange(kind); else onChange?.(v => setParameterKind(v, kind)); }}>
+    <optgroup label="基础">{(['number', 'boolean', 'string'] as const).map(kind => <option key={kind} value={kind}>{parameterKindNames[kind]}</option>)}</optgroup>
+    <optgroup label="素材">{(['image', 'audio', 'video'] as const).map(kind => <option key={kind} value={kind}>{parameterKindNames[kind]}</option>)}</optgroup>
+  </select>;
+}
 export function ValueInput({
   variable,
   value,
   onChange,
   label = '状态值',
+  project,
 }: {
   variable?: Variable;
   value: VariableValue;
   onChange: (value: VariableValue) => void;
   label?: string;
+  /** Needed to pick the asset of an image, audio, or video parameter. */
+  project?: Project;
 }) {
-  const type = variable?.type ?? typeof value;
+  if (variable?.type === 'asset') {
+    const kind = variable.assetKind ?? 'image';
+    if (project) return <AssetReferenceInput preview project={project} kind={kind} label={label} value={String(value || '') || undefined} empty={'无' + parameterKindNames[kind]} onChange={next => onChange(next ?? '')} />;
+  }
+  const type = variable?.type === 'asset' ? 'string' : variable?.type ?? typeof value;
   if (type === "boolean")
     return (
       <select
@@ -209,6 +239,7 @@ export function ConditionEditor({
             )}
           </select>
           <ValueInput
+            project={project}
             variable={project.variables.find(
               (v) => v.id === condition.variableId,
             )}

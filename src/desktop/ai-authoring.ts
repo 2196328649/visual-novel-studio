@@ -1,3 +1,4 @@
+import { cloneData } from "../core/project-mutation";
 import { aiHistorySchema } from '../core/ai-conversations';
 import { blueprintSelectionSchema, uiPageSelectionSchema, uiAnimationSelectionSchema } from '../core/ai-selection';
 import { currentScriptText } from '../core/script-text';
@@ -63,7 +64,7 @@ export class AiAuthoringService {
       const asset = image && (side === 'before' ? before : proposal.project).assets.find(item => item.id === image.assetId && item.kind === 'image');
       if (!image || !asset) continue;
       const key = side + '_' + asset.id;
-      assets.set(key, structuredClone(asset));
+      assets.set(key, cloneData(asset));
       image.previewUrl = `studio-asset://ai/${token}/${encodeURIComponent(key)}`;
     }
     this.previews.set(token, { project: { id: before.id } as Project, directory, assets });
@@ -115,7 +116,7 @@ export class AiAuthoringService {
       return path.resolve(value);
     };
     const original = currentTextProject(request.project);
-    let draft = structuredClone(original);
+    let draft = cloneData(original);
     const portraitBindings = resolvePortraitBindings(original, plan.portraitBindings, request.attachments);
     if (plan.assetDirectory && portraitBindings.some(binding => path.resolve(binding.sourcePath).toLocaleLowerCase() === path.resolve(plan.assetDirectory!).toLocaleLowerCase())) plan.assetDirectory = null;
     const portraitTask = plan.portraits || plan.bindPortraits || !!plan.assetDirectory && /立绘|portrait/i.test(request.prompt);

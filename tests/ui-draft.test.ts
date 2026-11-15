@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createProject } from '../src/core/model';
 import { applyUiDraft, uiDraftChanged } from '../src/core/ui-draft';
+import { mutateProject } from '../src/core/project-mutation';
 
 test('UI draft preserves concurrent imports and unrelated edits, including keyed collections', () => {
   const base = createProject();
@@ -22,6 +23,37 @@ test('UI draft preserves concurrent imports and unrelated edits, including keyed
   assert.equal(applyUiDraft(current), current);
   assert.equal(uiDraftChanged(draft), true);
   assert.equal(uiDraftChanged({ base, value: structuredClone(base) }), false);
+});
+
+test('accepting an already saved UI snapshot preserves changes made while disk I/O was pending', () => {
+  const base = createProject();
+  const snapshot = mutateProject(base, draft => { draft.ui.fontSize = 44; });
+  const current = mutateProject(base, draft => {
+    draft.assets.push({ id: 'late_import', name: '保存期间的素材', kind: 'image', path: 'assets/late.png' });
+    draft.nodes.find(node => node.kind === 'passage')!.lines[0].text = '保存期间编辑的台词';
+  });
+  const accepted = applyUiDraft(current, { base, value: snapshot });
+  assert.equal(accepted.ui.fontSize, 44);
+  assert.equal(accepted.assets, current.assets);
+  assert.equal(accepted.nodes, current.nodes);
+  assert.notEqual(accepted, snapshot, 'the live project must stay dirty relative to the saved snapshot');
+  assert.equal(snapshot.assets.some(asset => asset.id === 'late_import'), false, 'do not pretend late assets reached the earlier save');
+});
+
+test('immutable UI drafts reuse their snapshots and untouched concurrent branches', () => {
+  const base = createProject();
+  const value = mutateProject(base, draft => { draft.ui.fontSize = 44; });
+  const draft = { base, value };
+  assert.equal(applyUiDraft(base, draft), value);
+  const current = mutateProject(base, project => { project.assets.push({ id: 'new', name: 'new', kind: 'image', path: 'assets/new.png' }); });
+  const merged = applyUiDraft(current, draft);
+  assert.equal(merged.assets, current.assets);
+  assert.equal(merged.nodes, base.nodes);
+  assert.equal(merged.ui.fontSize, 44);
+  assert.equal(uiDraftChanged(draft), true);
+  assert.equal(uiDraftChanged({ base, value: base }), false);
+  assert.equal(applyUiDraft(current, { base, value: base }), current);
+  assert.notEqual(base.ui.fontSize, 44);
 });
 
 test('UI draft applies added and deleted controls without deleting concurrent additions', () => {
@@ -65,4 +97,65 @@ test('UI draft property changes preserve concurrent reordering and do not restor
   value.ui.components[0].list!.galleryGroups!.reverse();
   current.ui.components[0].list!.galleryGroups!.splice(1, 1);
   assert.deepEqual(applyUiDraft(current, { base, value }).ui.components[0].list!.galleryGroups!.map(item => item.id), ['c', 'a']);
+});
+
+test('custom player-flow entries merge by unique nodeId and preserve concurrent adds and fields', () => {
+  const base = createProject();
+  base.ui.components.push({ id: 'flow_map', kind: 'flowchart', page: 'flowchart', text: '', x: 0, y: 0, width: 1, height: 1,
+    list: { layout: 'flow', flowContent: { mode: 'custom', custom: { entries: [
+      { nodeId: 'node_a', owner: { kind: 'node', id: 'owner_a' }, name: '原名', styleId: 'style_a', action: 'replay' },
+    ] } } } });
+  const value = structuredClone(base), current = structuredClone(base);
+  const draftEntries = value.ui.components.at(-1)!.list!.flowContent!.custom!.entries;
+  const externalEntries = current.ui.components.at(-1)!.list!.flowContent!.custom!.entries;
+  draftEntries[0].name = '草稿改名';
+  draftEntries.push({ nodeId: 'node_draft', name: '草稿新增' });
+  externalEntries[0].name = '外部冲突改名';
+  externalEntries[0].styleId = 'style_external';
+  delete externalEntries[0].action;
+  externalEntries.push({ nodeId: 'node_external', name: '外部新增' });
+  current.nodes.push({ id: 'node_external', sceneId: current.scenes[0].id, name: '外部剧本节点', kind: 'passage', x: 10, y: 20, lines: [{ id: 'line_external', text: '外部剧本正文', actions: [] }] });
+  current.scriptText = { format: 'vns-text-1', content: '#章节：外部剧本同步' };
+
+  const merged = applyUiDraft(current, { base, value });
+  const entries = merged.ui.components.at(-1)!.list!.flowContent!.custom!.entries;
+  assert.deepEqual(entries.map(entry => entry.nodeId), ['node_a', 'node_draft', 'node_external']);
+  assert.equal(entries[0].name, '草稿改名', 'same-field conflicts retain the draft-wins rule');
+  assert.equal(entries[0].styleId, 'style_external', 'independent fields from current state survive');
+  assert.equal(entries[0].action, undefined, 'concurrent field removal survives when the draft did not edit it');
+  assert.ok(merged.nodes.some(node => node.id === 'node_external'), 'a concurrent script parse keeps its new destination');
+  assert.equal(merged.scriptText?.content, current.scriptText.content);
+});
+
+test('custom player-flow entry deletion wins over a concurrent edit in either direction', () => {
+  const base = createProject();
+  base.ui.components.push({ id: 'flow_map', kind: 'flowchart', page: 'flowchart', text: '', x: 0, y: 0, width: 1, height: 1,
+    list: { layout: 'flow', flowContent: { mode: 'custom', custom: { entries: [
+      { nodeId: 'node_draft_delete', name: '待删除' }, { nodeId: 'node_external_delete', name: '外部待删除' },
+    ] } } } });
+  const value = structuredClone(base), current = structuredClone(base);
+  const draftEntries = value.ui.components.at(-1)!.list!.flowContent!.custom!.entries;
+  const externalEntries = current.ui.components.at(-1)!.list!.flowContent!.custom!.entries;
+  draftEntries.splice(0, 1);
+  draftEntries[0].name = '草稿改名';
+  externalEntries[0].name = '外部改名';
+  externalEntries.splice(1, 1);
+
+  const entries = applyUiDraft(current, { base, value }).ui.components.at(-1)!.list!.flowContent!.custom!.entries;
+  assert.deepEqual(entries, [], 'draft deletion and concurrent deletion both remain deleted');
+});
+
+test('custom player-flow entries with duplicate nodeIds are not keyed-merged', () => {
+  const base = createProject();
+  base.ui.components.push({ id: 'flow_map', kind: 'flowchart', page: 'flowchart', text: '', x: 0, y: 0, width: 1, height: 1,
+    list: { layout: 'flow', flowContent: { mode: 'custom', custom: { entries: [
+      { nodeId: 'duplicate_node', name: '第一项' }, { nodeId: 'duplicate_node', name: '第二项' },
+    ] } } } });
+  const value = structuredClone(base), current = structuredClone(base);
+  value.ui.components.at(-1)!.list!.flowContent!.custom!.entries[0].name = '草稿改名';
+  current.ui.components.at(-1)!.list!.flowContent!.custom!.entries.push({ nodeId: 'external_node', name: '外部新增' });
+
+  const entries = applyUiDraft(current, { base, value }).ui.components.at(-1)!.list!.flowContent!.custom!.entries;
+  assert.deepEqual(entries.map(entry => entry.nodeId), ['duplicate_node', 'duplicate_node', 'external_node']);
+  assert.equal(entries[0].name, '第一项', 'ambiguous identities preserve the current list instead of overwriting it');
 });

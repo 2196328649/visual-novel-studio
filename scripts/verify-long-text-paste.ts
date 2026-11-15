@@ -7,12 +7,14 @@ import { fileURLToPath } from 'node:url';
 import { createProject, projectSchema, type StoryNode } from '../src/core/model';
 import { projectToText } from '../src/core/text-script';
 import { textDocument } from '../src/core/text-document';
+import { textChapters } from '../src/core/text-chapters';
 import { createServer } from 'vite';
+import { cleanVerificationDirectories } from './lib/verification-cleanup';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
 const output = path.join(root, 'artifacts', 'long-text-paste-verification', new Date().toISOString().replaceAll(':', '-'));
-const projectFile = path.join(output, 'project.vns.json');
+const projectFile = path.join(output, 'project/project.vns.json');
 const project = createProject('长篇原生粘贴验收');
 const chapterId = project.chapters[0].id;
 project.scenes = [];
@@ -30,17 +32,20 @@ for (let sceneIndex = 0; sceneIndex < 100; sceneIndex++) {
 }
 project.nodes.push({ id: 'bench_1000', name: '故事结束', sceneId: 'scene_99', x: 2950, y: 100, kind: 'end' });
 const source = projectToText(project);
-const visibleSource = textDocument(source).text;
+const chapterRange = textChapters(source, project.chapters).find(chapter => chapter.chapterId === chapterId)!;
+const visibleSource = textDocument(source, [], { range: chapterRange }).text;
 const marker = '长篇文本原生粘贴验收';
 const replacement = source.replace('长篇工程编辑验收', marker);
-const visibleReplacement = textDocument(replacement).text;
+const replacementRange = textChapters(replacement, project.chapters).find(chapter => chapter.chapterId === chapterId)!;
+const chapterReplacement = replacement.slice(replacementRange.start, replacementRange.end);
+const visibleReplacement = textDocument(replacement, [], { range: replacementRange }).text;
 const checks: string[] = [];
 const errors: string[] = [];
 const measurements: Record<string, unknown> = {};
 let application: ElectronApplication | undefined;
 let page: Page | undefined;
 let failure: string | undefined;
-await fs.mkdir(output, { recursive: true });
+await fs.mkdir(path.dirname(projectFile), { recursive: true });
 await fs.writeFile(projectFile, JSON.stringify(project, null, 2));
 const env: Record<string, string> = Object.fromEntries(Object.entries({ ...process.env, VNS_USER_DATA: path.join(output, 'user-data'), VNS_PROJECT_PATH: projectFile }).filter((entry): entry is [string, string] => entry[1] !== undefined));
 const server = await createServer({ root, server: { host: '127.0.0.1', port: 0, watch: { ignored: ['**/artifacts/**', '**/resources/**', '**/release/**'] } } });
@@ -50,7 +55,7 @@ delete env.ELECTRON_RUN_AS_NODE;
 delete env.VNS_TEST_ROOT;
 
 try {
-  application = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env });
+  application = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env: { ...env, VNS_TEST_DISCARD_ON_CLOSE: '1' } });
   page = await application.firstWindow();
   page.on('pageerror', error => errors.push(error.message));
   await expect(page.locator('.project-title strong')).toHaveText(project.name);
@@ -74,13 +79,23 @@ try {
   await application.evaluate(({ clipboard }, value) => {
     (globalThis as any).originalPasteClipboard = { text: clipboard.readText(), html: clipboard.readHTML(), rtf: clipboard.readRTF(), image: clipboard.readImage() };
     clipboard.writeText(value);
-  }, replacement);
+  }, chapterReplacement);
   await textbox.focus();
   await application.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0]?.focus(); });
   await page.keyboard.press('Control+A');
   const pasteStart = performance.now();
   await page.keyboard.press('Control+V');
   await expect.poll(() => textbox.inputValue().then(value => value === visibleReplacement), { timeout: 10_000 }).toBe(true);
+  // A native paste leaves the caret after the ending command, which correctly
+  // previews the end node. Select the final dialogue before checking its text.
+  await expect(page.locator('.story-preview-content')).toHaveAttribute('data-preview-key', 'bench_1000/');
+  measurements.pasteAndEndPreviewMs = Math.round(performance.now() - pasteStart);
+  await textbox.evaluate(element => {
+    const textarea = element as HTMLTextAreaElement, offset = textarea.value.indexOf('这是第 1000 段的对白。');
+    if (offset < 0) throw new Error('Final dialogue missing after native paste');
+    textarea.setSelectionRange(offset, offset);
+  });
+  await page.keyboard.press('ArrowRight');
   await expect(previewDialogue).toContainText('这是第 1000 段的对白。');
   measurements.pasteAndLastLinePreviewMs = Math.round(performance.now() - pasteStart);
   measurements.nativeEvents = await page.evaluate(() => (window as any).pasteMetrics);
@@ -99,8 +114,8 @@ try {
   expect(nativeEvents.pastes).toBe(1);
   expect(nativeEvents.inputs).toBe(1);
   expect(nativeEvents.inputTypes.insertFromPaste).toBe(1);
-  checks.push('A real Electron clipboard paste inserts the complete 91k Chinese script with one paste event and one insertFromPaste input event.');
-  checks.push('The final line previews after paste; moving the cursor to the changed dialogue previews that line without applying the draft.');
+  checks.push(`原生剪贴板一次粘贴本章 ${chapterReplacement.length} 字符，触发一次 paste 和一次 insertFromPaste，并保留章外的全局入口。`);
+  checks.push('粘贴后的文末预览指向结束节点；定位最后一句及中间修改的台词时，未应用的草稿也能正确预览。');
   const saveStart = performance.now();
   await page.getByRole('button', { name: '保存工程', exact: true }).click();
   await expect(page.locator('.dirty-dot')).toHaveCount(0);
@@ -136,5 +151,7 @@ try {
   await server.close();
   const report = { passed: !failure, output, checks, errors, measurements, failure, fixture: { scenes: 100, passages: 1000, nodes: 1001 }, scope: 'Actual Electron clipboard keyboard paste, renderer preview, native IPC and disk saves in an isolated profile; no user manuscript or assets are included.' };
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
+  const cleanup = await cleanVerificationDirectories(output, ['project', 'user-data']);
+  expect(cleanup.errors).toEqual([]);
   console.log(JSON.stringify(report, null, 2));
 }

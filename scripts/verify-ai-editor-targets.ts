@@ -40,7 +40,7 @@ try{
  await click('目标参数');await expect(page.locator('.parameter-table button.selected')).toContainText('目标参数');await expect(assistant.locator('.ai-workspace-context')).toContainText('目标参数');
  await click('空集合');await expect(page.getByLabel('参数集名称',{exact:true})).toHaveValue('空集合');await expect(page.locator('.parameter-table button')).toHaveCount(0);await expect(assistant.locator('.ai-workspace-context')).toContainText('空集合');
  await page.locator('.parameter-sets-workspace').getByRole('button',{name:'参数集',exact:true}).click();await click('空集合');await expect(page.getByLabel('参数集名称',{exact:true})).toHaveValue('空集合');
- await click('游戏设置');await expect(page.getByLabel('参数集名称',{exact:true})).toHaveValue('游戏设置');await expect(page.locator('.builtin-parameters')).toBeVisible();
+ await click('游戏设置');await expect(page.getByLabel('参数集名称',{exact:true})).toHaveValue('游戏设置');await expect(page.locator('[data-builtin-preference="textSpeed"]')).toBeVisible();
  await click('目标参数');await expect(page.locator('.parameter-table button.selected')).toContainText('目标参数');
  await click('方案控件');await expect(page.locator('.ui-component[data-component-id="scheme_control"]')).toHaveClass(/selected/);
  await click('自定义控件');await expect(page.locator('.ui-component[data-component-id="custom_control"]')).toHaveClass(/selected/);

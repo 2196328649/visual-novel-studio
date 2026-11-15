@@ -1,3 +1,4 @@
+import { cloneData } from "./project-mutation";
 import { normalizeProjectResources, projectGraphs, withProjectGraphs } from './project-resources';
 import { canInterleaveTimeline } from './timeline-interleave';
 import { canLaunchTimeline } from './timeline-launch';
@@ -6,10 +7,11 @@ import { blueprintInputValue, blueprintNodeDefaults, connectBlueprintPins } from
 import { performanceNode, savedBlueprintAction, rawSavedBlueprintAction } from './blueprint-authoring';
 import { setVisualPropertiesAt, syncVisualPins, visualInputFields, type VisualCurveProperty } from './visual-object';
 import { visualInstancePath } from './visual-selection';
-import { actorKey, actorReference } from './actor-instance';
+import { actorKey, actorReference, actorInstanceNumber, actorInstanceLabel } from './actor-instance';
 import { expandPreviewActions, previewActionContext } from './preview-actions';
 import { performanceTiming, actionTiming } from './performance-timing';
 import { placeTimelineClip, timelineOverlap } from './timeline-editing';
+import { timelineSamplingGraphIds } from './timeline-sampling-scope';
 
 export const timelineNodeTypes = ['startDialogue', 'showBackground', 'showCharacter', 'hideCharacter', 'showChapter', 'camera', 'shake', 'playMusic', 'playSound', 'stopMusic'] as const;
 export interface TimelineClip { nodeId: string; trackId: string; at: number; duration: number; entranceDuration?: number }
@@ -40,7 +42,7 @@ export function moveTimelineActorLifetime(project: Project, graph: BlueprintGrap
     if (actions.some(action => actorActionKey(action) === row.instanceId)) moved.add(clip.nodeId);
   }
   if (graph.links.some(link => moved.has(link.toNodeId) && ['characterId', 'instanceId'].includes(link.toPinId))) throw new Error('关联动作的角色实例由数据连线控制，请在蓝图中调整关联时序。');
-  const draft = structuredClone(graph);
+  const draft = cloneData(graph);
   const draftProject = withProjectGraphs({ ...project }, projectGraphs(project).map(item => item.id === graph.id ? draft : item));
   arrangePerformanceTimeline(draftProject, draft, model.clips.map(clip => moved.has(clip.nodeId) ? { ...clip, at: Math.round((clip.at + delta) * 1000000) / 1000000 } : clip), model.tracks);
   // A replacement/background boundary is not owned by this interval. Create a
@@ -116,7 +118,7 @@ export function performanceLifetimes(project: Project, graph: BlueprintGraph) {
         const id = actorKey(action), prior = actors.get(id);
         if (prior) close(prior.row, at);
         const persistent = action.lifetime === 'persistent' || (action.lifetime === undefined && !!prior?.persistent);
-        const row: TimelineLifetime = { nodeId: node.id, instanceId: id, name: project.characters.find(character => character.id === action.characterId)?.name ?? action.characterId, kind: 'actor', at, until: model.until, openEnded: true, persistent };
+        const row: TimelineLifetime = { nodeId: node.id, instanceId: id, name: timelineActorName(project, action), kind: 'actor', at, until: model.until, openEnded: true, persistent };
         lifetimes.push(row); actors.set(id, { row, persistent });
       } else if (action.kind === 'hide') {
         const id = actorKey(action), prior = actors.get(id);
@@ -196,6 +198,7 @@ export function timelineNodeActions(project: Project, graph: BlueprintGraph, nod
   }
   const context = previewActionContext(project);
   context.samplingTimelineNode = true;
+  context.samplingGraphIds = timelineSamplingGraphIds(project, isolated);
   context.visualTimeScales = visualTimeScales;
   context.speakerId = project.characters[0]?.id;
   return expandPreviewActions(withProjectGraphs({ ...project }, [...projectGraphs(project).filter(item => item.id !== graph.id), isolated]), [{ kind: 'blueprint', blueprintId: graph.id }], context);
@@ -228,7 +231,7 @@ export function editTimelineVisualLifetime(project: Project, graph: BlueprintGra
   if (!parent || parent.action.kind !== 'visual' || !(parent.scale > 0)) throw new Error('无法确定组合的时间比例。');
   if (delta === 0) return;
   let child = root; for (const index of path) child = child.children![index];
-  const candidate = { ...node, properties: { ...node.properties }, pins: structuredClone(node.pins) };
+  const candidate = { ...node, properties: { ...node.properties }, pins: cloneData(node.pins) };
   if (resizing) {
     const fieldPath = [...path.flatMap(index => ['children', index]), 'duration'].join('/');
     const field = visualInputFields(root).find(field => field.path.join('/') === fieldPath)!;
@@ -261,7 +264,17 @@ export function setTimelineVisualPropertiesAt(project: Project, graph: Blueprint
   setVisualPropertiesAt(object, (time - resolved.at) / resolved.scale, originalPatch);
   node.properties.action = JSON.stringify(actionSchema.parse(root));
 }
-function trackFor(project: Project, node: BlueprintNode): TimelineTrack {
+function timelineActorName(project: Project, actor: { characterId: string; instanceId?: string }): string {
+  return (project.characters.find(character => character.id === actor.characterId)?.name ?? (actor.characterId || '发言角色')) + ' · ' + actorInstanceLabel(actor.instanceId);
+}
+function numberedActorTrackId(characterId: string, number: number): string {
+  // A character id may already be 64 characters. Use a stable suffix instead
+  // of truncating identity or exceeding the saved timeline id limit.
+  let first = 2166136261, second = 5381;
+  for (const char of characterId) { first = Math.imul(first ^ char.charCodeAt(0), 16777619); second = Math.imul(second, 33) ^ char.charCodeAt(0); }
+  return `track_numbered_${number}_${(first >>> 0).toString(16)}_${(second >>> 0).toString(16)}`;
+}
+function trackFor(project: Project, node: BlueprintNode, actions: StageAction[]): TimelineTrack {
   const type = node.type;
   const visual = savedBlueprintAction(node);
   if (visual?.kind === 'audioClip') return { id: 'audio_' + visual.bus, name: { music: '音乐', sound: '音效', voice: '语音' }[visual.bus] };
@@ -272,10 +285,14 @@ function trackFor(project: Project, node: BlueprintNode): TimelineTrack {
   if (type === 'showChapter') return { id: 'track_chapter', name: '章节' };
   if (type === 'showBackground') return { id: 'track_background', name: '背景' };
   if (['showCharacter', 'hideCharacter', 'savedAction'].includes(type)) {
-    const saved = savedBlueprintAction(node);
-    const id = String(node.properties.characterId ?? (saved?.kind === 'animate' || saved?.kind === 'show' ? saved.characterId : 'speaker'));
-    const instance = String(node.properties.instanceId ?? (saved?.kind === 'animate' || saved?.kind === 'show' ? saved.instanceId ?? '' : ''));
-    return { id: 'track_actor_' + (instance ? 'instance_' + instance : id), name: '角色 · ' + (project.characters.find(c => c.id === id)?.name ?? '发言角色') + (instance ? ' · ' + instance : '') };
+    const saved = savedBlueprintAction(node), actor = saved?.kind === 'animate' || saved?.kind === 'show' || saved?.kind === 'hide' ? saved : undefined;
+    const characterId = String(node.properties.characterId ?? actor?.characterId ?? 'speaker');
+    const instanceId = String(blueprintInputValue(node, 'instanceId') ?? actor?.instanceId ?? ''), number = actorInstanceNumber(instanceId);
+    const resolved = actions.find((action): action is Extract<StageAction, { kind: 'show' | 'hide' | 'animate' }> => action.kind === 'show' || action.kind === 'hide' || action.kind === 'animate');
+    const resolvedNumber = resolved && actorInstanceNumber(resolved.instanceId);
+    if (resolved && resolvedNumber !== undefined && resolvedNumber > 1) return { id: numberedActorTrackId(resolved.characterId, resolvedNumber), name: '角色 · ' + timelineActorName(project, resolved) };
+    const id = number !== undefined && number > 1 ? numberedActorTrackId(characterId, number) : 'track_actor_' + (number === 1 ? characterId : 'instance_' + instanceId);
+    return { id, name: '角色 · ' + timelineActorName(project, { characterId, instanceId }) };
   }
   if (type === 'camera' || type === 'shake') return { id: 'track_' + type, name: type === 'camera' ? '镜头' : '震动' };
   return { id: 'track_' + (type === 'playSound' ? 'sound' : 'music'), name: type === 'playSound' ? '音效' : '音乐' };
@@ -301,7 +318,7 @@ export function addTimelineActorAnimation(project: Project, graph: BlueprintGrap
   graph.nodes.push(animation);
   connectBlueprintPins(graph, previous.id, output, animation.id, 'exec_in');
   if (outgoing) connectBlueprintPins(graph, animation.id, 'exec_out', outgoing.toNodeId, outgoing.toPinId);
-  const track = { id: makeId('track_motion'), name: '关键帧 · ' + (actor.instanceId ?? project.characters.find(c => c.id === actor.characterId)?.name ?? actor.characterId) };
+  const track = { id: makeId('track_motion'), name: '关键帧 · ' + timelineActorName(project, actor) };
   arrangePerformanceTimeline(project, graph, [...model.clips, { nodeId: animation.id, trackId: track.id, at: sourceClip.at, duration: 1 }], [...model.tracks, track]);
   return animation.id;
 }
@@ -316,7 +333,7 @@ export function performanceTimeline(project: Project, graph: BlueprintGraph) {
     actionsByNode.set(node.id, actions);
     const entrance = actions.length === 1 && actions[0].kind === 'show' && actions[0].afterOffsets ? actionTiming(actions[0]).duration : undefined;
     const assigned = graph.timeline?.clips.find(clip => clip.nodeId === node.id)?.trackId;
-    const track = tracks.find(track => track.id === assigned) ?? trackFor(project, node);
+    const track = tracks.find(track => track.id === assigned) ?? trackFor(project, node, actions);
     if (!tracks.some(item => item.id === track.id)) tracks.push(track);
     clips.push({ nodeId: node.id, trackId: track.id, at, duration: timing.until, ...(entrance !== undefined ? { entranceDuration: entrance } : {}) });
     until = Math.max(until, at + timing.until); const child=node.type==='callFunction'&&projectGraphs(project).find(g=>g.id===node.properties.graphId);at += child&&node.properties.wait===false&&canInterleaveTimeline(project,child)?0:timing.at;

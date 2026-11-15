@@ -1,7 +1,8 @@
 import { AiConversationStore } from './ai-conversations';
 import { aiConversationSchema, conversationMarkdown } from '../core/ai-conversations';
+import { aiConversationBackupSchema, writeAiConversationBackup } from './ai-conversation-backup';
 import { visibleImageBounds } from '../core/portrait';
-import { app, BrowserWindow, dialog, ipcMain, protocol, nativeImage, shell, safeStorage, net, session as electronSession } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, protocol, nativeImage, shell, safeStorage, net, session as electronSession, type IpcMainInvokeEvent } from 'electron';
 import { existsSync, mkdirSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -22,6 +23,7 @@ import { importAssetPaths, parseAssetImportOptions } from './asset-import';
 import { AssetDiscovery } from './asset-discovery';
 import { AiService } from './ai-service';
 import { AiAuthoringService } from './ai-authoring';
+import { AiRequestLifecycle } from './ai-request-lifecycle';
 import { inspectAiAttachments, inspectMentionedAiAttachments } from './ai-attachments';
 import { AiWindowController } from './ai-window';
 import { UiPreviewWindowController } from './ui-preview-window';
@@ -30,6 +32,8 @@ import { RecentProjects } from './recent-projects';
 import { autosaveAtLocation, discardProjectRecovery, loadRelocatedProject, projectFileExists, recoverProjectAtLocation } from './project-location';
 import { revealExportResult } from './export-result';
 import { TemplateLibrary } from './template-library';
+import { disposeImageMetadataWorkers } from './image-metadata-worker-pool';
+import { projectDraftSchema, projectRecoveryOptionsSchema } from '../core/project-draft-schema';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'studio-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }]);
 if (!app.isPackaged && process.env.VNS_USER_DATA) app.setPath('userData', path.resolve(process.env.VNS_USER_DATA));
@@ -52,12 +56,17 @@ let initialSession: Promise<ProjectSession> | undefined;
 let closeApproved = false;
 let closeRequested = false;
 let finalizingClose = false;
+let closingTask: Promise<void> | undefined;
+let closeCheck: { id: string; finish: (unchanged: boolean) => void } | undefined;
 let exporting = false;
 const writes = new WriteQueue();
 const resources = app.isPackaged ? path.join(process.resourcesPath, 'resources') : path.join(app.getAppPath(), 'resources');
 const templates = new TemplateLibrary(path.join(app.getPath('userData'), 'templates'), path.join(resources, 'templates/aihong'));
 const loadProject = async (file: string): Promise<ProjectSession> => ({ ...await readProject(file, path.join(resources, 'templates/aihong')), template: templates.identify(file) });
 const testRoot = !app.isPackaged ? process.env.VNS_TEST_ROOT : undefined;
+// Isolated acceptance runs discard unsaved fixture edits on close instead of
+// leaving a native save prompt on the author's desktop. Never in packaged builds.
+const discardOnClose = !app.isPackaged && process.env.VNS_TEST_DISCARD_ON_CLOSE === '1';
 const prefsPath = () => path.join(app.getPath('userData'), 'workspace.json');
 const draftPath = () => path.join(app.getPath('userData'), 'draft.vns.json');
 const projectDirectory = (project: Project) => session.path && session.project.id === project.id ? path.dirname(session.path) : undefined;
@@ -79,7 +88,18 @@ const aiService = new AiService({
   fetch: (input, init) => net.fetch(input instanceof URL ? input.toString() : input, init),
 });
 const aiAuthoring = new AiAuthoringService(aiService, { projectDirectory, progress: progress => { for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send('studio:ai-progress', progress); } });
-const aiWindow = new AiWindowController({ editor: () => window, desktopDir: __dirname, devUrl: !app.isPackaged ? process.env.VNS_DEV_URL : undefined, onClose: () => aiAuthoring.cancelAll() });
+const aiRequests = new AiRequestLifecycle();
+function runAiRequest<T>(event: IpcMainInvokeEvent, id: string, action: () => Promise<T>): Promise<T> {
+  return aiRequests.run(id, async () => {
+    const owner = event.sender, cancel = () => aiAuthoring.cancel(id);
+    // A closed or crashed window only cancels the request it owns. Closing an
+    // idle assistant must not stop a test running in the editor's settings.
+    owner.once('destroyed', cancel); owner.once('render-process-gone', cancel);
+    try { return await action(); }
+    finally { owner.removeListener('destroyed', cancel); owner.removeListener('render-process-gone', cancel); }
+  });
+}
+const aiWindow = new AiWindowController({ editor: () => window, desktopDir: __dirname, devUrl: !app.isPackaged ? process.env.VNS_DEV_URL : undefined });
 const uiPreviewWindow = new UiPreviewWindowController({ editor: () => window, desktopDir: __dirname, devUrl: !app.isPackaged ? process.env.VNS_DEV_URL : undefined });
 
 const recentProjects = new RecentProjects(prefsPath());
@@ -115,8 +135,11 @@ async function chooseSave(project: Project, saveAs = false): Promise<ProjectSess
     }
   }
   const sourceDir = projectDirectory(project);
-  session = await writes.run(() => saveProject(file!, project, sourceDir));
-  session.template = templates.identify(session.path);
+  await writes.run(async () => {
+    session = await saveProject(file!, project, sourceDir);
+    session.template = templates.identify(session.path);
+    initialSession = Promise.resolve(session);
+  });
   await remember();
   if (savingDraft) await fs.rm(`${draftPath()}.autosave`, { force: true });
   return session;
@@ -226,6 +249,11 @@ function registerHandlers() {
     for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send('studio:ai-config-changed', view);
     return view;
   });
+  ipcMain.handle('studio:ai-config-reset', async (_event, recoveryId) => {
+    const result = await aiService.resetConfig(recoveryId);
+    for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send('studio:ai-config-changed', result.config);
+    return result;
+  });
   ipcMain.handle('studio:ai-conversations', (_event, projectId)=>aiConversations.list(projectId));
   ipcMain.handle('studio:ai-conversation-read', (_event, projectId,id)=>aiConversations.read(projectId,id));
   ipcMain.handle('studio:ai-conversation-save', (_event, conversation)=>aiConversations.save(conversation));
@@ -236,11 +264,17 @@ function registerHandlers() {
     if(choice.canceled||!choice.filePath)return false;
     await fs.writeFile(choice.filePath,conversationMarkdown(conversation),'utf8');return true;
   });
-  ipcMain.handle('studio:ai-request', async (_event, request) => {
+  ipcMain.handle('studio:ai-conversation-backup', async (event,raw)=>{
+    const conversation=aiConversationBackupSchema.parse(raw);
+    const choice=await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender)??window,{title:'备份聊天记录和草稿',defaultPath:conversation.title.replace(/[<>:"/\\|?*]/g,'_')+'.json',filters:[{name:'完整会话 JSON',extensions:['json']} ]});
+    if(choice.canceled||!choice.filePath)return false;
+    await writeAiConversationBackup(choice.filePath,conversation);return true;
+  });
+  ipcMain.handle('studio:ai-request', (event, request) => runAiRequest(event, request?.id, async () => {
     aiService.beginUsage(request?.id);
     try {const response=await aiAuthoring.request(request);return {...response,usage:aiService.takeUsage(request.id)};}
     catch(error){aiService.takeUsage(request.id);throw error;}
-  });
+  }));
   ipcMain.handle('studio:ai-attachments', (_event, paths) => inspectAiAttachments(paths));
   ipcMain.handle('studio:ai-attachments-mentioned', (_event, request) => inspectMentionedAiAttachments(request));
   ipcMain.handle('studio:ai-attachments-choose', async (event, mode) => {
@@ -249,9 +283,9 @@ function registerHandlers() {
     const result = await dialog.showOpenDialog(parent, { title: mode === 'directory' ? '引用文件夹' : '添加参考文件', properties: mode === 'directory' ? ['openDirectory'] : ['openFile', 'multiSelections'] });
     return result.canceled ? [] : inspectAiAttachments(result.filePaths);
   });
-  ipcMain.handle('studio:ai-test', (_event, id) => aiService.test(id));
-  ipcMain.handle('studio:ai-cancel', (_event, id) => aiAuthoring.cancel(id));
-  ipcMain.handle('studio:ai-models', (_event, id, config) => aiService.listModels(id, config));
+  ipcMain.handle('studio:ai-test', (event, id) => runAiRequest(event, id, () => aiService.test(id)));
+  ipcMain.handle('studio:ai-cancel', (_event, id) => aiRequests.cancel(id, () => aiAuthoring.cancel(id)));
+  ipcMain.handle('studio:ai-models', (event, id, config) => runAiRequest(event, id, () => aiService.listModels(id, config)));
   aiWindow.registerHandlers();
   uiPreviewWindow.registerHandlers();
   ipcMain.handle('studio:initial', async () => { await (initialSession ??= loadInitial()); return session; });
@@ -321,28 +355,55 @@ function registerHandlers() {
       child.once('spawn', resolve); child.once('error', reject);
     });
   });
-  ipcMain.handle('studio:close-save', async (_event, input: { project: unknown; dirty: boolean } | null) => {
+  ipcMain.on('studio:close-check-result', (event, result: { id?: string; unchanged?: boolean }) => {
+    if (event.sender === window.webContents && result?.id === closeCheck?.id) closeCheck?.finish(result.unchanged === true);
+  });
+  const confirmClosingSnapshot = () => new Promise<boolean>(resolve => {
+    const id = randomUUID();
+    const timer = setTimeout(() => finish(false), 5000);
+    const finish = (unchanged: boolean) => {
+      if (closeCheck?.id !== id) return;
+      clearTimeout(timer); closeCheck = undefined; resolve(unchanged);
+    };
+    closeCheck = { id, finish };
+    if (window.isDestroyed() || window.webContents.isCrashed()) finish(false);
+    else window.webContents.send('studio:close-check', id);
+  });
+  ipcMain.handle('studio:close-save', (event, input: { project: unknown; dirty: boolean } | null) => {
+    if (event.sender !== window.webContents) throw new Error('关闭需要从主编辑器发起。');
+    if (closingTask) return closingTask;
     if (!closeRequested) return;
-    if (input === null) { closeRequested = false; await previewController.setDialogBlocked(false); return; }
+    if (input === null) { closeRequested = false; aiWindow.cancelClosePreparation(); return previewController.setDialogBlocked(false); }
+    closingTask = (async () => {
     try {
+      const closingProjectId = session.project.id;
+      const project = projectDraftSchema.parse(input.project);
+      if (closingProjectId !== project.id) throw new Error('当前工程已切换，请重新关闭窗口。');
       if (input.dirty) {
-        const project = parseProject(input.project).project;
-        if (session.project.id !== project.id) throw new Error('当前工程已切换，请重新关闭窗口。');
         const choice = await dialog.showMessageBox(window, { type: 'question', title: '保存工程', message: `是否保存对“${project.name}”的修改？`, detail: '自动恢复副本用于意外退出后的恢复；选择“不保存”将放弃本次未保存的修改。', buttons: ['保存', '不保存', '取消'], defaultId: 0, cancelId: 2, noLink: true });
         if (choice.response === 2) { closeRequested = false; await previewController.setDialogBlocked(false); return; }
         finalizingClose = true;
-        if (choice.response === 0 && !await chooseSave(project)) { finalizingClose = false; closeRequested = false; await previewController.setDialogBlocked(false); return; }
-        await writes.run(() => discardProjectRecovery(session.path, app.getPath('userData')));
+        if (choice.response === 0 && !await chooseSave(parseProject(project).project)) { finalizingClose = false; closeRequested = false; await previewController.setDialogBlocked(false); return; }
       }
       finalizingClose = true;
+      await aiWindow.prepareToClose();
+      if (session.project.id !== closingProjectId) throw new Error('当前工程已切换，请重新关闭窗口。');
+      aiWindow.assertPreparedToClose();
       await writes.run(async () => undefined);
+      if (!await confirmClosingSnapshot()) throw new Error('等待关闭时工程发生了变化或未能确认，修改已保留，请重新关闭窗口。');
+      if (session.project.id !== closingProjectId) throw new Error('当前工程已切换，请重新关闭窗口。');
+      aiWindow.assertPreparedToClose();
+      if (input.dirty) await writes.run(() => discardProjectRecovery(session.path, app.getPath('userData')));
       closeApproved = true;
       window.close();
     } catch (error) {
       closeRequested = false; finalizingClose = false;
+      aiWindow.cancelClosePreparation();
       await dialog.showMessageBox(window, { type: 'error', title: '未能完成关闭', message: errorMessage(error), detail: '窗口保持打开，修改尚未丢弃。请修正问题或手动保存工程后再退出。' });
       await previewController.setDialogBlocked(false);
     }
+    })().finally(() => { closingTask = undefined; });
+    return closingTask;
   });
   ipcMain.handle('studio:open', async () => {
     previewController.stop();
@@ -356,12 +417,21 @@ function registerHandlers() {
     return session;
   });
   ipcMain.handle('studio:save', (_event, input: unknown, saveAs: boolean) => chooseSave(parseProject(input).project, saveAs));
-  ipcMain.handle('studio:autosave', async (_event, input: unknown) => {
+  ipcMain.handle('studio:autosave', async (_event, input: unknown, rawOptions: unknown) => {
     const project = parseProject(input).project;
+    const options = projectRecoveryOptionsSchema.parse(rawOptions ?? {});
+    if (options.uiDraft && options.uiDraft.id !== project.id) throw new Error('界面恢复草稿不属于此工程。');
     return writes.run(async () => {
       if (finalizingClose || session.project.id !== project.id) return { savedAt: 0 };
-      const result = await autosaveAtLocation(session.path, project, app.getPath('userData'));
-      session = { ...session, project, recovered: true };
+      if (options.clear) {
+        await discardProjectRecovery(session.path, app.getPath('userData'));
+        session = { ...session, project, uiDraft: undefined, recoveredProjectDirty: undefined, recovered: false };
+        initialSession = Promise.resolve(session);
+        return { savedAt: 0 };
+      }
+      const result = await autosaveAtLocation(session.path, project, app.getPath('userData'), options);
+      session = { ...session, project, uiDraft: options.uiDraft, recoveredProjectDirty: options.projectDirty ?? true, recovered: true };
+      initialSession = Promise.resolve(session);
       return result;
     });
   });
@@ -391,7 +461,9 @@ function registerHandlers() {
     if (!directory || session.locationMissing) return null;
     const discoveryKey = directory + '/' + project.id;
     if (!discoveries.has(discoveryKey)) { discoveries.clear(); discoveries.set(discoveryKey, new AssetDiscovery()); }
-    const discovered = await discoveries.get(discoveryKey)!.scan(directory, project, file => { const image = nativeImage.createFromPath(file), size = image.getSize(); return { ...size, visibleBounds: visibleImageBounds(image.toBitmap(), size.width, size.height) }; });
+    // Queued behind saves, which move files into category folders; the saved copy already names the new paths
+    // (session is assigned before the next queued task starts), so moved files are not imported again.
+    const discovered = await writes.run(() => discoveries.get(discoveryKey)!.scan(directory, project, file => { const image = nativeImage.createFromPath(file), size = image.getSize(); return { ...size, visibleBounds: visibleImageBounds(image.toBitmap(), size.width, size.height) }; }, session.project.id === project.id ? session.project : undefined));
     return discovered ? { ...session, project: discovered } : null;
   });
   ipcMain.handle('studio:reveal-asset', async (_event, input: unknown, assetId: string) => {
@@ -464,6 +536,10 @@ function registerHandlers() {
   });
   ipcMain.handle('studio:preview', (_event, input: unknown, preview: PreviewOptions = {}) => previewController.start(parseProject(input).project, preview));
   ipcMain.handle('studio:preview-control', (_event, command: PreviewCommand) => previewController.control(command));
+  ipcMain.handle('studio:blueprint-debug-control', (event, request: unknown) => {
+    if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('只有主编辑器可控制当前试玩的蓝图调试。');
+    return previewController.debugControl(request);
+  });
   ipcMain.handle('studio:preview-viewport', (_event, viewport: PreviewViewport) => previewController.updateViewport(viewport));
   ipcMain.handle('studio:export', async (_event, input: unknown): Promise<RunResult | null> => {
     if (exportSetup.running) return { ok: false, diagnostics: [{ severity: 'error', message: '导出环境正在配置，请等待完成。' }], log: '' };
@@ -546,7 +622,7 @@ app.whenReady().then(async () => {
   window.on('restore', () => previewController.refreshViewport());
   window.on('show', () => previewController.refreshViewport());
   window.on('close', event => {
-    if (closeApproved) return;
+    if (closeApproved || discardOnClose) return;
     event.preventDefault();
     if (!closeRequested) {
       closeRequested = true;
@@ -565,4 +641,17 @@ app.whenReady().then(async () => {
   window.show();
 });
 app.on('before-quit', () => exportSetup.cancel());
+let imageWorkersDraining = false, imageWorkersDrained = false;
+app.on('will-quit', event => {
+  if (imageWorkersDrained) return;
+  event.preventDefault();
+  if (imageWorkersDraining) return;
+  imageWorkersDraining = true;
+  void disposeImageMetadataWorkers().then(() => {
+    // With no busy worker this resolves in the same microtask turn, while
+    // Electron still treats the prevented quit as in progress and ignores a
+    // nested app.quit(). Quit again from the next event-loop turn.
+    imageWorkersDrained = true; setImmediate(() => app.quit());
+  });
+});
 app.on('window-all-closed', () => { previewController.stop(false); aiAuthoring.cancelAll(); exportSetup.cancel(); app.quit(); });

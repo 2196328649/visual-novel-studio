@@ -4,7 +4,9 @@ import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, 
 import { createPortal } from 'react-dom';
 import { chapterTitleNoise } from '../core/chapter';
 import { ChapterRipple } from './ChapterRipple';
-import type { Project, VisualObject } from '../core/model';
+import type { Project, TextMotion, VisualObject } from '../core/model';
+import { textExitPlan, textRevealPlan } from '../core/text-presentation';
+import { playerTextSpeed, StyledText } from './StyledText';
 import { videoFadeGain, videoPlaybackState, visualCurve, visualDissolve, visualParticles, visualPose } from '../core/visual-object';
 import type { AssetUrl } from './StageEditor';
 import { GlyphParticlesPreview } from './GlyphParticlesPreview';
@@ -40,6 +42,14 @@ export function VisualObjectPreview({ frame, ...props }: Parameters<typeof BaseV
     {!blend.exiting && <div style={{ ...position, opacity: incoming, mixBlendMode: blend.rule.mode === 'dissolve' ? 'plus-lighter' : undefined, transform: blend.rule.mode === 'move' ? `translateX(${(progress - 1) * 15}%)` : undefined }}><BaseVisualObjectPreview {...props} skipEnter /></div>}
   </div>;
 }
+/** A timeline text clip's words on the same animator as dialogue, clocked by the clip. */
+function ClipText({ motion, text, elapsed, clipEnd, playerCps }: { motion: TextMotion; text: string; elapsed: number; clipEnd?: number; playerCps: number }) {
+  const plan = useMemo(() => textRevealPlan(motion, text, playerCps), [motion, text, playerCps]);
+  const leaving = useMemo(() => textExitPlan(motion, text), [motion, text]);
+  const exitAt = leaving && clipEnd !== undefined ? clipEnd - leaving.total : undefined;
+  return <StyledText style={motion} text={text} plan={plan} scale={1} reveal={elapsed} exit={exitAt !== undefined && elapsed >= exitAt ? elapsed - exitAt : undefined} />;
+}
+
 function BaseVisualObjectPreview({ object, elapsed, project, assetUrl, editing, playing = false, rootId = object.instanceId, skipEnter = false, mediaAdvance = 0 }: { object: VisualObject; elapsed: number; project: Project; assetUrl: AssetUrl; editing?: VisualEditing; playing?: boolean; rootId?: string; skipEnter?: boolean; mediaAdvance?: number }) {
   const sampledPose = visualPose(object, elapsed);
   const visible = editing?.visible?.(rootId, object.instanceId) !== false;
@@ -183,7 +193,7 @@ function BaseVisualObjectPreview({ object, elapsed, project, assetUrl, editing, 
       {object.content === 'video' && <foreignObject x={-object.width * project.width / 2} y={-object.height * project.height / 2} width={object.width * project.width} height={object.height * project.height} style={{ overflow: 'hidden' }}><video ref={videoRef} loop={object.loop ?? false} src={assetUrl(object.assetId)} preload="auto" playsInline controls={false} style={{ width: '100%', height: '100%', objectFit: object.imageFit === 'contain' ? 'contain' : object.imageFit === 'cover' ? 'cover' : 'fill', pointerEvents: 'none' }} /></foreignObject>}
       {object.content === 'text' && <foreignObject x={-object.width * project.width / 2} y={-object.height * project.height / 2} width={object.width * project.width} height={object.height * project.height}>
         {fontSource && <style>{`@font-face { font-family: ${JSON.stringify(fontFamily)}; src: url(${JSON.stringify(fontSource)}); }`}</style>}
-        <div data-visual-text style={{ width: '100%', height: '100%', display: 'flex', alignItems: object.textVerticalAlign === 'top' ? 'flex-start' : object.textVerticalAlign === 'bottom' ? 'flex-end' : 'center', justifyContent: object.textAlign === 'left' ? 'flex-start' : object.textAlign === 'right' ? 'flex-end' : 'center', overflow: 'hidden', color: object.color, textShadow: uiTextShadow({ style: object.textEffects }, 1), clipPath: textClipCss(object.textClip), fontSize: object.fontSize, fontFamily: fontSource ? fontFamily : 'sans-serif', fontStyle: object.textItalic ? 'italic' : 'normal', fontSynthesis: 'style', lineHeight: 'normal', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', textAlign: object.textAlign ?? 'center' }}><span>{object.text}</span></div>
+        <div data-visual-text style={{ width: '100%', height: '100%', display: 'flex', alignItems: object.textVerticalAlign === 'top' ? 'flex-start' : object.textVerticalAlign === 'bottom' ? 'flex-end' : 'center', justifyContent: object.textAlign === 'left' ? 'flex-start' : object.textAlign === 'right' ? 'flex-end' : 'center', overflow: 'hidden', color: object.color, textShadow: uiTextShadow({ style: object.textEffects }, 1), clipPath: textClipCss(object.textClip), fontSize: object.fontSize, fontFamily: fontSource ? fontFamily : 'sans-serif', fontStyle: object.textItalic ? 'italic' : 'normal', fontSynthesis: 'style', lineHeight: 'normal', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', textAlign: object.textAlign ?? 'center' }}><span>{object.textMotion ? <ClipText motion={object.textMotion} text={object.text} elapsed={elapsed} clipEnd={object.persistent ? undefined : object.duration} playerCps={playerTextSpeed(project)} /> : object.text}</span></div>
       </foreignObject>}
       {object.content === 'particles' && object.glyphParticles && <GlyphParticlesPreview fontSource={fontSource} mesh={project.assets.find(asset => asset.id === object.glyphParticles?.assetId)?.emissionMesh} object={object} elapsed={elapsed} width={object.width * project.width} height={object.height * project.height} source={assetUrl(object.glyphParticles.assetId)} />}
       {object.content === 'particles' && !object.glyphParticles && visualParticles(object, elapsed).map((p, i) => <rect key={i} x={(p.x - .5) * object.width * project.width - p.size / 2} y={(p.y - .5) * object.height * project.height - p.size / 2} width={p.size} height={p.size} fill={p.color} opacity={p.opacity} />)}

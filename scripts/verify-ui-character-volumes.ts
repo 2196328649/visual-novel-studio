@@ -8,6 +8,7 @@ import { createServer } from 'vite';
 import { createProject } from '../src/core/model';
 import { blueprintNodeDefaults, createBlueprintGraph, connectBlueprintPins, synchronizeBlueprintSignatures } from '../src/core/blueprint';
 import { launchDesktopFixture } from './lib/desktop-fixture';
+import { openUiPreviewForTest } from './lib/ui-preview-window';
 const root=path.resolve('.'), output=path.join(root,'artifacts/ui-character-volumes',new Date().toISOString().replaceAll(':','-'));
 await fs.mkdir(output,{recursive:true});
 const project=createProject('高级UI编辑验收');
@@ -24,13 +25,13 @@ const format=blueprintNodeDefaults('formatText');format.properties.format='音�
 const key=blueprintNodeDefaults('eventKey');key.properties={pageId:'ui:preferences',key:'K_e'};const setter=blueprintNodeDefaults('setPlayerPreference');setter.properties={preference:'characterVolume',characterId:'npc',value:.4};graph.nodes.push(key,setter);synchronizeBlueprintSignatures(project);connectBlueprintPins(graph,key.id,'exec',setter.id,'exec_in');
 const projectFile=path.join(output,'project.vns.json');await fs.writeFile(projectFile,JSON.stringify(project));
 const server=await createServer({root,server:{host:'127.0.0.1',port:0,watch:{ignored:['**/artifacts/**','**/resources/**','**/release/**']}}});await server.listen();
-const app=await launchDesktopFixture({root,projectFile,profile:path.join(output,'profile'),devUrl:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port}),page=await app.firstWindow();
+const app=await launchDesktopFixture({root,projectFile,profile:path.join(output,'profile'),devUrl:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port}),editor=await app.firstWindow();let page=editor;
 try {
  await expect(page.locator('.project-title strong')).toHaveText(project.name,{timeout:45000});
- await page.locator('[data-workspace-tab="ui"]').click();await page.getByLabel('设计页面', { exact: true }).selectOption({ label: '设置' });await page.getByRole('button',{name:'高级 UI 蓝图',exact:true}).click();
- await expect(page.locator('.dirty-dot')).toHaveCount(0);
+ await page.locator('[data-workspace-tab="ui"]').click();await page.getByLabel('界面编辑模式').getByRole('button',{name:'事件图',exact:true}).click();await page.getByLabel('事件图页面').selectOption('ui:preferences');
+ await expect(editor.locator('.dirty-dot')).toHaveCount(0);
  const savedBefore=await fs.readFile(projectFile,'utf8');
- await page.locator('.ui-logic-preview > summary').click();
+ page=await openUiPreviewForTest(app,editor);
  const object=page.locator('[data-preview-component="title_probe"]');
  await expect(object).toContainText('音量 0.8');
  const hero=page.getByLabel('预演音乐',{exact:true}),npc=page.getByLabel('预演速度',{exact:true}),other=page.getByLabel('预演窗口',{exact:true});
@@ -38,7 +39,7 @@ try {
  await page.getByRole('button',{name:'触发 E',exact:true}).click();await expect(npc).toHaveValue('0.4');await expect(hero).toHaveValue('0.01');await expect(other).toHaveValue('0.8');
  await other.focus();await page.keyboard.press('Home');await expect(other).toHaveValue('0');await expect(npc).toHaveValue('0.4');await expect(hero).toHaveValue('0.01');
  await page.getByRole('button',{name:'恢复测试值',exact:true}).click();for(const slider of [hero,npc,other])await expect(slider).toHaveValue('0.8');await expect(object).toContainText('音量 0.8');
- await expect(page.locator('.dirty-dot')).toHaveCount(0);expect(await fs.readFile(projectFile,'utf8')).toBe(savedBefore);
+ await expect(editor.locator('.dirty-dot')).toHaveCount(0);expect(await fs.readFile(projectFile,'utf8')).toBe(savedBefore);
  await fs.writeFile(path.join(output,'report.json'),JSON.stringify({status:'passed',checks:['角色音量滑块独立','读取角色音量蓝图跟随目标角色','蓝图写入另一角色只更新对应滑块','其他语音与角色隔离','恢复全部角色音量','工程未修改']}));console.log(output);
-} catch(error){await page.screenshot({path:path.join(output,'failure.png')});throw error;}
+} catch(error){await page.screenshot({path:path.join(output,'failure.png')}).catch(()=>undefined);throw error;}
 finally {await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().forEach(w=>w.destroy())).catch(()=>undefined);await app.close();await server.close();}

@@ -46,7 +46,7 @@ delete env.ELECTRON_RUN_AS_NODE;
 let app: ElectronApplication | undefined, page: Page | undefined;
 const checks: string[] = [], errors: string[] = [];
 try {
-  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env });
+  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env: { ...env, VNS_TEST_DISCARD_ON_CLOSE: '1' } });
   page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message));
   await expect(page.locator('.project-title strong')).toHaveText(project.name);
   await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1440, 960); });
@@ -66,7 +66,7 @@ try {
   const effect = first.getByRole('region', { name: '编辑显示角色', exact: true });
   await effect.getByLabel('横向位置 %', { exact: true }).fill('30');
   await effect.getByLabel('纵向位置 %', { exact: true }).fill('80');
-  await effect.getByLabel('表情', { exact: true }).selectOption('smile');
+  await effect.getByLabel('显示角色表情', { exact: true }).selectOption('smile');
   await expect(preview).toHaveAttribute('data-preview-key', `${passage.id}/first`);
   await expect(preview.locator('.text-stage-actor')).toHaveCSS('left', /.+/);
   expect(await preview.locator('.text-stage-actor').evaluate(element => (element as HTMLElement).style.left)).toBe('30%');
@@ -86,7 +86,7 @@ try {
   await page.getByRole('button', { name: '文本编辑', exact: true }).click();
   const input = page.getByLabel('中文文本剧本', { exact: true });
   expect(await preview.evaluate(element => (window as any).__persistentPreview === element)).toBe(true);
-  expect(await input.inputValue()).toContain('@显示角色：苏怜烟，微笑，0.3，0.4，0.8');
+  expect(await input.inputValue()).toContain('@显示角色：角色=苏怜烟，表情=微笑，横向位置=0.3，缩放=0.4，纵向位置=0.8');
   expect(await input.inputValue()).not.toContain('【sly】');
   await input.evaluate(element => { const t = element as HTMLTextAreaElement, at = t.value.indexOf('苏怜烟：第一句'); t.focus(); t.setSelectionRange(at, at); });
   await input.press('ArrowRight'); await input.press('ArrowLeft');
@@ -96,18 +96,18 @@ try {
   await page.mouse.move(actorBox.x + actorBox.width / 2, actorBox.y + actorBox.height / 2);
   await page.mouse.down(); await page.mouse.move(actorBox.x + actorBox.width / 2, actorBox.y + actorBox.height / 2 + 12, { steps: 4 }); await page.mouse.up();
   expect(Number(await vertical.inputValue())).toBeGreaterThan(80);
-  expect(await input.inputValue()).toContain(`@显示角色：苏怜烟，微笑，0.3，0.4，${Number(await vertical.inputValue()) / 100}`);
+  expect(await input.inputValue()).toContain(`@显示角色：角色=苏怜烟，表情=微笑，横向位置=0.3，缩放=0.4，纵向位置=${Number((Number(await vertical.inputValue()) / 100).toFixed(6))}`);
   await vertical.fill('140');
   const expectCaretOnDialogue = async () => expect(await input.evaluate(element => { const text = element as HTMLTextAreaElement; return text.value.slice(text.selectionStart).startsWith('苏怜烟：第一句'); })).toBe(true);
   await expectCaretOnDialogue();
-  expect(await input.inputValue()).toContain('@显示角色：苏怜烟，微笑，0.3，0.4，1.4');
+  expect(await input.inputValue()).toContain('@显示角色：角色=苏怜烟，表情=微笑，横向位置=0.3，缩放=0.4，纵向位置=1.4');
   await page.locator('.app-header').getByRole('button', { name: '撤销', exact: true }).click();
   await expectCaretOnDialogue();
-  expect(await input.inputValue()).not.toContain('@显示角色：苏怜烟，微笑，0.3，0.4，1.4');
+  expect(await input.inputValue()).not.toContain('@显示角色：角色=苏怜烟，表情=微笑，横向位置=0.3，缩放=0.4，纵向位置=1.4');
   await page.locator('.app-header').getByRole('button', { name: '重做', exact: true }).click();
   await expectCaretOnDialogue();
   await expect(vertical).toHaveValue('140');
-  expect(await input.inputValue()).toContain('@显示角色：苏怜烟，微笑，0.3，0.4，1.4');
+  expect(await input.inputValue()).toContain('@显示角色：角色=苏怜烟，表情=微笑，横向位置=0.3，缩放=0.4，纵向位置=1.4');
   await stageToggle.click();
   checks.push('模块纵向位置同步到第五个文本参数；在文本模式拖动和输入超过 100% 的位置仍保留显示角色指令，撤销/重做同时还原数值和画面。');
   const beforeCompletion = await input.inputValue();
@@ -231,7 +231,7 @@ try {
   await expect.poll(() => app!.evaluate(() => (globalThis as any).__previewOptions)).toEqual({ entryId: passage.id, variables: { mood: 7 }, mode: 'window' });
   checks.push('1100×760 窗口仍保留编辑与预览空间；工具栏试玩使用设置中的方式、起点与测试值（仅验证 IPC 参数，不启动或打包完整游戏）。');
   await page.reload(); await openStoryMode(page, 'text');
-  expect(await input.inputValue()).toContain('@显示角色：苏怜烟，微笑，0.3，0.4，1.4');
+  expect(await input.inputValue()).toContain('@显示角色：角色=苏怜烟，表情=微笑，横向位置=0.3，缩放=0.4，纵向位置=1.4');
   await page.getByRole('button', { name: '模块编辑', exact: true }).click();
   await first.getByRole('button', { name: /编辑显示角色/ }).click();
   await expect(first.getByRole('region', { name: '编辑显示角色', exact: true }).getByLabel('纵向位置 %', { exact: true })).toHaveValue('140');

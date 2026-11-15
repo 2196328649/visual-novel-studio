@@ -8,6 +8,7 @@ import { createUiEventGraph } from '../src/core/ui-logic';
 import { blueprintNodeDefaults, callablePins, connectBlueprintPins } from '../src/core/blueprint';
 import { exposePerformanceInputs, performanceInputs } from '../src/core/blueprint-authoring';
 import { performanceTimeline } from '../src/core/performance-timeline';
+import { projectGraphs } from '../src/core/project-resources';
 
 const root = path.resolve('.'), output = path.join(root, 'artifacts/timeline-node-edits', new Date().toISOString().replaceAll(':', '-'));
 await fs.mkdir(output, { recursive: true }); const reports = [];
@@ -39,9 +40,24 @@ for (const workspace of ['timeline', 'ui'] as const) for (const mode of ['inline
   page.setDefaultTimeout(10000); const errors: string[] = []; page.on('pageerror', e => errors.push(e.message)); let assistant: Page | undefined;
   const button = (name: string) => page.getByRole('button', { name, exact: true });
   const current = async () => (await assistant!.evaluate(async () => (await window.studio!.getAiContext!())!.project));
-  const currentGraph = async () => (await current()).blueprints.find(g => g.id === graph.id)!;
-  const model = async () => { const p = await current(); return performanceTimeline(p, p.blueprints.find(g => g.id === graph.id)!); };
+  const currentGraph = async () => projectGraphs(await current()).find(g => g.id === graph.id)!;
+  const model = async () => { const p = await current(); return performanceTimeline(p, projectGraphs(p).find(g => g.id === graph.id)!); };
   const node = (id: string) => page.locator('.react-flow__node[data-id="' + id + '"]');
+  // Wires are selected on the canvas: click an exposed point of the curve, not one covered by a node.
+  const clickEdge = async (id: string) => {
+    const edge = page.locator('.react-flow__edge[data-id="' + id + '"]');
+    const point = await edge.locator('.react-flow__edge-path').evaluate(element => {
+      const path = element as SVGPathElement, matrix = path.getScreenCTM()!;
+      let fallback: { x: number; y: number } | undefined;
+      for (const fraction of [.5, .35, .65, .2, .8, .1, .9]) {
+        const at = path.getPointAtLength(path.getTotalLength() * fraction).matrixTransform(matrix);
+        fallback ??= { x: at.x, y: at.y };
+        if (document.elementFromPoint(at.x, at.y)?.closest('.react-flow__edge') === path.closest('.react-flow__edge')) return { x: at.x, y: at.y };
+      }
+      return fallback!;
+    });
+    await page.mouse.click(point.x, point.y); await expect(edge).toHaveClass(/selected/);
+  };
   const rejected = async (before: Awaited<ReturnType<typeof currentGraph>>) => {
     await expect(page.locator('.blueprint-status')).toContainText('同一轨道的片段不能重叠');
     assert.deepEqual(await currentGraph(), before);
@@ -74,13 +90,13 @@ for (const workspace of ['timeline', 'ui'] as const) for (const mode of ['inline
       await button('输入与输出').click();
       const field = page.getByLabel(graph.exposedInputs[0].name + '的默认值', { exact: true });
       await field.fill('5'); await field.press('Tab'); await rejected(before); await expect(field).toHaveValue('2');
-      await button('连线').click(); await page.locator('.connection-list [data-link-id="' + dataLinkId + '"]').click(); await button('断开此连线').click(); await rejected(before);
+      await clickEdge(dataLinkId!); await page.keyboard.press('Delete'); await rejected(before);
       // Delete must preserve both selection and graph when it would reveal overlap.
-      await page.locator('.connection-list [data-link-id="' + dataLinkId + '"]').click();
+      await clickEdge(dataLinkId!);
       await button('框选全部节点').click(); await node(readId!).locator('.graph-node-title').click(); await page.keyboard.press('Delete'); await rejected(before);
       await expect(node(readId!)).toHaveClass(/selected/);
       // A new data wire replacing the valid duration binding must also be rejected.
-      await button('连线').click(); await page.locator('.connection-list [data-link-id="' + dataLinkId + '"]').click();
+      await clickEdge(dataLinkId!);
       await expect(page.locator('.blueprint-status')).not.toContainText('同一轨道的片段不能重叠');
       await button('框选全部节点').click();
       const source = node(literal.id).locator('.react-flow__handle[data-handleid="value"]');
@@ -92,7 +108,7 @@ for (const workspace of ['timeline', 'ui'] as const) for (const mode of ['inline
       await page.keyboard.press('Control+y'); await expect.poll(async () => (await model()).clips[0].duration).toBe(2.5);
     }
     await button(workspace === 'ui' ? '保存界面' : '保存工程').click();
-    await expect.poll(async () => JSON.parse(await fs.readFile(projectFile, 'utf8')).blueprints.find((g: any) => g.id === graph.id)).toEqual(await currentGraph());
+    await expect.poll(async () => projectGraphs(JSON.parse(await fs.readFile(projectFile, 'utf8'))).find(g => g.id === graph.id)).toEqual(await currentGraph());
     await page.screenshot({ path: path.join(folder, 'saved-timeline.png') }); assert.deepEqual(errors, []);
     reports.push({ workspace, mode, projectFile, checks: mode === 'inline' ? ['节点内时长拒绝', '属性时长拒绝', '配套移位成功', '拒绝不占撤销记录', '保存'] : ['公开默认值拒绝', '断线拒绝', '删除来源拒绝且保留选择', '实际拖线拒绝', '有效默认值可撤销重做保存'] });
   } catch (error) { await page.screenshot({ path: path.join(folder, 'failure.png') }).catch(() => undefined); console.error(folder); throw error; }

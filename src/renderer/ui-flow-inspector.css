@@ -1,0 +1,92 @@
+.flow-edit-context { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; margin: 0 0 10px; font-size: 11px; color: var(--editor-muted); }
+.flow-edit-context > span { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.flow-edit-context strong { color: var(--editor-text); font-weight: 500; }
+.flow-node-search { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.flow-node-search > input { flex: 1; min-width: 0; }
+.flow-node-search input::-webkit-search-cancel-button { display: none; }
+.flow-node-search > button { flex: none; }
+.flow-edit-scope { display: block; margin: 7px 0 10px; color: var(--editor-muted); font-size: 11px; line-height: 1.65; overflow-wrap: anywhere; }
+.flow-edit-scope strong { color: var(--editor-text); font-weight: 500; }
+.flow-node-preset-link { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; margin: 5px 0 10px; }
+.flow-node-preset-link > small { color: var(--editor-muted); font-size: 10px; overflow-wrap: anywhere; }
+.flow-node-preview-label { display: block; margin-top: 10px; color: var(--editor-muted); font-size: 10px; }
+.flow-current-node { padding: 10px; margin: 8px 0; border: 1px solid var(--editor-border); border-radius: 6px; background: var(--editor-raised); }
+.flow-node-text-editor { padding: 0; margin: 0 0 10px; border: 0; min-width: 0; }
+.flow-node-heading { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; overflow-wrap: anywhere; }
+.flow-node-heading strong { font-size: 12px; }
+.flow-node-heading small { color: var(--editor-muted); font-size: 11px; }
+.flow-node-text-row { display: flex; align-items: end; gap: 6px; margin-bottom: 6px; }
+.flow-node-text-row .field { flex: 1; min-width: 0; margin-bottom: 0; }
+.flow-node-text-row .icon-button { flex: none; margin-bottom: 2px; }
+.flow-node-sample { display: flex; align-items: center; justify-content: center; min-height: 70px; margin: 10px 0; padding: 12px 0; width: 100%; background: #232b30; border: 1px solid var(--editor-border); border-radius: 5px; overflow: hidden; }
+.flow-style-tabs { margin-bottom: 10px; width: 100%; }
+.flow-style-tabs button { flex: 1 1 auto; min-width: 0; padding-inline: 6px; }
+.flow-style-fields .field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+.flow-field-reset { font-size: 10px; margin-bottom: 8px; }
+.flow-shared-impact { padding: 8px; background: color-mix(in srgb, var(--accent) 10%, transparent); border-radius: 4px; font-size: 11px; line-height: 1.6; }
+.flow-usage-list { max-height: 140px; overflow: auto; padding-left: 20px; font-size: 11px; }
+.flow-source-list { max-height: 300px; overflow: auto; }
+.flow-source-list > div { padding: 8px 0; border-bottom: 1px solid var(--editor-border); }
+.flow-source-list label { display: flex; align-items: start; gap: 8px; cursor: pointer; }
+.flow-source-list label span { display: flex; flex-direction: column; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.flow-source-list strong { font-size: 11px; font-weight: 500; }
+.flow-source-list small { display: block; font-size: 10px; line-height: 1.5; color: var(--editor-muted); }
+.flow-progress-preview { border-top: 1px solid var(--editor-border); margin-top: 12px; padding-top: 10px; }
+.flow-region-guide { z-index: 20; outline: 2px dashed #71bbdf; outline-offset: -2px; background: #71bbdf12; color: #ecfaff; text-shadow: 0 1px 2px #000; font-size: 12px; pointer-events: none; }
+.ui-player-flow-inspector .button-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.ui-flow-directory .ui-collection-navigation button { background: transparent; border: 0; padding: 0; font: inherit; color: inherit; }
+.ui-flow-directory .ui-collection-navigation button:disabled { opacity: .4; }
+.flow-navigation-card { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 9px 10px; margin: 5px 0; text-align: left; border: 1px solid var(--editor-border); background: var(--editor-raised); border-radius: 5px; color: var(--editor-text); cursor: pointer; }
+.flow-navigation-card:hover, .flow-navigation-card:focus-visible { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--editor-raised)); }
+.flow-navigation-card > span { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 3px; }
+.flow-navigation-card strong { font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+.flow-navigation-card small { color: var(--editor-muted); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.flow-navigation-card > svg { flex: none; }
+.flow-preset-overview { max-height: 230px; overflow: auto; scrollbar-width: thin; }
+.flow-actual-preview { padding: 8px; margin: 10px 0; border: 1px solid var(--editor-border); border-radius: 6px; }
+.flow-actual-preview .flow-node-sample { margin: 6px 0; }
+.flow-preview-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 8px; color: var(--editor-muted); font-size: 11px; }
+.flow-preview-heading > small { min-width: 0; flex: 1; overflow-wrap: anywhere; font-size: 10px; }
+/* Field focus changes this message. Keep its occupied space stable so the
+   control under a pointer cannot move between pointerdown and contextmenu. */
+.flow-property-impact { display: flex; flex-direction: column; gap: 3px; height: 104px; box-sizing: border-box; overflow-y: auto; scrollbar-width: thin; padding: 8px 10px; margin: 8px 0 12px; border-inline-start: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); font-size: 10px; line-height: 1.6; color: var(--editor-muted); overflow-wrap: anywhere; }
+.flow-property-impact > * { flex-shrink: 0; }
+.flow-property-impact > strong { color: var(--editor-text); font-weight: 500; font-size: 11px; }
+.flow-property-impact[data-flow-reference-affected="false"] { border-inline-start-color: #be9651; }
+.flow-node-text-actions { display: flex; flex: none; gap: 2px; align-items: center; }
+.flow-node-text-row[data-flow-text-selected] .field .field-label { color: var(--accent); }
+.flow-node-text-row[data-flow-text-selected] input { border-color: color-mix(in srgb, var(--accent) 65%, var(--editor-border)); }
+.ui-player-flow-inspector > .field-row, .ui-player-flow-inspector [data-ui-inspector-group="flow-node-position"] .field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.ui-inspector[data-ui-flow-view] .ui-inspector-breadcrumb { flex-wrap: wrap; }
+.ui-inspector[data-ui-flow-view] .ui-inspector-breadcrumb > strong { min-width: 0; overflow-wrap: anywhere; }
+.flow-content-mode, .flow-content-add, .flow-content-group-create { display: grid; gap: 5px; min-width: 0; }
+.flow-custom-content { min-width: 0; container: flow-content / inline-size; }
+.flow-content-initialize { display: grid; gap: 4px; }
+.flow-source-preview { display: block; overflow-wrap: anywhere; line-height: 1.5; }
+.flow-content-missing { padding: 8px; margin: 8px 0; border-inline-start: 2px solid #be9651; background: color-mix(in srgb, #be9651 8%, transparent); }
+.flow-content-list-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 12px 0 5px; }
+.flow-content-list-heading strong { font-size: 11px; font-weight: 600; }
+.flow-content-list-heading small { color: var(--editor-muted); font-size: 10px; }
+.flow-custom-node-list { max-height: 360px; overflow: auto; scrollbar-width: thin; }
+.flow-custom-node { display: grid; grid-template-columns: minmax(140px, 1fr) auto; align-items: center; gap: 5px; padding: 7px 0; border-bottom: 1px solid var(--editor-border); }
+.flow-custom-node > label { display: flex; align-items: start; gap: 7px; min-width: 0; cursor: pointer; }
+.flow-custom-node > label > input { flex: none; }
+.flow-custom-node > label > span { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.flow-custom-node > label strong { font-size: 11px; font-weight: 500; }
+.flow-custom-node > label small, .flow-content-repair > small { color: var(--editor-muted); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.flow-custom-node-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 2px; }
+.flow-custom-node-actions .text-button { padding: 4px; gap: 2px; font-size: 11px; }
+.flow-custom-node-actions .icon-button { width: 24px; min-width: 24px; height: 24px; }
+.flow-content-repair { display: grid; gap: 4px; padding: 7px 0; border-top: 1px solid color-mix(in srgb, var(--editor-border) 70%, transparent); }
+.flow-content-group-list { margin-top: 10px; }
+.flow-content-group-detail > [data-ui-inspector-group] { margin-bottom: 8px; }
+.flow-content-edge { min-width: 0; }
+.flow-content-path { margin: 6px 0; padding: 6px 8px; border-inline-start: 2px solid var(--editor-border); background: color-mix(in srgb, var(--editor-raised) 70%, transparent); }
+.flow-content-path > summary { cursor: pointer; font-size: 11px; overflow-wrap: anywhere; }
+.flow-content-edge ol { display: grid; gap: 3px; padding-left: 20px; margin: 8px 0; }
+.flow-content-edge li { padding-left: 2px; }
+.flow-content-edge li > span { overflow-wrap: anywhere; }
+@container flow-content (max-width: 380px) {
+  .flow-custom-node { grid-template-columns: minmax(0, 1fr); }
+  .flow-custom-node-actions { justify-content: flex-start; }
+}

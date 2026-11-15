@@ -19,6 +19,50 @@ export function placeTimelineClip<T extends ClipPlacement>(clip: T, clips: ClipP
   return { ...clip, at: Math.round(at * 1000000) / 1000000 };
 }
 
+/** Move a selection with one time/track offset. Collision fitting must move the
+ * whole selection together; placing each clip separately would lose its timing. */
+export function moveTimelineSelection<T extends ClipPlacement>(clips: T[], ids: readonly string[], tracks: readonly { id: string }[], delta: number, trackDelta = 0, fit = true): T[] {
+  if (!Number.isFinite(delta) || !Number.isInteger(trackDelta)) throw new Error('移动时间和轨道必须是有效数值。');
+  const selectedIds = new Set(ids), selected = clips.filter(clip => selectedIds.has(clip.nodeId));
+  if (!selected.length && !selectedIds.size) return clips;
+  if (selected.length !== selectedIds.size) throw new Error('部分片段已不存在，请重新选择。');
+  const indices = new Map(tracks.map((track, index) => [track.id, index]));
+  const positions = selected.map(clip => indices.get(clip.trackId));
+  if (positions.some(index => index === undefined)) throw new Error('片段所在轨道已不存在，请重新选择。');
+  const rows = positions as number[];
+  const rowDelta = Math.max(-Math.min(...rows), Math.min(tracks.length - 1 - Math.max(...rows), trackDelta));
+  const minimum = -Math.min(...selected.map(clip => clip.at));
+  let offset = Math.max(minimum, delta);
+  const others = clips.filter(clip => !selectedIds.has(clip.nodeId) && clip.duration > 0);
+  const blocked: { start: number; end: number }[] = [];
+  for (const clip of selected) {
+    if (clip.duration <= 0) continue;
+    const trackId = tracks[indices.get(clip.trackId)! + rowDelta].id;
+    for (const other of others) if (other.trackId === trackId) {
+      blocked.push({ start: other.at - clip.at - clip.duration, end: other.at + other.duration - clip.at });
+    }
+  }
+  // Open intervals leave an exact touching boundary available for both clips.
+  const merged: typeof blocked = [];
+  for (const interval of blocked.sort((a, b) => a.start - b.start)) {
+    const previous = merged.at(-1);
+    if (previous && interval.start < previous.end - epsilon) previous.end = Math.max(previous.end, interval.end);
+    else merged.push({ ...interval });
+  }
+  const conflict = merged.find(interval => offset > interval.start + epsilon && offset < interval.end - epsilon);
+  if (conflict) {
+    if (!fit) throw new Error('移动后同一轨道的片段会重叠，请调整时间或移到其他轨道。');
+    offset = conflict.start >= minimum && offset - conflict.start <= conflict.end - offset ? conflict.start : conflict.end;
+  }
+  const moved = clips.map(clip => {
+    if (!selectedIds.has(clip.nodeId)) return clip;
+    const at = Math.max(0, Math.round((clip.at + offset) * 1000000) / 1000000), trackId = tracks[indices.get(clip.trackId)! + rowDelta].id;
+    return at === clip.at && trackId === clip.trackId ? clip : { ...clip, at, trackId };
+  });
+  if (timelineOverlap(moved)) throw new Error('移动后同一轨道的片段会重叠，请调整时间或移到其他轨道。');
+  return moved;
+}
+
 /** The right trim handle stops at the next clip; gaps may still be left empty. */
 export function trimTimelineClip<T extends ClipPlacement>(clip: T, clips: ClipPlacement[]): T {
   const next = Math.min(Infinity, ...clips.filter(item => item.nodeId !== clip.nodeId && item.trackId === clip.trackId && item.duration > 0 && item.at >= clip.at).map(item => item.at));

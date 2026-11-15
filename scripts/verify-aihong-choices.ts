@@ -1,3 +1,4 @@
+import { setUiCanvasPreview } from './lib/ui-design-controls';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -46,7 +47,7 @@ try{
  const geometry=async()=>caption.evaluate(e=>{const c=e.getBoundingClientRect(),p=e.parentElement!.getBoundingClientRect();return {x:(c.x-p.x)/p.width,width:c.width/p.width,ratio:p.width/p.height};});
  const originalGeometry=await geometry();expect(originalGeometry.x).toBeCloseTo(compare[0].component.list.caption.x,2);expect(originalGeometry.ratio).toBeCloseTo(957/109,1);
  await component.screenshot({path:path.join(output,'editor-normal.png')});
- await page.getByLabel('按钮预览状态',{exact:true}).selectOption('hover');await expect(component.locator('img').first()).toHaveAttribute('src',/ai_ui_52d3e8f52ba868a2/);await component.screenshot({path:path.join(output,'editor-hover.png')});
+ await setUiCanvasPreview(page, '按钮预览状态', 'hover');await expect(component.locator('img').first()).toHaveAttribute('src',/ai_ui_52d3e8f52ba868a2/);await component.screenshot({path:path.join(output,'editor-hover.png')});
  await page.getByText('选项文字区域',{exact:true}).click();const x=page.getByLabel('选项文字横向 %',{exact:true});await x.fill('30');await x.press('Tab');expect((await geometry()).x).toBeCloseTo(.3,2);
  const width=page.getByLabel('选项文字宽度 %',{exact:true});await width.fill('100');await width.press('Tab');expect((await geometry()).width).toBeCloseTo(.7,2);await page.getByRole('button',{name:'撤销',exact:true}).click();
  expect(await fs.readFile(projectFile,'utf8')).toBe(before);

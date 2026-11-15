@@ -6,6 +6,7 @@ import { createProject, projectSchema, type Project } from '../src/core/model';
 import { projectToText } from '../src/core/text-script';
 import { launchDesktopFixture } from './lib/desktop-fixture';
 import { openStoryMode } from './lib/story-workspace';
+import { openDisclosure } from './lib/ui-disclosures';
 
 const root = path.resolve('.'), output = path.join(root, 'artifacts/ui-save-and-text', new Date().toISOString().replaceAll(':', '-'));
 await fs.mkdir(output, { recursive: true });
@@ -17,13 +18,14 @@ project.assets.push({ id: 'test_image', name: '测试图片', kind: 'image', pat
 project.scriptText = { format: 'vns-text-1', content: projectToText(project) };
 const projectFile = path.join(output, 'project.vns.json');
 await fs.writeFile(projectFile, JSON.stringify(projectSchema.parse(project)));
-const app = await launchDesktopFixture({ root, projectFile, profile: path.join(output, 'profile') }), page = await app.firstWindow();
+const app = await launchDesktopFixture({ root, projectFile, profile: path.join(output, 'profile'), confirmClose: true }), page = await app.firstWindow();
 const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+const add = async (name: string) => { await page.getByRole('button', { name: '添加组件', exact: true }).click(); await page.getByLabel('添加组件菜单', { exact: true }).getByRole('button', { name, exact: true }).click(); };
 const saved = async () => JSON.parse(await fs.readFile(projectFile, 'utf8')) as Project;
 try {
   await expect(page.locator('.project-title strong')).toHaveText(project.name, { timeout: 45000 });
   await page.locator('[data-workspace-tab="ui"]').click();
-  await page.getByRole('button', { name: '添加文字', exact: true }).click();
+  await add('文字');
   await page.getByLabel('文字', { exact: true }).fill('尚未保存');
   await page.getByRole('button', { name: '撤销', exact: true }).click();
   await expect(page.getByLabel('文字', { exact: true })).not.toHaveValue('尚未保存');
@@ -39,27 +41,35 @@ try {
   await dialog.getByRole('button', { name: '不保存', exact: true }).click();
   await page.locator('[data-workspace-tab="ui"]').click();
   await expect(page.locator('.ui-component', { hasText: '尚未保存' })).toHaveCount(0);
-  await page.getByRole('button', { name: '添加文字', exact: true }).click();
+  await add('文字');
   await page.getByLabel('文字', { exact: true }).fill('已保存标题');
   await page.getByRole('button', { name: '保存界面', exact: true }).click();
   await expect(page.locator('.dirty-dot')).toHaveCount(0);
   assert.ok((await saved()).ui.components.some(c => c.text === '已保存标题'));
   await page.getByLabel('文字', { exact: true }).fill('页面切换保存');
   await page.getByLabel('设计页面', { exact: true }).selectOption({ label: '对话' });
-  await dialog.getByRole('button', { name: '保存并继续', exact: true }).click();
-  await expect(dialog).toHaveCount(0);
-  assert.ok((await saved()).ui.components.some(c => c.text === '页面切换保存'));
+  // Pages share one UI draft: switching pages keeps unsaved edits without asking.
   await expect(page.locator('.ui-canvas')).toHaveClass(/page-say/);
-  await page.getByRole('button', { name: '添加文字', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  assert.ok(!(await saved()).ui.components.some(c => c.text === '页面切换保存'));
+  await page.getByRole('button', { name: '保存界面', exact: true }).click();
+  await expect(page.locator('.dirty-dot')).toHaveCount(0);
+  assert.ok((await saved()).ui.components.some(c => c.text === '页面切换保存'));
+  await add('文字');
   await page.getByLabel('文字', { exact: true }).fill('窗口关闭取消');
+  // Closing the window asks once, natively, for the project and UI drafts together; cancel keeps both.
+  await app.evaluate(({ dialog }) => {
+    const state = globalThis as any; state.qaClosePrompts = [];
+    dialog.showMessageBox = (async (...args: any[]) => { const options = args.at(-1); state.qaClosePrompts.push({ title: options.title, buttons: options.buttons }); return { response: options.title === '保存工程' ? 2 : 0, checkboxChecked: false }; }) as any;
+  });
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
-  await expect(dialog).toBeVisible();
-  await dialog.getByRole('button', { name: '取消', exact: true }).click();
+  await expect.poll(() => app.evaluate(() => (globalThis as any).qaClosePrompts)).toEqual([{ title: '保存工程', buttons: ['保存', '不保存', '取消'] }]);
+  await expect(dialog).toHaveCount(0);
   await expect(page.getByLabel('文字', { exact: true })).toHaveValue('窗口关闭取消');
   await page.locator('[data-workspace-tab="script"]').click();
   await dialog.getByRole('button', { name: '不保存', exact: true }).click();
   await page.locator('[data-workspace-tab="ui"]').click();
-  await page.getByRole('button', { name: '添加图片', exact: true }).click();
+  await add('图片'); await openDisclosure(page, '外观与状态');
   for (const name of ['组件字号', '组件文字色', '文字对齐', '组件字体']) await expect(page.getByLabel(name, { exact: true })).toHaveCount(0);
   await expect(page.getByRole('slider', { name: /^组件不透明度/ })).toBeVisible();
   await page.screenshot({ path: path.join(output, 'image-properties.png') });
@@ -95,6 +105,6 @@ try {
   await expect(page.getByLabel('指令参数提示', { exact: true })).toBeVisible();
   await page.screenshot({ path: path.join(output, 'text.png') });
   assert.deepEqual(errors, []);
-  await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', checks: ['UI 草稿不写入工程，取消保留，放弃恢复', '保存按钮落盘并清除脏标记', '切换页面保存后继续', '关闭窗口取消后保留草稿', '顶部重复按钮移除，隐藏演出在标题栏', '命令首次点击无提示、再次点击显示、快捷键仍可唤起'], errors }, null, 2));
+  await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', checks: ['UI 草稿不写入工程，取消保留，放弃恢复', '保存按钮落盘并清除脏标记', '切换页面保留草稿，保存后落盘', '关闭窗口取消后保留草稿', '顶部重复按钮移除，隐藏演出在标题栏', '命令首次点击无提示、再次点击显示、快捷键仍可唤起'], errors }, null, 2));
 } catch (error) { await page.screenshot({ path: path.join(output, 'failure.png') }).catch(() => undefined); throw error; }
 finally { await app.evaluate(({ BrowserWindow }) => { for (const window of BrowserWindow.getAllWindows()) window.destroy(); }).catch(() => undefined); await app.close(); console.log(output); }

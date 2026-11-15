@@ -1,3 +1,4 @@
+import { cloneData } from "./project-mutation";
 import { aiLines } from './ai';
 import { editableProjectFields } from './ai-project-edit';
 import { aiAgentFingerprint, changedDialogueCount, type AiPortraitComparison, type AiProposalField, type AiTaskOutcome, type AiWorkflowProposal } from './ai-workflow';
@@ -42,14 +43,14 @@ export function aiProjectEffects(before: Project, after: Project): AiEffect[] {
       for (const item of next) { walk(previous.get(item.id), item, [...path, { id: item.id }]); previous.delete(item.id); }
       for (const [id, item] of previous) walk(item, undefined, [...path, { id }]);
       // Pure order changes need an explicit effect even if every item is identical.
-      if (old.length === next.length && old.every(item => next.some(other => other.id === item.id)) && !same(old.map(item => item.id), next.map(item => item.id))) changes.push({ path, value: structuredClone(next) });
+      if (old.length === next.length && old.every(item => next.some(other => other.id === item.id)) && !same(old.map(item => item.id), next.map(item => item.id))) changes.push({ path, value: cloneData(next) });
       return;
     }
     if (old && next && typeof old === 'object' && typeof next === 'object' && !Array.isArray(old) && !Array.isArray(next)) {
       for (const key of new Set([...Object.keys(old), ...Object.keys(next)])) walk(old[key], next[key], [...path, key]);
       return;
     }
-    changes.push(next === undefined ? { path, absent: true } : { path, value: structuredClone(next) });
+    changes.push(next === undefined ? { path, absent: true } : { path, value: cloneData(next) });
   };
   for (const field of aiProposalFields) if (field !== 'scriptText') walk(before[field], after[field], [field]);
   return changes;

@@ -1,11 +1,25 @@
 .ui-zoom-controls { display: flex; align-items: center; gap: 3px; margin-left: auto; flex: none; }
 .ui-zoom-controls select { width: 150px; height: 29px; font-size: 11px; padding: 3px 6px; }
 .ui-zoom-controls .icon-button { width: 29px; height: 29px; padding: 4px; }
+.ui-workspace:not(.ui-advanced-workspace) .ui-dock [data-dock-panel="canvas"] { container: ui-design-canvas / inline-size; }
+.ui-dock-actions .ui-zoom-controls { min-width: 0; max-width: 100%; margin-left: 0; flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; }
+.ui-dock-actions .ui-zoom-controls select { width: 150px; min-width: 0; max-width: 150px; height: 29px; margin-left: 0; padding: 3px 6px; }
+.ui-dock-actions .ui-zoom-controls .icon-button { flex: none; width: 29px; height: 29px; padding: 4px; }
+@container ui-design-canvas (max-width: 280px) {
+  .performance-dock-title { align-items: flex-start; }
+  .performance-dock-title > strong { line-height: 29px; }
+  .ui-dock-actions { flex: 1 1 93px; }
+  .ui-dock-actions .ui-zoom-controls { flex: 1; }
+  .ui-dock-actions .ui-zoom-controls select { order: 1; flex: 1 1 100%; width: 100%; max-width: none; }
+}
+.ui-zoom-scroll { overflow-anchor: none; }
 .ui-scroll.ui-zoom-scroll { padding: 23px; outline: none; scrollbar-gutter: stable; }
 .ui-zoom-stage { min-width: 100%; min-height: 100%; width: max-content; display: grid; place-items: center; }
 .ui-zoom-stage > * { flex: none; }
+.ui-marquee-overlay { position: fixed; z-index: 9000; overflow: hidden; pointer-events: none; contain: strict; }
+.ui-marquee { position: absolute; box-sizing: border-box; pointer-events: none; border: 1px solid var(--editor-accent, #82d5ac); background: color-mix(in srgb, var(--editor-accent, #82d5ac) 14%, transparent); box-shadow: 0 0 0 1px #071c1480; }
 .ui-logic-preview .ui-logic-preview-frame.ui-zoom-scroll { display: block; overflow: auto; scrollbar-gutter: stable; }
-.ui-transform-drag { position: absolute; inset: 0; pointer-events: auto; cursor: move; touch-action: none; }
+.ui-canvas .ui-component:not(.selected) { cursor: default; }
 .ui-component-menu { position: fixed; z-index: 10000; width: 258px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow: auto; padding: 5px; border: 1px solid var(--editor-border, #48505a); border-radius: 5px; background: var(--editor-panel, #242a30); color: var(--editor-text, #dae0e6); box-shadow: 0 8px 22px #0005; }
 .ui-component-menu button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 29px; border: 0; border-radius: 3px; padding: 5px 8px; text-align: left; background: transparent; color: inherit; font-size: 12px; }
 .ui-component-menu button:hover, .ui-component-menu button:focus-visible { background: var(--editor-selection, #3c514d); outline: none; }

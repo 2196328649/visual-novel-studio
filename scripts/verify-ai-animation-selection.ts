@@ -6,6 +6,7 @@ import { once } from 'node:events';
 import { expect, type Page } from '@playwright/test';
 import { aiAnimationSelectionFixture } from './lib/ai-animation-selection-fixture';
 import { launchDesktopFixture } from './lib/desktop-fixture';
+import { uiPreviewPlacement } from './lib/ui-preview-window';
 import { defaultAiConfig } from '../src/core/ai';
 import { sampleUiAnimationTrack } from '../src/core/ui-animation-clips';
 
@@ -67,10 +68,11 @@ try {
   await page.keyboard.press('Control+y'); await expect(page.getByLabel('关键帧数值', { exact: true })).toHaveValue('0.8');
   await page.getByLabel('动画播放头秒数', { exact: true }).fill('1');
   const preview = page.locator('[data-animation-preview="animated_text"]');
-  const left = await preview.evaluate(el => parseFloat((el as HTMLElement).style.left) / el.parentElement!.getBoundingClientRect().width); assert.ok(Math.abs(left - .5) < .01);
+  const left = (await uiPreviewPlacement(preview)).x; assert.ok(Math.abs(left - .5) < .01);
   await button('删除关键帧').click(); await expect.poll(async () => (await context())!.selectedUiAnimation).toEqual({ animationId: first.id, trackId: track.id });
   await button('回到起点').focus(); await page.keyboard.press('Control+z'); await selectKey(key.id);
-  assert.equal(await fs.readFile(projectFile, 'utf8'), original); await button('保存界面').click(); await expect(button('保存界面')).toBeDisabled();
+  // The button is disabled while saving as well; read the file once the editor reports it saved.
+  assert.equal(await fs.readFile(projectFile, 'utf8'), original); await button('保存界面').click(); await expect(page.locator('.ui-save-status')).toHaveText('已保存'); await expect(button('保存界面')).toBeDisabled();
   const saved = JSON.parse(await fs.readFile(projectFile, 'utf8')); assert.deepEqual(saved.ui.components, project.ui.components); assert.deepEqual(saved.ui.animations[1], other);
   const expectedClip = structuredClone(first); expectedClip.tracks[0].keys[1].value = .8; assert.deepEqual(saved.ui.animations[0], expectedClip);
   assert.equal(sampleUiAnimationTrack(saved.ui.animations[0].tracks[0], 1, .2), .5);

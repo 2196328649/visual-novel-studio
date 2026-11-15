@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import { readFileSync, promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { projectSchema } from '../src/core/model';
+import { projectSchema, type UiComponent } from '../src/core/model';
 import { loadProject, parseProject } from '../src/desktop/project-store';
 import { uiSkinAsset } from '../src/core/ui';
 import { uiSkinData } from '../src/runtime/ui-runtime';
+import { flowNodeAppearance } from '../src/core/flow-style';
+import { repairTemplateFlowDraft, templateFlowSoftShadow } from '../src/core/template-repairs';
 
 const fixture = () => projectSchema.parse(JSON.parse(readFileSync(new URL('../resources/templates/aihong/project.vns.json', import.meta.url), 'utf8')));
 test('legacy template flow repairs retain node type, locks, and source data', () => {
@@ -51,11 +53,78 @@ test('legacy stock shadows and scrollbar are repaired while authored replacement
   Object.assign(flow.style!, { outlineOpacity: .5, shadowX: 2, shadowY: 3, shadowBlur: undefined, shadowOpacity: .7 });
   Object.assign(flow.list!.flowScrollbar!.thumb!, { fit: 'stretch', borders: undefined });
   const result = parseProject(input).project.ui.components.find(item => item.id === flow.id)!;
-  assert.deepEqual({ x: result.style!.shadowX, y: result.style!.shadowY, blur: result.style!.shadowBlur, opacity: result.style!.shadowOpacity }, { x: 0, y: 0, blur: 7, opacity: .4 });
+  assert.deepEqual({ x: result.style!.shadowX, y: result.style!.shadowY, blur: result.style!.shadowBlur, opacity: result.style!.shadowOpacity }, { x: 0, y: 0, blur: 14, opacity: .9 });
   assert.equal(result.list!.flowScrollbar!.thumb!.fit, 'nineSlice');
   flow.style!.shadowBlur = 3;
   flow.list!.flowScrollbar!.thumb!.idle = 'authored_scrollbar';
   assert.deepEqual(parseProject(input).project.ui.components.find(item => item.id === flow.id), flow);
+});
+
+function faintFlowFixture() {
+  const project = fixture(), flow = project.ui.components.find(item => item.id === 'ai_flowchart_items')!;
+  for (const style of [flow.style!, ...project.ui.flowStyles!.map(item => item.style!)]) {
+    Object.assign(style, { shadowBlur: 7, shadowOpacity: .4 });
+    delete style.shadowSpread;
+  }
+  return { project, flow };
+}
+
+test('old faint flow backings are restored in the base and every stock shared style, without rewriting input', () => {
+  const { project, flow } = faintFlowFixture();
+  project.ui.flowStyles![0].style!.shadowSpread = 5;
+  const input = JSON.stringify(project), parsed = parseProject(project).project;
+  assert.equal(JSON.stringify(project), input);
+  const restored = parsed.ui.components.find(item => item.id === flow.id)!;
+  for (const node of [{}, ...parsed.ui.flowStyles!.map(style => ({ styleId: style.id }))]) {
+    const look = flowNodeAppearance(parsed, restored, node);
+    assert.equal(look.style!.shadowBlur, templateFlowSoftShadow.shadowBlur);
+    assert.equal(look.style!.shadowOpacity, templateFlowSoftShadow.shadowOpacity);
+    assert.equal(look.style!.shadowSpread, 'styleId' in node && node.styleId === 'ai_flow_main' ? 5 : 4);
+    assert.deepEqual(look.style!.captionParts, flow.style!.captionParts);
+  }
+  assert.deepEqual(restored.list, flow.list);
+  assert.deepEqual(parseProject(parsed).project, parsed);
+});
+
+test('flow backing migration leaves deliberate shadow, font and skin replacements intact', () => {
+  const changes: ((style: NonNullable<UiComponent['style']>) => void)[] = [
+    style => { style.shadowOpacity = 0; }, style => { style.shadowOpacity = .5; },
+    style => { style.shadowBlur = 3; }, style => { style.shadowColor = '#112233'; },
+    style => { style.shadowX = -2; }, style => { style.fontSize = 48; },
+  ];
+  for (const change of changes) {
+    const { project, flow } = faintFlowFixture();
+    change(flow.style!); project.ui.flowStyles!.forEach(preset => change(preset.style!));
+    const parsed = parseProject(project).project;
+    assert.deepEqual(parsed.ui.components.find(item => item.id === flow.id)!.style, flow.style);
+    assert.deepEqual(parsed.ui.flowStyles, project.ui.flowStyles);
+  }
+  const { project, flow } = faintFlowFixture();
+  flow.skin!.idle = 'authored_image';
+  project.ui.flowStyles![0].skin!.idle = 'authored_image';
+  project.ui.flowStyles![1].id = 'authored_style';
+  project.ui.flowStyles![2].style!.shadowSpread = 0;
+  const parsed = parseProject(project).project;
+  assert.deepEqual(parsed.ui.components.find(item => item.id === flow.id)!.style, flow.style);
+  assert.deepEqual(parsed.ui.flowStyles!.slice(0, 2), project.ui.flowStyles!.slice(0, 2));
+  assert.equal(parsed.ui.flowStyles![2].style!.shadowSpread, 0, 'an explicit zero spread survives');
+});
+
+test('recovery drafts retain authored offsets and disabled shadows without resurrecting unchanged faint backings', () => {
+  const { project, flow } = faintFlowFixture(), draft = structuredClone(project);
+  const edited = draft.ui.components.find(item => item.id === flow.id)!;
+  edited.style!.shadowY = -.5; edited.style!.captionParts = [{}, {}]; edited.x = .25;
+  draft.ui.flowStyles![0].style!.shadowSpread = 5;
+  draft.ui.flowStyles![2].style!.shadowOpacity = 0;
+  const before = JSON.stringify({ project, draft }), repaired = repairTemplateFlowDraft(project, draft);
+  const result = repaired.ui.components.find(item => item.id === flow.id)!;
+  assert.equal(result.style!.shadowOpacity, .9); assert.equal(result.style!.shadowBlur, 14);
+  assert.equal(result.style!.shadowY, -.5); assert.equal(result.x, .25);
+  assert.deepEqual(result.style!.captionParts, [{}, {}]);
+  assert.equal(repaired.ui.flowStyles![0].style!.shadowSpread, 5);
+  assert.equal(repaired.ui.flowStyles![1].style!.shadowOpacity, .9);
+  assert.equal(repaired.ui.flowStyles![2].style!.shadowOpacity, 0);
+  assert.equal(JSON.stringify({ project, draft }), before);
 });
 
 test('opening an old template adds its font without rewriting the project or replacing files', async () => {

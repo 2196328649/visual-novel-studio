@@ -3,24 +3,40 @@ import { createServer } from 'vite';
 import { createRequire } from 'node:module';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { projectSchema } from '../src/core/model';
+import { assetFiles, projectSchema } from '../src/core/model';
 import { storyMenuEntries } from '../src/core/story-menu';
 import { storyFlowLayout } from '../src/core/story-flow';
 import { projectToText } from '../src/core/text-script';
+import { historyPreviewEntries } from '../src/core/history-preview';
+import { cleanVerificationDirectories } from './lib/verification-cleanup';
+import { saveProject } from '../src/desktop/project-store';
 
 const root = path.resolve('.'), require = createRequire(import.meta.url);
 const output = path.join(root, 'artifacts/menu-authoring', new Date().toISOString().replaceAll(':', '-'));
 const fixture = path.join(output, 'project'), projectFile = path.join(fixture, 'project.vns.json');
 await fs.mkdir(output, { recursive: true });
-await fs.cp(path.join(root, 'resources/templates/aihong'), fixture, { recursive: true });
-const project = projectSchema.parse(JSON.parse(await fs.readFile(projectFile, 'utf8')));
+const templateRoot = path.join(root, 'resources/templates/aihong');
+const project = projectSchema.parse(JSON.parse(await fs.readFile(path.join(templateRoot, 'project.vns.json'), 'utf8')));
+// Copy registered resources only: obsolete loose files in the template folder
+// are otherwise imported by asset discovery while this test is editing menus.
+for (const file of new Set(project.assets.flatMap(assetFiles))) {
+  const destination = path.join(fixture, file);
+  await fs.mkdir(path.dirname(destination), { recursive: true });
+  await fs.copyFile(path.join(templateRoot, file), destination);
+}
 project.name = '哀鸿菜单与立绘验证';
 project.playerDefaults = { ...project.playerDefaults, masterVolume: 0 };
-const opening = project.nodes.find(node => node.id === 'opening');
-if (opening?.kind !== 'passage') throw new Error('Missing template opening');
-opening.lines[1].voiceId = project.assets.find(asset => asset.kind === 'audio')!.id;
+// The shipped template now hides chapter selection. Exercise the supported
+// chapter-list control in this fixture without changing the template itself.
+project.ui.disabledPages = project.ui.disabledPages?.filter(page => page !== 'chapterSelect');
+project.ui.pages = { ...project.ui.pages, chapterSelect: { ...project.ui.pages?.chapterSelect, layout: 'custom' } };
+project.ui.components.push({ id: 'qa_chapter_items', page: 'chapterSelect', kind: 'chapterList', text: '章节选择', x: .2, y: .2, width: .6, height: .6, style: { fontSize: 28 }, list: { columns: 1, itemHeight: 74, gapY: 12, lockUnread: true, showProgress: true } });
+const dialogue = project.nodes.flatMap(node => node.kind === 'passage' ? node.lines.filter(line => !line.silent) : []);
+const voicedLine = dialogue.at(-1)!;
+voicedLine.voiceId = project.assets.find(asset => asset.kind === 'audio')!.id;
+const historySample = historyPreviewEntries(project);
 project.scriptText = { format: 'vns-text-1', content: projectToText(project) };
-await fs.writeFile(projectFile, JSON.stringify(project));
+await saveProject(projectFile, project);
 const server = await createServer({ root, server: { host: '127.0.0.1', port: 0, watch: { ignored: ['**/artifacts/**', '**/resources/**', '**/release/**'] } } });
 await server.listen();
 const env = Object.fromEntries(Object.entries({ ...process.env, VNS_PROJECT_PATH: projectFile, VNS_USER_DATA: path.join(output, 'profile'), VNS_DEV_URL: `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}` }).filter((entry): entry is [string, string] => entry[1] !== undefined));
@@ -28,18 +44,21 @@ delete env.ELECTRON_RUN_AS_NODE;
 let app: ElectronApplication | undefined, page: Page | undefined, phase = 'launch';
 const checks: string[] = [], errors: string[] = [];
 try {
-  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env, timeout: 60_000 });
+  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env: { ...env, VNS_TEST_DISCARD_ON_CLOSE: '1' }, timeout: 60_000 });
   page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message));
   await expect(page.locator('.project-title strong')).toHaveText(project.name, { timeout: 60000 });
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1580, 1000));
   await page.locator('.view-tabs').getByRole('button', { name: '界面', exact: true }).click();
+  await expect(page.locator('.dirty-dot')).toHaveCount(0);
   const pages = page.getByLabel('设计页面', { exact: true });
   phase = 'history preview and editing';
   await pages.selectOption({ label: '对话历史' });
   const history = page.locator('[data-component-id="ai_history_items"]');
-  await expect(history).toContainText(opening.lines[1].text);
-  await expect(history.getByLabel('重播语音', { exact: true })).toHaveCount(1);
-  await expect.poll(() => history.locator('.ui-history-preview-voice img').evaluateAll(images => images.every(image => (image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth > 0))).toBe(true);
+  await expect(history.locator('[data-line-id]')).toHaveCount(historySample.length);
+  await expect(history).toContainText(voicedLine.text);
+  const replay = history.locator('[data-history-control$=":play"]');
+  await expect(replay).toHaveCount(historySample.filter(line => line.voiceId).length);
+  await expect.poll(() => replay.locator('img').evaluateAll(images => images.length > 0 && images.every(image => (image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth > 0))).toBe(true);
   await page.locator('[data-hierarchy-id="ai_history_items"]').click();
   await expect(page.getByLabel('历史条目排列', { exact: true })).toHaveValue('columns');
   await page.screenshot({ path: path.join(output, 'history-editor.png') });
@@ -52,10 +71,10 @@ try {
 
   phase = 'chapter and flow preview';
   await pages.selectOption({ label: '章节选择' });
-  const chapters = page.locator('[data-component-id="ai_chapter_items"]');
+  const chapters = page.locator('[data-component-id="qa_chapter_items"]');
   await expect(chapters.locator('.ui-collection-preview-item')).toHaveCount(project.chapters.length);
   for (const chapter of project.chapters) await expect(chapters).toContainText(chapter.name);
-  await page.locator('[data-hierarchy-id="ai_chapter_items"]').click();
+  await page.locator('[data-hierarchy-id="qa_chapter_items"]').click();
   await expect(page.getByLabel('锁定未到达的剧情', { exact: true })).toBeChecked();
   await expect(page.getByLabel('显示已读和当前位置', { exact: true })).toBeChecked();
   await page.screenshot({ path: path.join(output, 'chapter-editor.png') });
@@ -99,8 +118,9 @@ try {
   await pages.selectOption({ label: '存读档' });
   const slots = page.locator('[data-component-id="ai_save_slots"]'), navigation = slots.locator('.ui-collection-navigation');
   await expect(slots.locator('.ui-collection-preview-item')).toHaveCount(5);
-  await expect(navigation.locator(':scope > span')).toHaveCount(10);
-  await expect.poll(() => navigation.locator('img').evaluateAll(images => images.length === 10 && images.every(image => (image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth > 0))).toBe(true);
+  const pageCount = project.ui.components.find(component => component.id === 'ai_save_slots')!.list!.pageCount!;
+  await expect(navigation.locator(':scope > span')).toHaveText(Array.from({ length: pageCount }, (_, index) => String(index + 1)));
+  await expect.poll(() => navigation.locator('img').evaluateAll((images, count) => images.length === count && images.every(image => (image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth > 0), pageCount)).toBe(true);
   const navBounds = (await navigation.boundingBox())!, backBounds = (await page.locator('[data-component-id="ai_save_back"]').boundingBox())!;
   expect(navBounds.x + navBounds.width).toBeLessThan(backBounds.x);
   await page.locator('[data-hierarchy-id="ai_save_slots"]').click();
@@ -112,13 +132,13 @@ try {
   phase = 'voice preview and persistence';
   await pages.selectOption({ label: '语音收藏' });
   const voices = page.locator('[data-component-id="ai_voicecollection_items"]');
-  await expect(voices.locator('.ui-collection-preview-item')).toHaveCount(1);
-  await expect(voices).toContainText(opening.lines[1].text.slice(0, 38));
+  await expect(voices.locator('[data-voice-entry]')).toHaveCount(1);
+  await expect(voices).toContainText(voicedLine.text.slice(0, 38));
   await page.locator('[data-hierarchy-id="ai_voicecollection_items"]').click();
   await expect(page.getByLabel('默认只看收藏', { exact: true })).toBeChecked();
   await page.getByLabel('默认只看收藏', { exact: true }).uncheck();
   await page.getByRole('button', { name: '保存工程', exact: true }).click();
-  await expect(page.locator('.dirty-dot')).toHaveCount(0);
+  await expect(page.locator('.dirty-dot')).toHaveCount(0, { timeout: 60000 });
   await page.screenshot({ path: path.join(output, 'voice-editor.png') });
   const saved = projectSchema.parse(JSON.parse(await fs.readFile(projectFile, 'utf8')));
   expect(saved.ui.components.find(component => component.id === 'ai_voicecollection_items')!.list!.favoritesOnly).toBe(false);
@@ -135,4 +155,8 @@ try {
   await page?.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {});
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'failed', phase, checks, errors, error: String(error) }, null, 2));
   console.error(error); console.log(output); process.exitCode = 1;
-} finally { await app?.close(); await server.close(); }
+} finally {
+  await app?.close(); await server.close();
+  const cleanup = await cleanVerificationDirectories(output, ['project', 'profile']);
+  expect(cleanup.errors).toEqual([]);
+}

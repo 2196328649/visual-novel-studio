@@ -4,15 +4,15 @@ Windows 中文视觉小说编辑器，使用同一份项目数据编辑剧本、
 
 编辑器源码独立于 Ren'Py SDK。小说作品、便携版用户数据和本机验收备份各自保存，不放进源码仓库。目录约定与开发准备见[工程组织](docs/repository-layout.md)。
 
-当前发行版为 v0.8（0.8.0，2026-10-09 更新），发行文件位于 `release`。资源管理器现在使用单行工具栏，删除先确认，文件夹连同全部内部资源一起删除；时间轴独立为“时间轴预设”，并恢复当前作者工程的图片章节默认参数。详见[资源类型与删除更新](docs/resource-types-2026-10-09.md)。此前的统一资源目录、等大卡片、参数菜单与试玩交互见[统一资源与试玩更新](docs/unified-resources-and-preview-2026-10-09.md)，图片变换、数值拖动与暂停编辑见 [v0.8 发行说明](docs/release-0.8.md) 和 [验收记录](docs/acceptance-0.8.md)。安装版和便携版均随附离线运行时，创作者无需安装开发工具。此前内部 1.3.x 记录保留供追溯。
+当前版本为 **v0.8.1（2026-11-15）**。本版集中整理剧情流程图、玩家剧情图、界面属性、蓝图、时间轴与 AI 助手，并修复角色续接、取消操作和保存恢复等边界。安装版和便携版均随附离线运行时，创作者无需安装开发工具。完整更新说明见 [v0.8.1 发行说明](docs/release-0.8.1.md)，入门见 [使用说明](docs/user-guide.md)。此前内部 1.3.x 记录保留供追溯。
 
 v0.8 同时提供图片／视频／文字指令与入离场过渡、Windows 单 EXE 游戏导出、关闭保存提示、导出后打开文件夹、章节四区文字、独立台词播放、自动换行与可拖动分栏。台词演出和独立演出可转为时间轴编辑，独立演出单独执行并隐藏对白框；章节音效与背景音乐分别控制。流程图、角色预设、按章长文本编辑、AI 创作辅助和实时试玩继续使用同一份项目数据。
 
-安装包和便携包从 [GitHub Releases](https://github.com/2196328649/visual-novel-studio/releases) 下载。本机构建输出位于 `release/`：安装入口为 `Visual Novel Studio Setup 0.8.0.exe`；便携版为 `Visual-Novel-Studio-0.8.0-portable-win-x64.zip`，全部解压后运行 `Visual Novel Studio.exe`。用法见 [便携版](docs/portable.md) 和 [游戏导出](docs/game-export.md)。维护源码仍可双击 `启动开发版.cmd`。
+从 [v0.8.1 下载页](https://github.com/2196328649/visual-novel-studio/releases/tag/v0.8.1) 选择 `Visual Novel Studio Setup 0.8.1.exe` 或 `Visual-Novel-Studio-0.8.1-portable-win-x64.zip`，使用 `SHA256SUMS-0.8.1.txt` 核对下载文件。便携版须全部解压后运行 `Visual Novel Studio.exe`，更新时保留 `data` 和作品目录。源码由下载页的 GitHub 自动生成的 Source code 提供。用法见 [便携版](docs/portable.md) 和 [游戏导出](docs/game-export.md)；维护源码使用 `pnpm dev`。
 
-剧本的模块模式与文本模式共用右侧预览，可播放当前台词的演出和配音。文本支持中文、拼音首字母补全和可点击的参数提示，也可开启「隐藏演出」，默认只在预览下方显示选中台词的演出。顶部「演出」工作区提供可拖动轨道、进度定位与暂停，公开标题、图片、声音等参数后可按名称调用复用。界面属性分为「游戏设置」与「组件设置」；「参数集」可创建与蓝图共享的玩家设置。详见 [轨道与参数使用说明](docs/authoring-tracks-and-parameters.md)、[中文文本编剧](docs/text-authoring.md) 和 [本轮验收](docs/current-authoring-work.md)。
+剧本的模块模式与文本模式共用右侧预览，可播放当前台词的演出和配音。文本支持中文、拼音首字母补全和可点击的参数提示；台词旁的小箭头展开本句文字演出，局部选字可分别设置样式和动画。“显示角色”使用固定的“第几个”编号，同号更新同一角色副本，相邻台词续用角色时保留画面。时间轴预设提供通栏轨道、多选移动与复制、裁剪、进度定位和暂停，公开标题、图片、声音等参数后可按名称调用。详见 [轨道与参数使用说明](docs/authoring-tracks-and-parameters.md) 和 [中文文本编剧](docs/text-authoring.md)。
 
-角色统一位置和缩放见 [角色站位预设](docs/character-presets.md)，AI 框架、场景配置与配音匹配见 [AI 创作助手](docs/ai-assistant.md)。
+AI 助手的连接设置默认显示地址、密钥和模型，更多设置按需展开。会话列表可收起，参考附件和方案操作集中；停止后等待请求完整结束。支持审阅工程修改方案、应用与撤销，以及坏配置重新读取或完整备份后重新配置。AI 连接由作者自行配置。角色统一位置和缩放见 [角色站位预设](docs/character-presets.md)，助手用法见 [AI 创作助手](docs/ai-assistant.md)。
 
 启动时先显示项目窗口，支持空白项目、哀鸿模板和自制模板；“模板库”提供新建、复制和打开编辑。“分支入门”已从创建入口移除，已有工程仍可打开。
 
@@ -27,11 +27,19 @@ v0.8 同时提供图片／视频／文字指令与入离场过渡、Windows 单 
 
 项目文件、素材目录与恢复文件应一起保留。导入素材会复制到项目内，重命名显示名称不会改变素材身份。
 
+流程图可从「游戏内容」逐层进入小章节和剧情组。框选同级节点后右键「打组为剧情组」，双击进入编辑，面包屑返回原位置；支持嵌套、解组和撤销，保留原有剧情分支与运行关系。选择实际连线可设置过渡方式及时间，预设、单条连线和无过渡的来源清晰可见。使用方法及边界见[流程图分层与剧情打组](docs/story-groups-2026-11-07.md)和[剧情连线过渡](docs/flow-transitions-2026-11-09.md)。
+
+玩家剧情图可选择「跟随剧本／自定义」内容，以及「分支图／目录列表」展示。自定义图独立管理已有剧情入口、顺序、显示分组和位置；节点支持多段文字、各段字体、字号、颜色及字间距。子剧情调用显示为「调用者 → 子剧情 → 返回后的后续」，可进入共享子剧情浏览，按实际调用位置判断解锁和重玩返回路径。详见[玩家图双模式](docs/player-flow-modes-2026-11-13.md)和[子剧情调用与返回](docs/player-flow-calls-2026-11-14.md)。
+
+页面卡片的出口来自实际按钮，双击可进入页面事件，简单导航可直接改接并同步原按钮。自定义页面提供「独立界面、叠加弹窗、常驻覆盖层、临时提示」预设，每次打开可单独设置等待、输入穿透、自动关闭和保留范围，同一页面无需复制。系统菜单保留原生存读档与返回行为，复杂事件在原蓝图中编辑，见[菜单流程与覆盖层](docs/ui-flow-overlays-2026-11-07.md)。
+
+界面控件属性分为「通用属性」和「控件功能」：上方编辑位置、大小、层级、显示和子对象，下方编辑当前控件的内容、外观及交互。存档、历史等列表可双击内部文字或按钮进入独立部件视图。属性名称和值输入区支持右键查看来源、恢复单项、单向跟随参数或双向同步。玩家剧情图保留独立的内容、节点样式、布局连线和玩家操作设置。详见[控件属性分层](docs/ui-inspector-hierarchy-2026-11-08.md)和[属性参数控制](docs/ui-property-control-2026-11-09.md)。
+
 中文文档：`docs/user-guide.md`（入门与发行）、`docs/text-authoring.md`（中文文本和指令）、`docs/blueprint-authoring.md`（中文节点编程与用户节点）、`docs/interaction-authoring.md`（效果与互动）。文本画面预览用于改稿，实际分支、小游戏和存档使用真正的 Ren'Py 试玩验收。
 
-节点编程提供按中文搜索的内置节点与用户节点库、类型化参数与输出、错误定位和入门示例。右键或空格可在鼠标位置搜索并添加节点。连线在缩小画布后仍保持宽点击区域，选中后可断开、拖动端点改接，或从连线列表定位；Delete 删除与 Ctrl+Z 撤销均支持连线。常用角色、背景、音频、玩家设置和界面操作通过名称选择。具体用法和当前能力边界见蓝图文档。
+蓝图用中文节点编辑演出和逻辑，成员、调用输入输出和节点属性集中在左侧，画布保留主要空间；普通蓝图不额外占用右侧实时预览。界面事件图采用左侧上方目录、下方唯一详情。右键或空格可在鼠标位置搜索并添加节点，成员可拖入画布读取、设置或调用。连线可点选、按 Delete 断开或拖动端点改接，Ctrl+Z 撤销。具体用法和能力边界见[中文节点编程](docs/blueprint-authoring.md)。
 
-设置页支持 13 类玩家选项、换肤滑条、下拉菜单、角色独立音量、作者初始值和可编辑确认框；还可以从参数集添加开关、数值和文字设置。玩家偏好独立于剧情存档保存。制作步骤见 [玩家设置与确认框](docs/player-settings.md)；哀鸿模板当前包含 183 个普通可编辑界面组件。两章内容、三条结局路线与改编范围见 [哀鸿剧情示例](docs/aihong-story-sample.md)。
+设置页支持 13 类玩家选项、换肤滑条、下拉菜单、角色独立音量、作者初始值和可编辑确认框。参数集整理剧情、蓝图和界面共用的通用变量，每项独立选择保存方式和是否参与恢复初始设置；需要玩家操作时明确选择页面并添加控件。内置玩家偏好独立于剧情存档保存。制作步骤见 [玩家设置与确认框](docs/player-settings.md)；哀鸿模板当前包含 183 个普通可编辑界面组件。两章内容、三条结局路线与改编范围见 [哀鸿剧情示例](docs/aihong-story-sample.md)。
 
 ## 开发与构建
 
@@ -41,7 +49,7 @@ v0.8 同时提供图片／视频／文字指令与入离场过渡、Windows 单 
 
 ```powershell
 pnpm install --frozen-lockfile
-node scripts/prepare-runtime.mjs 'E:\Tools\renpy-8.5.3-sdk'
+node scripts/prepare-runtime.mjs '<本机 RenPy SDK 目录>'
 pnpm test
 pnpm test:runtime
 pnpm dev
@@ -54,11 +62,11 @@ pnpm package
 
 工作台专项：`pnpm test:workbench` 验证连线点击与改接、资源组织、真实拖放、保存重开与三种窗口尺寸；`pnpm test:aihong-story` 检查 14 条剧情路线及真实 Ren'Py 的章节、三个结局、新游戏重置与存读档。
 
-打包后可运行 `pnpm exec tsx scripts/verify-blueprint-desktop.ts --packaged`，将安装产物复制到源码目录外，使用独立配置、自带运行时和真实导出游戏进行验收。默认输出到 `E:/VNS-Blueprint-Verification`，可通过 `VNS_BLUEPRINT_VERIFY_ROOT` 更换位置。
+打包后可运行 `pnpm exec tsx scripts/verify-blueprint-desktop.ts --packaged`，将安装产物复制到源码目录外，使用独立配置、自带运行时和真实导出游戏进行验收。可通过 `VNS_BLUEPRINT_VERIFY_ROOT` 指定隔离验收位置。
 
-通过 `pnpm runtime:prepare <SDK目录>`，或设置 `VNS_RENPY_SDK` 后运行 `pnpm runtime:prepare`，准备本机离线运行时。无需把源码放进 SDK 目录。`pnpm sample` 使用 `VNS_AIHONG_ASSETS`（默认 `E:/Project/Model/SLY/T/Assets`）重新生成《哀鸿》素材示例；普通源码重建无需执行。
+通过 `pnpm runtime:prepare <SDK目录>`，或设置 `VNS_RENPY_SDK` 后运行 `pnpm runtime:prepare`，准备本机离线运行时。无需把源码放进 SDK 目录。`pnpm sample` 使用 `VNS_AIHONG_ASSETS` 指定的素材目录重新生成《哀鸿》素材示例；普通源码重建无需执行。
 
-源码 ZIP 不重复包含 Ren'Py SDK 和依赖目录；维护者需按上述步骤准备运行时。Spine 4.2 的源码、Windows DLL 和可编辑界面模板随源码包提供；`pnpm spine:build` 可用 Visual Studio C++ 工具重建 DLL。`pnpm exec tsx scripts/prepare-release-artifacts.ts` 收集源码 ZIP、已验收的示例游戏和 SHA-256 校验清单。自动/跳过、跨周目记录与片段隔离可用 `scripts/verify-player-state.ts` 验证；安装与升级验证见 `scripts/verify-installed.ts`。
+GitHub 按版本标签生成的源码包不包含 Ren'Py SDK 和依赖目录；维护者需按上述步骤准备运行时。Spine 4.2 的源码、Windows DLL 和可编辑界面模板随源码提供；`pnpm spine:build` 可用 Visual Studio C++ 工具重建 DLL。`pnpm exec tsx scripts/prepare-release-artifacts.ts` 收集安装版、便携版和 SHA-256 校验清单。自动/跳过、跨周目记录与片段隔离可用 `scripts/verify-player-state.ts` 验证；安装与升级验证见 `scripts/verify-installed.ts`。
 
 “哀鸿模板 · 两章与三个结局”的标题动画使用图片图集与 Spine 骨骼数据实时播放。普通工程也可从素材库导入骨骼动画，添加界面组件，再通过播放、暂停、速度及组件属性蓝图节点控制。操作步骤见 [骨骼动画与蓝图](docs/spine-authoring.md)。`pnpm test:spine-authoring` 验证桌面导入、可视化创作、保存重开和独立 EXE；加 `--packaged` 可对打包产物执行相同流程。
 

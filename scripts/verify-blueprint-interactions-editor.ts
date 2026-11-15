@@ -1,3 +1,4 @@
+import { openBlueprintOptions, closeBlueprintOptions, setBlueprintOption } from './lib/blueprint-canvas';
 import { _electron as electron, expect, type ElectronApplication, type Page, type Locator } from '@playwright/test';
 import { createServer } from 'vite';
 import { createRequire } from 'node:module';
@@ -5,9 +6,11 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { createProject, type Project } from '../src/core/model';
 import { blueprintNodeDefaults, connectBlueprintPins, createBlueprintGraph } from '../src/core/blueprint';
-import { assignBlueprintGroup } from '../src/core/blueprint-authoring';
+import { assignBlueprintGroup, exposePerformanceInputs, performanceInputs } from '../src/core/blueprint-authoring';
 import { saveProject } from '../src/desktop/project-store';
+import { parseActorTransitions } from '../src/core/actor-transitions';
 import { openStoryMode } from './lib/story-workspace';
+import { editorThemes } from '../src/renderer/editor-theme';
 
 const root = path.resolve('.'), require = createRequire(import.meta.url);
 const output = path.join(root, 'artifacts/blueprint-interactions-editor', new Date().toISOString().replaceAll(':', '-'));
@@ -19,6 +22,9 @@ const params = createBlueprintGraph('effect', '参数验收'), wire = createBlue
 const actor = blueprintNodeDefaults('showCharacter'); actor.x = 500; actor.y = 80; Object.assign(actor.properties, { characterId: 'su', expressionId: 'normal' });
 params.nodes.push(actor); connectBlueprintPins(params, params.nodes[0].id, 'exec', actor.id, 'exec_in');
 const delay = blueprintNodeDefaults('delay'); delay.x = 500; delay.properties.seconds = 0.2; rain.nodes.push(delay); connectBlueprintPins(rain, rain.nodes[0].id, 'exec', delay.id, 'exec_in');
+// The slash palette and @ completion list reusable blueprints, the ones with a public input;
+// one-off performances without inputs stay under the general “蓝图” command.
+exposePerformanceInputs(rain, performanceInputs(rain).filter(input => input.nodeId === delay.id));
 project.blueprints = [params, wire, rain]; assignBlueprintGroup(project, rain.id, '演出验收');
 const passage = project.nodes.find(node => node.kind === 'passage')!;
 passage.lines = [
@@ -33,7 +39,7 @@ const env = Object.fromEntries(Object.entries({ ...process.env, VNS_PROJECT_PATH
 let app: ElectronApplication | undefined, page: Page | undefined, phase = 'launch';
 const checks: string[] = [], errors: string[] = [];
 const launch = async () => {
-  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env, timeout: 60000 });
+  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env: { ...env, VNS_TEST_DISCARD_ON_CLOSE: '1' }, timeout: 60000 });
   page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message)); page.setDefaultTimeout(10000);
   await expect(page.locator('.project-title strong')).toHaveText(project.name);
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1560, 1000));
@@ -50,10 +56,17 @@ const graph = (saved: Project, id: string) => saved.blueprints.find(item => item
 const node = (id: string) => page!.locator(`.react-flow__node[data-id="${id}"]`);
 const fit = async () => {
   await page!.getByRole('button', { name: '框选全部节点', exact: true }).click();
-  await expect.poll(() => page!.evaluate(() => {
-    const canvas = document.querySelector('.generic-blueprint-workspace .flow-container')!.getBoundingClientRect();
-    return [...document.querySelectorAll('.generic-blueprint-workspace .react-flow__node')].every(node => { const box = node.getBoundingClientRect(); return box.left >= canvas.left && box.right <= canvas.right && box.top >= canvas.top && box.bottom <= canvas.bottom; });
-  })).toBe(true);
+  // The fit animates and every node is already inside the canvas mid-way; pins are
+  // measured only once the view has stopped moving, or a press can land beside the pin.
+  let previous = '';
+  await expect.poll(async () => {
+    const state = await page!.evaluate(() => {
+      const canvas = document.querySelector('.generic-blueprint-workspace .flow-container')!.getBoundingClientRect();
+      const inside = [...document.querySelectorAll('.generic-blueprint-workspace .react-flow__node')].every(node => { const box = node.getBoundingClientRect(); return box.left >= canvas.left && box.right <= canvas.right && box.top >= canvas.top && box.bottom <= canvas.bottom; });
+      return inside ? document.querySelector('.generic-blueprint-workspace .react-flow__viewport')?.getAttribute('style') ?? '' : '';
+    });
+    const settled = state !== '' && state === previous; previous = state; return settled;
+  }, { intervals: [250] }).toBe(true);
 };
 const openGraph = async (id: string) => {
   await page!.locator('.view-tabs').getByRole('button', { name: '蓝图', exact: true }).click();
@@ -100,11 +113,13 @@ try {
   await y.fill('12.5'); await undo(); await expect(y).toHaveValue('-2.75'); await redo(); await expect(y).toHaveValue('12.5');
   await y.fill(''); await node(actor.id).locator('.graph-node-title').click(); await expect(y).toHaveValue('12.5');
   await node(actor.id).getByLabel('显示角色 · 表情', { exact: true }).selectOption('worried');
-  await node(actor.id).getByLabel('显示角色 · 过渡', { exact: true }).selectOption('none');
+  // Character transitions are set per phase in the node's advanced section.
+  await node(actor.id).locator('.blueprint-node-advanced > summary').click();
+  await node(actor.id).getByLabel('角色过渡 · 入场过渡', { exact: true }).selectOption('none');
   let saved = await save(); let savedActor = graph(saved, params.id).nodes.find(item => item.id === actor.id)!;
-  expect(savedActor.properties.y).toBe(12.5); expect(savedActor.properties.expressionId).toBe('worried'); expect(savedActor.properties.transition).toBe('none');
+  expect(savedActor.properties.y).toBe(12.5); expect(savedActor.properties.expressionId).toBe('worried'); expect(parseActorTransitions(savedActor.properties.actorTransitions)?.enter?.mode).toBe('none');
   await page!.screenshot({ path: path.join(output, 'inline-parameters.png') });
-  record('节点上可清空并重新输入负数、小数和超出原范围的数值；撤销重做、表情和过渡选择、原生保存通过。');
+  record('节点上可清空并重新输入负数、小数和超出原范围的数值；撤销重做、表情和高级入场过渡选择、原生保存通过。');
 
   phase = 'drag exec to empty canvas';
   await openGraph(wire.id); await dragToBlank(wire.nodes[0].id, 'exec');
@@ -146,8 +161,10 @@ try {
   await callRename.getByLabel('调用名称', { exact: true }).fill('夜雨'); await callRename.getByRole('button', { name: '修改并替换调用', exact: true }).click();
   await expect.poll(async () => callCount(await text.inputValue(), '夜雨')).toBe(2); saved = await save();
   expect(graph(saved, rain.id).name).toBe('雨夜登场'); expect(graph(saved, rain.id).callName).toBe('夜雨');
-  await openGraph(rain.id); await page!.getByRole('button', { name: '输入与输出', exact: true }).click();
-  await page!.getByLabel('调用名称', { exact: true }).fill('雨中登场'); await page!.getByLabel('调用名称', { exact: true }).press('Enter');
+  // A performance graph opens beside its live preview with the properties folded.
+  await openGraph(rain.id); const properties = page!.getByRole('button', { name: '展开蓝图属性', exact: true }); if (await properties.isVisible()) await properties.click();
+  await page!.getByRole('button', { name: '输入与输出', exact: true }).click();
+  await page!.getByLabel('蓝图调用名称', { exact: true }).fill('雨中登场'); await page!.getByLabel('蓝图调用名称', { exact: true }).press('Enter');
   saved = await save(); expect(graph(saved, rain.id).callName).toBe('雨中登场');
   await openStoryMode(page!, 'text'); await expect.poll(async () => callCount(await text.inputValue(), '雨中登场')).toBe(2);
   record('文本右键改蓝图名和调用名会更新两处已有指令且保留对白；可整体撤销，蓝图设置修改也同步。');
@@ -161,11 +178,17 @@ try {
   const search = palette.getByLabel('筛选中文指令', { exact: true }); await search.focus();
   const active = palette.locator('.node-picker-results button[data-active=true]'), first = await active.textContent(), scroll = await text.evaluate(element => element.scrollTop);
   await search.press('ArrowDown'); expect(await active.textContent()).not.toBe(first); await search.press('ArrowUp'); await expect(active).toHaveText(first!);
-  await palette.locator('.node-picker-heading').hover(); await page!.mouse.wheel(0, 120); await expect(active).not.toHaveText(first!); expect(await text.evaluate(element => element.scrollTop)).toBe(scroll);
+  const list = palette.locator('.node-picker-results'), listTop = await list.evaluate(element => element.scrollTop), scrollable = await list.evaluate(element => element.scrollHeight > element.clientHeight + 1);
+  // The wheel scrolls the list like its scrollbar; it no longer steps the highlighted command.
+  await palette.locator('.node-picker-heading').hover(); await page!.mouse.wheel(0, 120); await expect(active).toHaveText(first!); expect(await text.evaluate(element => element.scrollTop)).toBe(scroll);
+  if (scrollable) await expect.poll(() => list.evaluate(element => element.scrollTop)).toBeGreaterThan(listTop);
   await search.fill('yzdc'); await expect(active).toContainText('雨中登场'); await search.press('Space');
-  await expect(palette).toHaveCount(0); expect(callCount(await text.inputValue(), '雨中登场')).toBe(3);
+  // A blueprint with inputs opens its parameter panel; inserting from there adds the call.
+  const parameters = page!.getByRole('dialog', { name: '命令参数', exact: true }); await expect(palette).toHaveCount(0); await expect(parameters).toBeVisible();
+  await parameters.getByRole('button', { name: '插入指令', exact: true }).click();
+  await expect(parameters).toHaveCount(0); await expect.poll(async () => callCount(await text.inputValue(), '雨中登场')).toBe(3);
   await text.fill(baseline); await save();
-  record('基础和自定义分组可鼠标/键盘折叠；滚轮、上下键改变选项且正文不滚动，空格插入直接调用。');
+  record('基础和自定义分组可鼠标/键盘折叠；滚轮滚动列表、上下键改变选项且正文不滚动，空格采用带输入的蓝图后由参数面板插入调用。');
 
   phase = 'inline completions and named arguments';
   await focusEnd(text); await text.press('Enter'); await text.pressSequentially('@xsjs');
@@ -183,7 +206,7 @@ try {
   const originalUi = (await save()).ui;
   const assistantOpened = app!.waitForEvent('window'); await page!.getByRole('button', { name: 'AI 助手', exact: true }).click(); const assistant = await assistantOpened;
   assistant.on('pageerror', error => errors.push(error.message)); await expect(assistant.locator('.ai-assistant-window')).toBeVisible(); await page!.bringToFront();
-  for (const [id, name] of [['studio', '工坊深色'], ['ue5', 'UE5 石墨'], ['codexDark', 'Codex 深色'], ['codexLight', 'Codex 浅色']]) {
+  for (const [id, { name }] of Object.entries(editorThemes)) {
     await page!.getByRole('button', { name: '作品设置', exact: true }).click(); await page!.getByRole('button', { name: '编辑器外观', exact: true }).click();
     await page!.getByRole('group', { name: '编辑器配色', exact: true }).getByRole('button', { name: new RegExp(`^${name}`) }).click();
     await expect(page!.locator('html')).toHaveAttribute('data-editor-theme', id); await expect(assistant.locator('html')).toHaveAttribute('data-editor-theme', id); await page!.getByRole('button', { name: '完成', exact: true }).click();
@@ -196,14 +219,14 @@ try {
 
   phase = 'ordinary blueprint game and parallel examples';
   await openGraph(wire.id); const beforeExample = await save();
-  await page!.getByLabel('添加蓝图示例', { exact: true }).selectOption('interaction');
+  await (await openBlueprintOptions(page!)).getByLabel('添加蓝图示例', { exact: true }).selectOption('interaction');
   await expect(page!.getByLabel('演出目标', { exact: true }).locator('option:checked')).toContainText('限时点亮');
   saved = await save(); const game = saved.blueprints.find(item => item.name === '限时点亮')!;
   expect(game.kind).toBe('function'); expect(saved.minigames).toEqual(beforeExample.minigames); expect(saved.ui.customPages.length).toBe(beforeExample.ui.customPages.length + 1);
   expect(game.nodes.some(item => item.type === 'eventClick')).toBe(true); expect(game.nodes.some(item => item.type === 'eventKey')).toBe(true); expect(game.nodes.some(item => item.type === 'eventTimer')).toBe(true);
   await undo(); saved = await save(); expect(saved.blueprints.length).toBe(beforeExample.blueprints.length); expect(saved.ui.customPages.length).toBe(beforeExample.ui.customPages.length);
   await redo(); await save();
-  await page!.getByLabel('添加蓝图示例', { exact: true }).selectOption('motion');
+  await (await openBlueprintOptions(page!)).getByLabel('添加蓝图示例', { exact: true }).selectOption('motion');
   await expect(page!.getByLabel('演出目标', { exact: true }).locator('option:checked')).toContainText('镜头震动同播');
   await fit(); saved = await save(); const motion = saved.blueprints.find(item => item.name === '镜头震动同播')!;
   expect(motion.nodes.find(item => item.type === 'camera')!.properties.wait).toBe(false); expect(motion.nodes.find(item => item.type === 'shake')!.properties.wait).toBe(true);

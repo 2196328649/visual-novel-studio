@@ -45,7 +45,7 @@ export function assetCategories(project: Project): Map<string, AssetCategory> {
     if (object.kind === 'music') hint(object.assetId, 'bgm');
     if (object.kind === 'sound') hint(object.assetId, 'sound');
     hint(object.backgroundId, 'scene');
-    hint(object.musicId, 'bgm'); hint(object.soundId, 'sound'); hint(object.menuMusicId, 'bgm'); hint(object.voiceId, 'voice'); hint(object.hoverSoundId, 'sound');
+    hint(object.musicId, 'bgm'); hint(object.soundId, 'sound'); hint(object.menuMusicId, 'bgm'); hint(object.voiceId, 'voice'); hint(object.typeSoundId, 'sound'); hint(object.hoverSoundId, 'sound');
     hint(object.titleImageId, 'ui');
     for (const [key, child] of Object.entries(object)) {
       if (ui && (key.endsWith('Id') || ['idle', 'hover', 'pressed', 'selected', 'disabled'].includes(key))) hint(child, 'ui');

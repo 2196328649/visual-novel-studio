@@ -212,7 +212,7 @@ try {
   const original = projectSchema.parse(JSON.parse(await fs.readFile(projectFile, 'utf8')));
   const env: Record<string, string> = Object.fromEntries(Object.entries({ ...process.env, VNS_USER_DATA: userData, VNS_PROJECT_PATH: projectFile, VNS_RENPY_SDK: sdk }).filter((entry): entry is [string, string] => entry[1] !== undefined));
   delete env.VNS_DEV_URL; delete env.VNS_TEST_ROOT;
-  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env });
+  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env: { ...env, VNS_TEST_DISCARD_ON_CLOSE: '1' } });
   page = await app.firstWindow();
   page.on('pageerror', error => errors.push(error.message));
   page.on('dialog', dialog => dialog.accept());

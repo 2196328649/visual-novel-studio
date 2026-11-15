@@ -59,6 +59,9 @@ testcase collections:
     pause 0.2
     assert eval renpy.music.get_playing(channel="vn_replayvoice") == "assets/test_voice_0.wav"
     click id "vn_component_ai_voicecollection_items_favorite_test_voice_2"
+    assert screen "confirm"
+    assert eval "test_voice_2" in persistent.vn_favorite_voices
+    click id "vn_component_ai_confirm_yes"
     assert eval "test_voice_2" not in persistent.vn_favorite_voices
     assert eval renpy.get_widget("voice_collection", "vn_component_ai_voicecollection_items_test_voice_2") is None
     assert eval renpy.music.get_playing(channel="vn_replayvoice") == "assets/test_voice_0.wav"
@@ -79,6 +82,8 @@ testcase collections:
     pause 0.2
     assert eval renpy.music.get_playing(channel="vn_replayvoice") == "assets/test_voice_12.wav"
     click id "vn_component_ai_voicecollection_items_favorite_test_voice_12"
+    assert screen "confirm"
+    click id "vn_component_ai_confirm_yes"
     pause until eval renpy.music.get_playing(channel="vn_replayvoice") is None
     assert eval renpy.get_widget("voice_collection", "vn_component_ai_voicecollection_items_test_voice_0") is not None
     assert eval renpy.get_widget("voice_collection", "vn_component_ai_voicecollection_items_page_1") is None
@@ -102,5 +107,5 @@ testcase collections:
 `);
 const result = await runRenpy(sdk, game, ['test', '--report-detailed'], { savedir: path.join(output, 'saves'), timeoutMs: 90000 });
 await fs.writeFile(path.join(output, 'runtime.log'), result.log); assert.equal(result.code, 0, result.log);
-await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', fixture, original: 'artifacts/original-pages-2026-10-02/voice-collection.png', checks: ['两列六行及原始条目/删除按钮尺寸', '七条测试收藏与原作参照同尺寸对照', '长句省略/短句保留/多行单行化', '隐藏筛选和停止按钮', '独立语音播放及删除另一项不串音', '十三项分页与删除末页唯一项后回到第一页', '离页停止与再次进入保留收藏', '空收藏'], limitation: '隔离生成音频和测试台词；不修改原作玩家资料，不证明原作删除确认或完整解锁规则等价。' }, null, 2));
+await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', fixture, original: 'artifacts/original-pages-2026-10-02/voice-collection.png', checks: ['两列六行及原始条目/删除按钮尺寸', '七条测试收藏与原作参照同尺寸对照', '长句省略/短句保留/多行单行化', '隐藏筛选和停止按钮', '独立语音播放及删除另一项不串音', '删除收藏先确认再移除', '十三项分页与删除末页唯一项后回到第一页', '离页停止与再次进入保留收藏', '空收藏'], limitation: '隔离生成音频和测试台词；不修改原作玩家资料，不证明原作删除确认或完整解锁规则等价。' }, null, 2));
 console.log(output);

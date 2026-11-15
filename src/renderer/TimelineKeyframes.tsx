@@ -1,16 +1,17 @@
-import type { StageAction } from '../core/model';
+import type { Project, StageAction } from '../core/model';
+import { actorInstanceLabel } from '../core/actor-instance';
 import { KeyframeEditor } from './Inspector';
 import { VisualCurvesEditor } from './VisualCurvesEditor';
 import { createVisualObject } from '../core/visual-object';
 import { actorAnimationDuration, actorCurveProperties } from '../core/actor-animation';
 
-export function TimelineKeyframes({ action, start, onChange, onSeek }: {
-  action: Extract<StageAction, { kind: 'animate' }>; start: number;
+export function TimelineKeyframes({ project, action, start, onChange, onSeek }: {
+  project: Project; action: Extract<StageAction, { kind: 'animate' }>; start: number;
   onChange: (action: Extract<StageAction, { kind: 'animate' }>) => void; onSeek: (time: number) => void;
 }) {
   let at = start;
   return <section aria-label="角色关键帧" className="timeline-keyframes">
-    <p>目标：{action.instanceId ?? action.characterId}。时长表示从上一帧到达这一帧所需的秒数。</p>
+    <p>目标：{project.characters.find(character => character.id === action.characterId)?.name ?? action.characterId} · {actorInstanceLabel(action.instanceId)}。时长表示从上一帧到达这一帧所需的秒数。</p>
     <VisualCurvesEditor object={{ ...createVisualObject('solid'), keyframes: action.keyframes, duration: actorAnimationDuration(action), curves: action.curves }} properties={actorCurveProperties} start={start} onSeek={onSeek} onChange={object => onChange({ ...action, curves: object.curves })} />
     {action.keyframes.map((frame, index) => {
       at += frame.duration; const position = at;

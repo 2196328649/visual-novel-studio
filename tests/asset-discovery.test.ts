@@ -77,3 +77,32 @@ test('resource merges preserve concurrent story and UI draft edits', () => {
   assert.equal(working.name, '并发改名'); assert.equal(working.ui.accent, '#123456');
   assert.equal(working.assets[0].id, 'new');
 });
+
+test('PNG imports and discovery retain worker metadata without decoding again on the main thread', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vns-png-metadata-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const sources = [path.join(root, 'opaque.png'), path.join(root, 'transparent.png'), path.join(root, 'other.jpg')];
+  await fs.writeFile(sources[0], png(255)); await fs.writeFile(sources[1], png(0)); await fs.writeFile(sources[2], 'native decoder fixture');
+  const measured: string[] = [];
+  const measure = (file: string) => { measured.push(file); return { width: 8, height: 12 }; };
+  const imported = await importAssetPaths(path.join(root, 'project'), createProject(), sources, {}, measure);
+  assert.equal(imported.report.imported, 3); assert.deepEqual(imported.report.errors, []);
+  assert.deepEqual(measured, [sources[2]]);
+  assert.deepEqual(imported.project.assets.slice(0, 2).map(asset => [asset.width, asset.height, asset.visibleBounds]), [
+    [4, 6, { x: 0, y: 0, width: 4, height: 6 }], [4, 6, undefined],
+  ]);
+  measured.length = 0;
+  const discovered = await new AssetDiscovery().scan(root, createProject(), measure);
+  assert.equal(discovered?.assets.length, 3); assert.deepEqual(measured, [sources[2]]);
+  assert.equal(discovered.assets.find(asset => asset.name === 'transparent')?.visibleBounds, undefined);
+});
+test('a file that saving moved into a category folder is not imported again from the editor copy taken before the save', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vns-discovery-moved-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const stale = createProject(); stale.assets.push({ id: 'qa_image', name: '验收图片', kind: 'image', path: 'assets/image.png' });
+  const moved = 'assets/未分类/验收图片.png';
+  await fs.mkdir(path.join(root, path.dirname(moved)), { recursive: true }); await fs.writeFile(path.join(root, moved), png(9));
+  const saved = { ...stale, assets: [{ ...stale.assets.at(-1)!, path: moved }] };
+  assert.equal((await new AssetDiscovery().scan(root, stale))?.assets.length, stale.assets.length + 1, 'without the saved copy the moved file looks new');
+  assert.equal(await new AssetDiscovery().scan(root, stale, undefined, saved), undefined);
+});

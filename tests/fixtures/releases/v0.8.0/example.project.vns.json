@@ -1,0 +1,871 @@
+{
+  "schemaVersion": 1,
+  "id": "project_rainy_day",
+  "name": "哀鸿·蓝图演示",
+  "version": "1.0.0",
+  "width": 1280,
+  "height": 720,
+  "assets": [
+    {
+      "id": "asset_f1198e9a72940a65bfded78c",
+      "name": "城门前",
+      "kind": "image",
+      "path": "assets/asset_f1198e9a72940a65bfded78c.png"
+    },
+    {
+      "id": "asset_d8f477d6022ec8d409985e6d",
+      "name": "茶舍",
+      "kind": "image",
+      "path": "assets/asset_d8f477d6022ec8d409985e6d.png"
+    },
+    {
+      "id": "asset_c6d77eb070edb21658d66d5d",
+      "name": "荒野",
+      "kind": "image",
+      "path": "assets/asset_c6d77eb070edb21658d66d5d.png"
+    },
+    {
+      "id": "asset_724f120436c899c75101b627",
+      "name": "满穗 · 合成预览",
+      "kind": "image",
+      "path": "assets/asset_724f120436c899c75101b627.png"
+    },
+    {
+      "id": "asset_8a19f9138cdc9efc85e01264",
+      "name": "满穗 · 合成预览 2",
+      "kind": "image",
+      "path": "assets/asset_8a19f9138cdc9efc85e01264.png"
+    },
+    {
+      "id": "asset_536f034b266f735c23a6dba1",
+      "name": "琼华 · 合成预览",
+      "kind": "image",
+      "path": "assets/asset_536f034b266f735c23a6dba1.png"
+    },
+    {
+      "id": "asset_71ef3afe95a5b8e39c6c97ff",
+      "name": "哀鸿 · 葬花埋香",
+      "kind": "audio",
+      "path": "assets/asset_71ef3afe95a5b8e39c6c97ff.ogg"
+    }
+  ],
+  "characters": [
+    {
+      "id": "char_yu",
+      "name": "满穗（合成预览）",
+      "color": "#37bba7",
+      "expressions": [
+        {
+          "id": "expression_yu_normal",
+          "name": "合成预览",
+          "assetId": "asset_724f120436c899c75101b627"
+        },
+        {
+          "id": "expression_yu_smile",
+          "name": "合成预览 2",
+          "assetId": "asset_8a19f9138cdc9efc85e01264"
+        }
+      ]
+    },
+    {
+      "id": "char_xia",
+      "name": "琼华（合成预览）",
+      "color": "#e7b05c",
+      "expressions": [
+        {
+          "id": "expression_xia_normal",
+          "name": "合成预览",
+          "assetId": "asset_536f034b266f735c23a6dba1"
+        }
+      ]
+    }
+  ],
+  "variables": [
+    {
+      "id": "affection",
+      "name": "满穗信任度",
+      "type": "number",
+      "initial": 0,
+      "persistent": false
+    },
+    {
+      "id": "revisited",
+      "name": "曾经来过",
+      "type": "boolean",
+      "initial": false,
+      "persistent": true
+    }
+  ],
+  "effects": [
+    {
+      "id": "txt_performance_xzaetv",
+      "name": "雨停了 第1行演出",
+      "commands": [],
+      "actions": [
+        {
+          "kind": "background",
+          "assetId": "asset_f1198e9a72940a65bfded78c",
+          "transition": "dissolve"
+        },
+        {
+          "kind": "music",
+          "assetId": "asset_71ef3afe95a5b8e39c6c97ff",
+          "loop": true,
+          "fade": 0.3
+        },
+        {
+          "kind": "show",
+          "characterId": "char_yu",
+          "expressionId": "expression_yu_normal",
+          "x": 0.64,
+          "y": 1,
+          "scale": 0.75,
+          "layer": 1,
+          "transition": "dissolve"
+        }
+      ]
+    }
+  ],
+  "blueprints": [
+    {
+      "id": "builtin_ending_performance",
+      "name": "结局演出",
+      "callName": "结局演出",
+      "performanceKind": "standalone",
+      "playback": {
+        "clickSkip": true
+      },
+      "timelineComponent": true,
+      "kind": "effect",
+      "nodes": [
+        {
+          "id": "bpnode_4810cd62125e4c899dfbe68cdd9cbf66",
+          "type": "event",
+          "name": "事件开始",
+          "x": 80,
+          "y": 80,
+          "pins": [
+            {
+              "id": "exec",
+              "name": "开始",
+              "direction": "output",
+              "dataType": "exec",
+              "required": false
+            }
+          ],
+          "properties": {},
+          "collapsed": false
+        },
+        {
+          "id": "ending_visual_0",
+          "type": "savedAction",
+          "name": "结局背景",
+          "x": 80,
+          "y": 80,
+          "pins": [
+            {
+              "id": "exec_in",
+              "name": "执行",
+              "direction": "input",
+              "dataType": "exec",
+              "required": false
+            },
+            {
+              "id": "exec_out",
+              "name": "完成",
+              "direction": "output",
+              "dataType": "exec",
+              "required": false
+            },
+            {
+              "id": "object_duration",
+              "name": "对象时长",
+              "direction": "input",
+              "dataType": "number",
+              "required": false,
+              "defaultValue": 3.6
+            }
+          ],
+          "properties": {
+            "action": "{\"kind\":\"visual\",\"instanceId\":\"ending_background\",\"name\":\"结局背景\",\"content\":\"solid\",\"text\":\"\",\"width\":1,\"height\":1,\"layer\":20,\"color\":\"#000000\",\"fontSize\":60,\"duration\":3.6,\"wait\":false,\"keyframes\":[{\"x\":0.5,\"y\":0.5,\"scale\":1,\"rotation\":0,\"opacity\":1,\"duration\":0,\"easing\":\"linear\"}]}"
+          },
+          "collapsed": false
+        },
+        {
+          "id": "ending_visual_1",
+          "type": "savedAction",
+          "name": "结局文字",
+          "x": 80,
+          "y": 80,
+          "pins": [
+            {
+              "id": "exec_in",
+              "name": "执行",
+              "direction": "input",
+              "dataType": "exec",
+              "required": false
+            },
+            {
+              "id": "exec_out",
+              "name": "完成",
+              "direction": "output",
+              "dataType": "exec",
+              "required": false
+            },
+            {
+              "id": "object_duration",
+              "name": "对象时长",
+              "direction": "input",
+              "dataType": "number",
+              "required": false,
+              "defaultValue": 3.6
+            },
+            {
+              "id": "object_text",
+              "name": "对象文字",
+              "direction": "input",
+              "dataType": "string",
+              "required": false,
+              "defaultValue": "故事结束"
+            },
+            {
+              "id": "object_fontSize",
+              "name": "对象字号",
+              "direction": "input",
+              "dataType": "number",
+              "required": false,
+              "defaultValue": 60
+            },
+            {
+              "id": "object_fontAssetId",
+              "name": "对象字体",
+              "direction": "input",
+              "dataType": "asset",
+              "required": false,
+              "defaultValue": ""
+            },
+            {
+              "id": "object_textAlign",
+              "name": "文字水平对齐",
+              "direction": "input",
+              "dataType": "string",
+              "required": false,
+              "defaultValue": "center"
+            },
+            {
+              "id": "object_textVerticalAlign",
+              "name": "文字垂直对齐",
+              "direction": "input",
+              "dataType": "string",
+              "required": false,
+              "defaultValue": "center"
+            },
+            {
+              "id": "object_textEffects_outlineWidth",
+              "name": "描边宽度",
+              "direction": "input",
+              "dataType": "number",
+              "required": false,
+              "defaultValue": 0
+            },
+            {
+              "id": "object_textEffects_outlineColor",
+              "name": "描边颜色",
+              "direction": "input",
+              "dataType": "string",
+              "required": false,
+              "defaultValue": "#000000"
+            },
+            {
+              "id": "object_textEffects_outlineOpacity",
+              "name": "描边透明度",
+              "direction": "input",
+              "dataType": "number",
+              "required": false,
+              "defaultValue": 1
+            },
+            {
+              "id": "object_textEffects_shadowX",
+              "name": "阴影横向偏移",
+              "direction": "input",
+              "dataType": "number",
+              "required": false,
+              "defaultValue": 0
+            },
+            {
+              "id": "object_textEffects_shadowY",
+              "name": "阴影纵向偏移",
+              "direction": "input",
+              "dataType": "number",
+              "required": false,
+              "defaultValue": 0
+            },
+            {
+              "id": "object_textEffects_shadowColor",
+              "name": "阴影颜色",
+              "direction": "input",
+              "dataType": "string",
+              "required": false,
+              "defaultValue": "#000000"
+            },
+            {
+              "id": "object_textEffects_shadowOpacity",
+              "name": "阴影透明度",
+              "direction": "input",
+              "dataType": "number",
+              "required": false,
+              "defaultValue": 0.7
+            }
+          ],
+          "properties": {
+            "action": "{\"kind\":\"visual\",\"instanceId\":\"ending_title\",\"name\":\"结局文字\",\"content\":\"text\",\"text\":\"故事结束\",\"width\":0.8,\"height\":0.4,\"layer\":20,\"color\":\"#ffffff\",\"fontSize\":60,\"duration\":3.6,\"wait\":false,\"keyframes\":[{\"x\":0.5,\"y\":0.5,\"scale\":1,\"rotation\":0,\"opacity\":1,\"duration\":0,\"easing\":\"linear\"}],\"textAlign\":\"center\",\"textVerticalAlign\":\"center\"}"
+          },
+          "collapsed": false
+        },
+        {
+          "id": "ending_tail",
+          "type": "delay",
+          "name": "等待全部轨道结束",
+          "x": 80,
+          "y": 80,
+          "pins": [
+            {
+              "id": "exec_in",
+              "name": "执行",
+              "direction": "input",
+              "dataType": "exec",
+              "required": false
+            },
+            {
+              "id": "seconds",
+              "name": "秒数",
+              "direction": "input",
+              "dataType": "number",
+              "required": false,
+              "defaultValue": 1
+            },
+            {
+              "id": "exec_out",
+              "name": "完成",
+              "direction": "output",
+              "dataType": "exec",
+              "required": false
+            }
+          ],
+          "properties": {
+            "seconds": 3.6
+          },
+          "collapsed": false
+        },
+        {
+          "id": "ending_input_caption",
+          "type": "getInput",
+          "name": "读取输入",
+          "x": 80,
+          "y": 80,
+          "pins": [
+            {
+              "id": "value",
+              "name": "值",
+              "direction": "output",
+              "dataType": "string",
+              "required": false
+            }
+          ],
+          "properties": {
+            "inputId": "caption"
+          },
+          "collapsed": false
+        },
+        {
+          "id": "ending_input_duration",
+          "type": "getInput",
+          "name": "读取输入",
+          "x": 80,
+          "y": 80,
+          "pins": [
+            {
+              "id": "value",
+              "name": "值",
+              "direction": "output",
+              "dataType": "number",
+              "required": false
+            }
+          ],
+          "properties": {
+            "inputId": "duration"
+          },
+          "collapsed": false
+        }
+      ],
+      "links": [
+        {
+          "id": "bplink_375a0c98d02a4c009b31d0d3dde7575d",
+          "fromNodeId": "bpnode_4810cd62125e4c899dfbe68cdd9cbf66",
+          "fromPinId": "exec",
+          "toNodeId": "ending_visual_0",
+          "toPinId": "exec_in"
+        },
+        {
+          "id": "bplink_49a79251e27d4376a78cf0674fa92d55",
+          "fromNodeId": "ending_visual_0",
+          "fromPinId": "exec_out",
+          "toNodeId": "ending_visual_1",
+          "toPinId": "exec_in"
+        },
+        {
+          "id": "bplink_d760bfbc8d964c18838f0969c4b291e1",
+          "fromNodeId": "ending_visual_1",
+          "fromPinId": "exec_out",
+          "toNodeId": "ending_tail",
+          "toPinId": "exec_in"
+        },
+        {
+          "id": "bplink_9b50b63f2c4641a3b396633c976b81b7",
+          "fromNodeId": "ending_input_caption",
+          "fromPinId": "value",
+          "toNodeId": "ending_visual_1",
+          "toPinId": "object_text"
+        },
+        {
+          "id": "bplink_6b54faaf67304bbea5ecedadb3e2d4d3",
+          "fromNodeId": "ending_input_duration",
+          "fromPinId": "value",
+          "toNodeId": "ending_visual_0",
+          "toPinId": "object_duration"
+        },
+        {
+          "id": "bplink_428c1b598f314829a85a2f787ee6836c",
+          "fromNodeId": "ending_input_duration",
+          "fromPinId": "value",
+          "toNodeId": "ending_visual_1",
+          "toPinId": "object_duration"
+        }
+      ],
+      "exposedInputs": [
+        {
+          "id": "caption",
+          "name": "文字",
+          "direction": "input",
+          "dataType": "string",
+          "required": false,
+          "defaultValue": "故事结束"
+        },
+        {
+          "id": "duration",
+          "name": "时长",
+          "direction": "input",
+          "dataType": "number",
+          "required": false,
+          "defaultValue": 3.6
+        }
+      ],
+      "exposedOutputs": [],
+      "timeline": {
+        "tracks": [
+          {
+            "id": "ending_text",
+            "name": "文字"
+          },
+          {
+            "id": "ending_background",
+            "name": "背景"
+          }
+        ],
+        "clips": [
+          {
+            "nodeId": "ending_visual_1",
+            "trackId": "ending_text"
+          },
+          {
+            "nodeId": "ending_visual_0",
+            "trackId": "ending_background"
+          }
+        ],
+        "tailNodeId": "ending_tail"
+      }
+    }
+  ],
+  "minigames": [],
+  "scriptText": {
+    "format": "vns-text-1",
+    "content": "@入口：开始【start】\n\n# 章节：第一回 · 归【chapter_one】\n\n# 小章节：城门前【scene_school】\n\n# 段落：开始【start】\n@开始\n@跳转：雨停了【opening】\n\n# 段落：雨停了【opening】\n@对白标记：line_opening\n@背景：城门前\n@背景音乐：哀鸿 · 葬花埋香 循环，淡入=0.3\n@显示角色：满穗（合成预览），合成预览，0.64，0.75，1，1\n旁白：午后的雨刚停，校门口的路面映着天空。\n@对白标记：line_invite\n满穗（合成预览）：我正要去图书馆。要一起吗？\n@跳转：同行的邀请【choice_invite】\n\n# 段落：同行的邀请【choice_invite】\n@选择：你决定……\n@选项：一起去图书馆 -> 好感度 +1【gain_first】\n@选项：今天先回家 -> 结局 · 擦肩【ending_alone】\n\n@节点标记：结局 · 擦肩【ending_alone】\n@对白标记：ending_alone_performance\n@结局演出【builtin_ending_performance】：文字【caption】=\"有些故事，留待下一场雨。\"\n@独立演出：结局 · 擦肩\n\n@节点标记：返回标题界面【ending_alone_return_title】\n@返回标题界面\n\n# 小章节：茶舍【scene_library】\n\n# 段落：好感度 +1【gain_first】\n@设置：满穗信任度 += 1\n@跳转：书页之间【library】\n\n# 段落：书页之间【library】\n@对白标记：line_library\n@背景：茶舍\n@显示角色：满穗（合成预览），合成预览，0.7，0.75，1，1\n@显示角色：琼华（合成预览），合成预览，0.28，0.75，1，1\n旁白：窗边还留着几滴雨水。图书室里，林夏正在整理书架。\n@对白标记：line_xia\n琼华（合成预览）：来得正好，这里还有一摞书。\n@对白标记：line_yu\n满穗（合成预览）：一起整理，很快就能完成。\n@跳转：留下来吗【choice_help】\n\n# 段落：留下来吗【choice_help】\n@选择：接下来……\n@选项：留下来帮忙 -> 好感度再 +1【gain_second】\n@选项：约好下次再来 -> 回家的路【walk】\n\n# 段落：好感度再 +1【gain_second】\n@设置：满穗信任度 += 1\n@跳转：回家的路【walk】\n\n# 小章节：荒野【scene_meadow】\n\n# 段落：回家的路【walk】\n@对白标记：line_walk\n@背景：荒野\n@显示角色：满穗（合成预览），合成预览 2，0.62，0.75，1，1\n旁白：走过草地时，云间透出了阳光。\n@对白标记：line_goodbye\n满穗（合成预览）：今天，谢谢你。\n@跳转：好感度达到 2【condition_ending】\n\n# 段落：好感度达到 2【condition_ending】\n@条件：满穗信任度【affection】 >= 2\n@满足：结局 · 雨后【ending_warm】\n@不满足：结局 · 再会【ending_friend】\n\n@节点标记：结局 · 雨后【ending_warm】\n@对白标记：ending_warm_performance\n@解锁素材：荒野\n@结局演出【builtin_ending_performance】：文字【caption】=\"雨后，新的故事开始了。\"\n@独立演出：结局 · 雨后\n\n@节点标记：返回标题界面【ending_warm_return_title】\n@返回标题界面\n\n@节点标记：结局 · 再会【ending_friend】\n@对白标记：ending_friend_performance\n@解锁素材：城门前\n@结局演出【builtin_ending_performance】：文字【caption】=\"我们约好了，下次再见。\"\n@独立演出：结局 · 再会\n\n@节点标记：返回标题界面【ending_friend_return_title】\n@返回标题界面\n",
+    "standaloneSyntax": "module-names",
+    "performanceSyntax": "explicit",
+    "playbackSyntax": "inline"
+  },
+  "chapters": [
+    {
+      "id": "chapter_one",
+      "name": "第一回 · 归"
+    }
+  ],
+  "scenes": [
+    {
+      "id": "scene_school",
+      "name": "城门前",
+      "chapterId": "chapter_one"
+    },
+    {
+      "id": "scene_library",
+      "name": "茶舍",
+      "chapterId": "chapter_one"
+    },
+    {
+      "id": "scene_meadow",
+      "name": "荒野",
+      "chapterId": "chapter_one"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "start",
+      "name": "开始",
+      "sceneId": "scene_school",
+      "x": 40,
+      "y": 120,
+      "kind": "start",
+      "next": "opening"
+    },
+    {
+      "id": "opening",
+      "name": "雨停了",
+      "sceneId": "scene_school",
+      "x": 300,
+      "y": 120,
+      "kind": "passage",
+      "lines": [
+        {
+          "id": "line_opening",
+          "text": "午后的雨刚停，校门口的路面映着天空。",
+          "actions": [
+            {
+              "kind": "background",
+              "assetId": "asset_f1198e9a72940a65bfded78c",
+              "transition": "dissolve"
+            },
+            {
+              "kind": "music",
+              "assetId": "asset_71ef3afe95a5b8e39c6c97ff",
+              "loop": true,
+              "fade": 0.3
+            },
+            {
+              "kind": "show",
+              "characterId": "char_yu",
+              "expressionId": "expression_yu_normal",
+              "x": 0.64,
+              "y": 1,
+              "scale": 0.75,
+              "layer": 1,
+              "transition": "dissolve"
+            }
+          ]
+        },
+        {
+          "id": "line_invite",
+          "speakerId": "char_yu",
+          "text": "我正要去图书馆。要一起吗？",
+          "actions": []
+        }
+      ],
+      "next": "choice_invite"
+    },
+    {
+      "id": "choice_invite",
+      "name": "同行的邀请",
+      "sceneId": "scene_school",
+      "x": 580,
+      "y": 120,
+      "kind": "choice",
+      "prompt": "你决定……",
+      "choices": [
+        {
+          "id": "option_accept",
+          "text": "一起去图书馆",
+          "target": "gain_first"
+        },
+        {
+          "id": "option_decline",
+          "text": "今天先回家",
+          "target": "ending_alone"
+        }
+      ]
+    },
+    {
+      "id": "ending_alone",
+      "name": "结局 · 擦肩",
+      "sceneId": "scene_school",
+      "x": 840,
+      "y": 300,
+      "kind": "passage",
+      "lines": [
+        {
+          "id": "ending_alone_performance",
+          "text": "",
+          "silent": true,
+          "actions": [
+            {
+              "kind": "blueprint",
+              "blueprintId": "builtin_ending_performance",
+              "inputs": {
+                "caption": "有些故事，留待下一场雨。"
+              }
+            }
+          ]
+        }
+      ],
+      "next": "ending_alone_return_title"
+    },
+    {
+      "id": "ending_alone_return_title",
+      "name": "返回标题界面",
+      "sceneId": "scene_school",
+      "x": 1180,
+      "y": 300,
+      "textHeading": false,
+      "kind": "end"
+    },
+    {
+      "id": "gain_first",
+      "name": "好感度 +1",
+      "sceneId": "scene_library",
+      "x": 40,
+      "y": 120,
+      "kind": "set",
+      "variableId": "affection",
+      "operation": "add",
+      "value": 1,
+      "next": "library"
+    },
+    {
+      "id": "library",
+      "name": "书页之间",
+      "sceneId": "scene_library",
+      "x": 300,
+      "y": 120,
+      "kind": "passage",
+      "lines": [
+        {
+          "id": "line_library",
+          "text": "窗边还留着几滴雨水。图书室里，林夏正在整理书架。",
+          "actions": [
+            {
+              "kind": "background",
+              "assetId": "asset_d8f477d6022ec8d409985e6d",
+              "transition": "dissolve"
+            },
+            {
+              "kind": "show",
+              "characterId": "char_yu",
+              "expressionId": "expression_yu_normal",
+              "x": 0.7,
+              "y": 1,
+              "scale": 0.75,
+              "layer": 1,
+              "transition": "dissolve"
+            },
+            {
+              "kind": "show",
+              "characterId": "char_xia",
+              "expressionId": "expression_xia_normal",
+              "x": 0.28,
+              "y": 1,
+              "scale": 0.75,
+              "layer": 1,
+              "transition": "dissolve"
+            }
+          ]
+        },
+        {
+          "id": "line_xia",
+          "speakerId": "char_xia",
+          "text": "来得正好，这里还有一摞书。",
+          "actions": []
+        },
+        {
+          "id": "line_yu",
+          "speakerId": "char_yu",
+          "text": "一起整理，很快就能完成。",
+          "actions": []
+        }
+      ],
+      "next": "choice_help"
+    },
+    {
+      "id": "choice_help",
+      "name": "留下来吗",
+      "sceneId": "scene_library",
+      "x": 580,
+      "y": 120,
+      "kind": "choice",
+      "prompt": "接下来……",
+      "choices": [
+        {
+          "id": "option_help",
+          "text": "留下来帮忙",
+          "target": "gain_second"
+        },
+        {
+          "id": "option_leave",
+          "text": "约好下次再来",
+          "target": "walk"
+        }
+      ]
+    },
+    {
+      "id": "gain_second",
+      "name": "好感度再 +1",
+      "sceneId": "scene_library",
+      "x": 840,
+      "y": 80,
+      "kind": "set",
+      "variableId": "affection",
+      "operation": "add",
+      "value": 1,
+      "next": "walk"
+    },
+    {
+      "id": "walk",
+      "name": "回家的路",
+      "sceneId": "scene_meadow",
+      "x": 40,
+      "y": 120,
+      "kind": "passage",
+      "lines": [
+        {
+          "id": "line_walk",
+          "text": "走过草地时，云间透出了阳光。",
+          "actions": [
+            {
+              "kind": "background",
+              "assetId": "asset_c6d77eb070edb21658d66d5d",
+              "transition": "dissolve"
+            },
+            {
+              "kind": "show",
+              "characterId": "char_yu",
+              "expressionId": "expression_yu_smile",
+              "x": 0.62,
+              "y": 1,
+              "scale": 0.75,
+              "layer": 1,
+              "transition": "dissolve"
+            }
+          ]
+        },
+        {
+          "id": "line_goodbye",
+          "speakerId": "char_yu",
+          "text": "今天，谢谢你。",
+          "actions": []
+        }
+      ],
+      "next": "condition_ending"
+    },
+    {
+      "id": "condition_ending",
+      "name": "好感度达到 2",
+      "sceneId": "scene_meadow",
+      "x": 320,
+      "y": 120,
+      "kind": "condition",
+      "condition": {
+        "kind": "compare",
+        "variableId": "affection",
+        "operator": "gte",
+        "value": 2
+      },
+      "yes": "ending_warm",
+      "no": "ending_friend"
+    },
+    {
+      "id": "ending_warm",
+      "name": "结局 · 雨后",
+      "sceneId": "scene_meadow",
+      "x": 620,
+      "y": 40,
+      "kind": "passage",
+      "lines": [
+        {
+          "id": "ending_warm_performance",
+          "text": "",
+          "silent": true,
+          "actions": [
+            {
+              "kind": "unlock",
+              "assetId": "asset_c6d77eb070edb21658d66d5d"
+            },
+            {
+              "kind": "blueprint",
+              "blueprintId": "builtin_ending_performance",
+              "inputs": {
+                "caption": "雨后，新的故事开始了。"
+              }
+            }
+          ]
+        }
+      ],
+      "next": "ending_warm_return_title"
+    },
+    {
+      "id": "ending_warm_return_title",
+      "name": "返回标题界面",
+      "sceneId": "scene_meadow",
+      "x": 960,
+      "y": 40,
+      "textHeading": false,
+      "kind": "end"
+    },
+    {
+      "id": "ending_friend",
+      "name": "结局 · 再会",
+      "sceneId": "scene_meadow",
+      "x": 620,
+      "y": 260,
+      "kind": "passage",
+      "lines": [
+        {
+          "id": "ending_friend_performance",
+          "text": "",
+          "silent": true,
+          "actions": [
+            {
+              "kind": "unlock",
+              "assetId": "asset_f1198e9a72940a65bfded78c"
+            },
+            {
+              "kind": "blueprint",
+              "blueprintId": "builtin_ending_performance",
+              "inputs": {
+                "caption": "我们约好了，下次再见。"
+              }
+            }
+          ]
+        }
+      ],
+      "next": "ending_friend_return_title"
+    },
+    {
+      "id": "ending_friend_return_title",
+      "name": "返回标题界面",
+      "sceneId": "scene_meadow",
+      "x": 960,
+      "y": 260,
+      "textHeading": false,
+      "kind": "end"
+    }
+  ],
+  "entryId": "start",
+  "ui": {
+    "accent": "#1b8a78",
+    "background": "#141819",
+    "textColor": "#f5f7f7",
+    "fontSize": 28,
+    "dialogueHeight": 0.27,
+    "dialogueOpacity": 0.88,
+    "menuBackgroundId": "asset_c6d77eb070edb21658d66d5d",
+    "components": [],
+    "customPages": []
+  }
+}

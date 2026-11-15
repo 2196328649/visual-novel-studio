@@ -3,7 +3,9 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { buttonEventFixture } from './lib/ui-button-event-fixture';
 import { buildProject, runRenpy } from '../src/runtime/service';
+import { cleanVerificationDirectories } from './lib/verification-cleanup';
 const root=path.resolve('.'),output=path.join(root,'artifacts/ui-button-events-runtime',new Date().toISOString().replaceAll(':','-'));await fs.mkdir(output,{recursive:true});
+try {
 const {project}=buttonEventFixture();await fs.writeFile(path.join(output,'project.vns.json'),JSON.stringify(project));
 const game=path.join(output,'game'),sdk=path.join(root,'resources/runtime');const built=await buildProject({project,outputDir:game,sdkRoot:sdk,development:true});assert.ok(built.ok,built.log);
 await fs.writeFile(path.join(game,'game/testcases.rpy'),`testsuite global:
@@ -133,5 +135,9 @@ testcase button_events:
     click id "vn_component_target"
     assert eval vn_ui_get("trace", "text") == "HPRC"
 `);
-const result=await runRenpy(sdk,game,['test','--report-detailed'],{savedir:path.join(output,'saves'),timeoutMs:90000,env:{SDL_VIDEO_WINDOW_POS:'2400,0'}});await fs.writeFile(path.join(output,'runtime.log'),result.log);
+const result=await runRenpy(sdk,game,['test','--report-detailed'],{savedir:path.join(output,'saves'),timeoutMs:90000});await fs.writeFile(path.join(output,'runtime.log'),result.log);
 const passed=result.code===0&&/Test cases\s*:\s*1\s*\|\s*1 passed/.test(result.log);await fs.writeFile(path.join(output,'report.json'),JSON.stringify({status:passed?'passed':'failed',checks:['原生鼠标悬停、按住、移出与松开顺序','移出松开不点击，重新进入再松开可点击','普通点击及Enter/Space无重复事件','按下事件隐藏或禁用自身时取消后续松开/点击并释放抓取','主菜单按下及松开事件打开非等待模态页面，返回按钮真正关闭页面','键盘按下事件打开模态页面时取消后续松开和点击','同事件中禁用后重新启用不恢复已取消的按压，普通按钮仍可点击']},null,2));console.log(output);assert.ok(passed,result.log.slice(-4500));
+} finally {
+  for (const folder of [path.join(output,'game/tests/screenshots'),path.join(output,'game/game/tests/screenshots')]) if (await fs.stat(folder).then(stat=>stat.isDirectory()).catch(()=>false)) await fs.cp(folder,path.join(output,'screenshots'),{recursive:true});
+  const cleanup=await cleanVerificationDirectories(output,['game','saves']);assert.deepEqual(cleanup.errors,[]);
+}

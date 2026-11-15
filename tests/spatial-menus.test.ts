@@ -11,6 +11,7 @@ test('template flow viewport and scrollbar retain the extracted independent geom
   const project = projectSchema.parse(JSON.parse(readFileSync(new URL('../resources/templates/aihong/project.vns.json', import.meta.url), 'utf8')));
   const flow = project.ui.components.find(component => component.id === 'ai_flowchart_items')!;
   const nav = flow.list!.flowScrollbar!;
+  assert.ok(nav.rect, 'the template retains its authored rail position');
   assert.deepEqual([flow.x, flow.y, flow.width, flow.height], [0, 0, 1, 1]);
   assert.equal(flow.list!.flowViewport!.y * project.height, 200);
   assert.equal(flow.list!.flowViewport!.height * project.height, 736);

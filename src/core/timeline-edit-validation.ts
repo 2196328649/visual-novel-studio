@@ -1,3 +1,5 @@
+import { cloneData, projectReadSnapshot } from "./project-mutation";
+import { sameProjectValue } from "./project-history";
 import { projectGraphs } from './project-resources';
 import type { BlueprintGraph, Project } from './model';
 import { synchronizeBlueprintSignatures } from './blueprint';
@@ -26,9 +28,10 @@ function timelineConflicts(project: Project) {
 
 /** Keep existing legacy projects editable, but reject new or enlarged overlaps atomically. */
 export function assertTimelineEditDoesNotOverlap(before: Project, after: Project) {
+  before = projectReadSnapshot(before); after = projectReadSnapshot(after);
   if (!projectGraphs(after).some(g => g.timeline)) return;
   const timingFields = ['blueprints', 'timelinePresets', 'variables', 'effects', 'characters', 'scenes', 'playerDefaults'] as const;
-  if (timingFields.every(field => JSON.stringify(before[field]) === JSON.stringify(after[field]))) return;
+  if (timingFields.every(field => sameProjectValue(before[field], after[field]))) return;
   const previous = timelineConflicts(before);
   for (const [key, conflict] of timelineConflicts(after)) {
     if (conflict.overlap <= (previous.get(key)?.overlap ?? 0) + .00001) continue;
@@ -39,10 +42,10 @@ export function assertTimelineEditDoesNotOverlap(before: Project, after: Project
 /** A clip edit can change the duration of every caller, including grandparents.
  * Validate the complete candidate before publishing it or selecting new nodes. */
 export function editTimelineProject<T>(project: Project, graphId: string, edit: (draft: Project, graph: BlueprintGraph) => T): T {
-  const draft = structuredClone(project), graph = projectGraphs(draft).find(g => g.id === graphId);
+  const draft = cloneData(project), graph = projectGraphs(draft).find(g => g.id === graphId);
   if (!graph) throw new Error('时间轴已不存在，请重新选择。');
   const result = edit(draft, graph);
-  synchronizeBlueprintSignatures(draft);
+  synchronizeBlueprintSignatures(draft, project);
   assertTimelineEditDoesNotOverlap(project, draft);
   Object.assign(project, draft);
   return result;

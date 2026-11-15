@@ -70,7 +70,7 @@ test('conditional progress assignments advance once, retain higher progress and 
     assert.deepEqual(restored.project.nodes, parsed.project.nodes);
     const compiled = compileProject(restored.project);
     assert.deepEqual(compiled.diagnostics.filter(d => d.severity === 'error'), []);
-    assert.match(compiled.files['game/story.rpy'], /if \(persistent\.vn_var_progress < 2\):\n        \$ persistent\.vn_var_progress = 2/);
+    assert.match(compiled.files['game/story.rpy'], /if \(persistent\.vn_var_progress < 2\):\n        \$ vn_parameter_set\("progress", 2, False\)/);
     assert.match(compiled.files['game/screens.rpy'], /vn_gallery_unlocked\(variant\)/);
     assert.match(compiled.files['game/screens.rpy'], /"unlockWhen": \{"kind": "compare", "variableId": "progress", "operator": "gt", "value": 2\}/);
   }

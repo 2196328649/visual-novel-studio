@@ -40,6 +40,7 @@ try {
   await page.getByLabel('设计页面', { exact: true }).selectOption({ label: '设置' });
   await page.locator('[data-hierarchy-id="' + component.id + '"]').click();
   const name = page.locator('.inspector input[aria-label="控件显示名称"]');
+  const originalName = await name.inputValue();
   const text = page.locator('.inspector').getByLabel('文字', { exact: true });
   await expect(text).toHaveValue(component.text);
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
@@ -75,7 +76,8 @@ try {
   // Real keystrokes update the canvas and remain a single reversible typing edit.
   await expect(text).toHaveValue(component.text + 'abcdefghijklmnopqrst');
   await page.getByRole('button', { name: '撤销', exact: true }).click();
-  await expect(text).toHaveValue(component.text);
+  await expect(text).toHaveValue(component.text + (process.argv.includes('--baseline') ? 'abcdefghijklmnopqrs' : ''));
+  await expect(name).toHaveValue(originalName + 'abcdefghijklmnopqrst');
   await page.getByRole('button', { name: '重做', exact: true }).click();
   await expect(text).toHaveValue(component.text + 'abcdefghijklmnopqrst');
   await text.fill('即时预览验证');
@@ -90,6 +92,14 @@ try {
     expect(frames[Math.floor(frames.length * .95)]).toBeLessThan(100);
     expect(frames.at(-1)).toBeLessThan(200);
   }
+  // Exercise teardown with a dirty fixture, the case that used to leave a save
+  // confirmation window behind after an assertion or performance check.
+  const fixtureProcess = app.process();
+  await text.fill('关闭验收临时草稿');
+  await expect(page.locator('.dirty-dot')).toHaveCount(1);
+  await app.close(); app = undefined;
+  await expect.poll(() => fixtureProcess.exitCode !== null || fixtureProcess.signalCode !== null).toBe(true);
+  metrics.fixtureExitedWithUnsavedDraft = true;
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ status: process.argv.includes('--baseline') ? 'baseline' : 'passed', metrics, errors, installedExecutable, packaged: !!installedExecutable }, null, 2));
   console.log(JSON.stringify(metrics) + '\n' + output);
 } catch (error) {

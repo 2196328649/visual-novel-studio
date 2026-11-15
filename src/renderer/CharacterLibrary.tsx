@@ -9,15 +9,19 @@ import { ResourceInspector, type CharacterSection, type ResourceSelection } from
 import { Empty, IconButton } from './components';
 import './character-library.css';
 
-export function CharacterLibrary({ project, commit, assetUrl, resource, select, add }: { project: Project; commit: Commit; assetUrl: AssetUrl; resource?: ResourceSelection; select: (r?: ResourceSelection) => void; add: (folderId?: string) => void }) {
-  const [location, setLocation] = useState(''), [query, setQuery] = useState('');
+export function CharacterLibrary({ project, commit, assetUrl, resource, select, add, onOpenBlueprint }: { project: Project; commit: Commit; assetUrl: AssetUrl; resource?: ResourceSelection; select: (r?: ResourceSelection) => void; add: (folderId?: string) => void; onOpenBlueprint?: (id: string) => void }) {
+  const [location, setLocation] = useState('*'), [query, setQuery] = useState('');
   const [section, setSection] = useState<CharacterSection>('appearance');
   const [creating, setCreating] = useState(false), [name, setName] = useState(''), [notice, setNotice] = useState('');
   const folders = project.contentBrowser?.folders ?? [], assignments = project.contentBrowser?.assignments ?? {};
   const folderId = location === '*' || location === '' ? undefined : location;
-  const availableFolders = folders.filter(folder => !folderCategory(project, folder.id));
-  useEffect(() => { setLocation(''); setQuery(''); setCreating(false); }, [project.id]);
-  useEffect(() => { if (folderId && !availableFolders.some(folder => folder.id === folderId)) setLocation(''); }, [folderId, folders]);
+  // Content folders are shared by every library; only show ones that hold
+  // characters or nothing yet, so blueprint/state/story folders stay out.
+  const foreignFolders = new Set(Object.entries(assignments).filter(([key]) => !key.startsWith('character:')).flatMap(([, id]) => folderTrail(project, id).map(folder => folder.id)));
+  const characterFolders = new Set(Object.entries(assignments).filter(([key]) => key.startsWith('character:')).flatMap(([, id]) => folderTrail(project, id).map(folder => folder.id)));
+  const availableFolders = folders.filter(folder => !folderCategory(project, folder.id) && (characterFolders.has(folder.id) || !foreignFolders.has(folder.id)));
+  useEffect(() => { setLocation('*'); setQuery(''); setCreating(false); }, [project.id]);
+  useEffect(() => { if (folderId && !availableFolders.some(folder => folder.id === folderId)) setLocation('*'); }, [folderId, folders]);
   const navigate = (id: string) => { setLocation(id); setQuery(''); setCreating(false); setNotice(''); };
   const assignedFolder = (id: string) => availableFolders.find(folder => folder.id === assignments['character:' + id])?.id;
   const characters = project.characters.filter(character => character.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()) &&
@@ -68,9 +72,9 @@ export function CharacterLibrary({ project, commit, assetUrl, resource, select, 
       <section className="character-workspace" aria-label="角色编辑工作区">
         {current ? <>
           <header className="character-workspace-heading"><span className="character-heading-color" style={{ background: current.color }} /><div><h2>{current.name}</h2><span>{currentEffective?.expressions.length ?? 0} 个表情</span></div></header>
-          <nav className="character-workspace-tabs" role="tablist" aria-label="角色编辑分类">{([['appearance', '外观与表情'], ['staging', '构图与站位'], ['transitions', '角色过渡']] as const).map(([id, label]) => <button key={id} id={'character-tab-' + id} role="tab" aria-selected={section === id} aria-controls="character-details" onClick={() => setSection(id)}>{label}</button>)}</nav>
+          <nav className="character-workspace-tabs" role="tablist" aria-label="角色编辑分类">{([['appearance', '外观与表情'], ['staging', '构图与站位'], ['transitions', '角色过渡'], ['text', '文字演出']] as const).map(([id, label]) => <button key={id} id={'character-tab-' + id} role="tab" aria-selected={section === id} aria-controls="character-details" onClick={() => setSection(id)}>{label}</button>)}</nav>
           <div className="character-workspace-scroll" id="character-details" role="tabpanel" aria-labelledby={'character-tab-' + section} key={current.id + section}>
-            <ResourceInspector project={project} selection={{ kind: 'character', id: current.id }} commit={commit} assetUrl={assetUrl} selectResource={select} characterSection={section} />
+            <ResourceInspector project={project} selection={{ kind: 'character', id: current.id }} commit={commit} assetUrl={assetUrl} selectResource={select} characterSection={section} onOpenBlueprint={onOpenBlueprint} />
           </div>
           <div className="character-selection-footer"><label>所在文件夹<select aria-label="角色所在文件夹" value={assignedFolder(current.id) ?? ''} onChange={event => move(current.id, event.target.value || undefined)}><option value="">角色目录</option>{availableFolders.map(folder => <option key={folder.id} value={folder.id}>{folderTrail(project, folder.id).map(parent => parent.name).join(' / ')}</option>)}</select></label></div>
         </> : <Empty title="选择角色开始编辑">添加角色后，可以在这里设置表情、构图和站位。</Empty>}

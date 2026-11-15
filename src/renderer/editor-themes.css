@@ -13,8 +13,6 @@
 [data-editor-theme] button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--editor-accent), var(--editor-text) 15%); }
 [data-editor-theme] .text-button { color: var(--editor-accent); }
 [data-editor-theme] :is(button, input, select, textarea, [tabindex]):focus-visible { outline-color: var(--editor-accent); }
-[data-editor-theme] .generic-blueprint-workspace .graph-node { background: var(--editor-node); border-color: var(--editor-border); color: var(--editor-text); }
-[data-editor-theme] .generic-blueprint-workspace .graph-node-title { background: var(--editor-nodeTitle); color: var(--editor-text); }
 [data-editor-theme] :is(.node-picker, .text-command-palette, .text-assistance) { background: var(--editor-panel); color: var(--editor-text); border-color: var(--editor-border); }
 [data-editor-theme] .node-picker-results button { color: var(--editor-text); }
 [data-editor-theme] .node-picker-category { color: var(--editor-accent); }
@@ -53,26 +51,12 @@
 .blueprint-rename-dialog { width: min(480px, 90vw); padding: 24px; background: var(--editor-panel); color: var(--editor-text); border: 1px solid var(--editor-border); border-radius: 9px; }
 .blueprint-rename-dialog p { font-size: 12px; line-height: 1.7; color: var(--editor-muted); }
 .blueprint-rename-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
-.generic-blueprint-workspace .blueprint-graph-node { width: 330px; min-width: 330px; }
 .generic-blueprint-workspace .blueprint-toolbar .blueprint-example-select { flex: 0 1 168px; max-width: 190px; }
-.blueprint-node-fields:empty { display: none; }
-.blueprint-graph-node .node-collapse { margin-left: auto; flex: 0 0 auto; }
-.blueprint-graph-node.parameters-collapsed .blueprint-pin-slot { min-height: 26px; }
-.blueprint-node-fields { padding: 3px 12px 8px; }
 .blueprint-inline-field { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 7px; align-items: center; margin: 4px 0; font-size: 11px; color: var(--editor-muted); }
 .blueprint-inline-field > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.blueprint-inline-field :is(input, select), .blueprint-pin-value :is(input, select) { min-width: 0; width: 100%; height: 26px; font-size: 11px; padding: 3px 5px; }
+.blueprint-inline-field :is(input, select) { min-width: 0; width: 100%; height: 26px; font-size: 11px; padding: 3px 5px; }
 .blueprint-inline-field input[type=checkbox] { width: 16px; height: 16px; }
-.generic-blueprint-workspace .blueprint-pin-row { grid-template-columns: minmax(0, 2fr) minmax(65px, 1fr); align-items: start; }
-.generic-blueprint-workspace .blueprint-pin-slot { min-height: 28px; }
-.generic-blueprint-workspace .blueprint-pin-slot.input { flex-wrap: wrap; padding-bottom: 5px; padding-top: 5px; }
-.generic-blueprint-workspace .blueprint-pin-slot .react-flow__handle { top: 14px; }
-.blueprint-pin-value { flex: 0 0 100%; min-width: 0; padding: 4px 0 2px; }
-.blueprint-pin-value .blueprint-value-input { width: 100%; min-width: 0; }
-.blueprint-pin-value .blueprint-asset-field { padding: 0; margin: 0; border: 0; min-width: 0; }
-.blueprint-pin-value .blueprint-expression-value img { height: 32px; width: 24px; object-fit: contain; }
 .blueprint-toolbar > select[aria-label="添加蓝图示例"] { width: 150px; font-size: 12px; }
-[data-editor-theme] .generic-blueprint-workspace .graph-node.selected { border-color: var(--editor-accent); box-shadow: 0 0 0 1px var(--editor-accent); }
 [data-editor-theme] .text-completion-list button { color: var(--editor-text); }
 [data-editor-theme] .text-completion-list button[aria-selected=true] { background: var(--editor-selection); }
 [data-editor-theme] :is(.story-directory-heading, .blueprint-panel-heading, .blueprint-properties h3, .blueprint-interface-section strong, .blueprint-node-outline > strong, .blueprint-selection-empty, .status-bar .content-toggle) { color: var(--editor-text); }
@@ -86,9 +70,6 @@
 [data-editor-light=true] .status-bar > button.error-status { color: var(--danger); }
 [data-editor-light=true] .status-bar > button.warning-status { color: var(--amber); }
 [data-editor-theme] .blueprint-canvas-legend i.exec { background: var(--blueprint-exec, #eef3fc); }
-[data-editor-theme] .generic-blueprint-workspace .graph-node.comment { background: color-mix(in srgb, var(--editor-node) 94%, var(--amber)); }
-[data-editor-theme] .generic-blueprint-workspace .graph-node.comment .graph-node-title { background: color-mix(in srgb, var(--editor-nodeTitle) 75%, var(--amber)); color: var(--editor-text); }
-[data-editor-theme] .generic-blueprint-workspace .graph-node.comment .graph-node-detail { color: var(--editor-text); }
 [data-editor-theme] .generic-blueprint-workspace .react-flow__minimap { background: var(--editor-panel) !important; border-color: var(--editor-border); }
 [data-editor-theme] .generic-blueprint-workspace .react-flow__minimap-mask { fill: color-mix(in srgb, var(--editor-background) 60%, transparent); }
 [data-editor-theme] .react-flow__controls-button svg { fill: currentColor; }
@@ -146,7 +127,7 @@
 [data-editor-theme] .story-line.selected .add-line-effect.icon-button { color: var(--editor-selection-text); }
 [data-editor-theme] .line-effect-placeholder { color: var(--editor-panel-muted); }
 [data-editor-theme] .story-line.selected .line-effect-placeholder { color: var(--editor-selection-muted); }
-[data-editor-theme] :is(.line-effect-menu, .line-effect-editor, .module-node-properties) { background: var(--editor-panel); color: var(--editor-panel-text); border-color: var(--editor-border); --editor-text: var(--editor-panel-text); --editor-muted: var(--editor-panel-muted); --text: var(--editor-text); --muted: var(--editor-muted); }
+[data-editor-theme] :is(.line-effect-menu, .line-effect-editor, .line-text-effects, .module-node-properties) { background: var(--editor-panel); color: var(--editor-panel-text); border-color: var(--editor-border); --editor-text: var(--editor-panel-text); --editor-muted: var(--editor-panel-muted); --text: var(--editor-text); --muted: var(--editor-muted); }
 [data-editor-theme] .line-effect-menu > button { color: var(--editor-panel-text); }
 [data-editor-theme] .line-effect-menu > button:hover:not(:disabled) { background: var(--editor-raised); color: var(--editor-raised-text); }
 [data-editor-theme] .line-effect-editor .action-editor-header { border-color: var(--editor-border); }
@@ -170,7 +151,6 @@
 [data-editor-theme] .graph-node { background: var(--editor-node); color: var(--editor-node-text); }
 [data-editor-theme] .graph-node .graph-node-title { background: var(--editor-nodeTitle); color: var(--editor-nodeTitle-text); }
 [data-editor-theme] .graph-node :is(.graph-node-detail, .graph-output) { color: var(--editor-node-muted); }
-[data-editor-theme] .generic-blueprint-workspace .graph-node-title { color: var(--editor-nodeTitle-text); }
 
 /* Authoring handles and setup UI use the editor palette, independently of game art. */
 [data-editor-theme] :is(.story-edit-modes button[aria-pressed=true], .preview-stage-toggle.active) { background: var(--editor-selection); color: var(--editor-selection-text); box-shadow: inset 0 0 0 1px var(--editor-border); }

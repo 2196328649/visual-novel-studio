@@ -47,6 +47,15 @@ init python:
             if channel not in vn_audio_clips:
                 renpy.music.stop(channel=channel, fadeout=0)
         for channel, current in list(vn_audio_clips.items()):
+            if not vn_bp_task_alive(current.get("task")):
+                renpy.music.stop(channel=channel, fadeout=0)
+                vn_audio_clips.pop(channel, None)
+                continue
+            if current.get("_vn_flow_hold"):
+                # This clip belongs to the target's first frame. Its authored
+                # duration and fades begin after the connection has revealed it.
+                samples[channel] = (current, now)
+                continue
             sample = cached.get(channel)
             restored = not sample or sample[0] is not current
             elapsed = current["elapsed"] + (0.0 if restored else max(0.0, now - sample[1]))
@@ -78,16 +87,35 @@ init python:
         while prefix + str(index) in vn_audio_clips:
             index += 1
         channel = prefix + str(index)
-        state = dict(data, path=vn_bp_asset(data["assetId"], "audio"), elapsed=0.0)
+        state = dict(data, task=vn_bp_task, path=vn_bp_asset(data["assetId"], "audio"), elapsed=0.0)
+        if vn_flow_transition_holding():
+            state["_vn_flow_hold"] = True
         vn_audio_clips[channel] = state
         if vn_performance_active:
             vn_performance_audio_channels = vn_performance_audio_channels + [channel]
             vn_performance_extend(data["duration"])
-        vn_audio_clip_resume(channel, state)
+        if not state.get("_vn_flow_hold"):
+            vn_audio_clip_resume(channel, state)
         samples = getattr(vn_audio_clip_tick, "samples", {})
         samples[channel] = (state, renpy.display.core.get_time())
         vn_audio_clip_tick.samples = samples
         renpy.retain_after_load()
+
+    def vn_audio_clip_release_flow_targets():
+        now = renpy.display.core.get_time()
+        samples = getattr(vn_audio_clip_tick, "samples", {}).copy()
+        for channel, current in list(vn_audio_clips.items()):
+            if not current.get("_vn_flow_hold"):
+                continue
+            state = {key: value for key, value in current.items() if key != "_vn_flow_hold"}
+            if not vn_bp_task_alive(state.get("task")):
+                vn_audio_clips.pop(channel, None)
+                samples.pop(channel, None)
+                continue
+            vn_audio_clips[channel] = state
+            vn_audio_clip_resume(channel, state)
+            samples[channel] = (state, now)
+        vn_audio_clip_tick.samples = samples
 
     def vn_audio_clip_restore():
         for channel in getattr(vn_audio_clip_tick, "samples", {}):

@@ -1,3 +1,4 @@
+import { cloneData } from "./project-mutation";
 import { projectGraphs, addProjectGraphs } from './project-resources';
 import { effectiveUiTheme, type BlueprintGraph, type BlueprintPin, type Project, type StageAction } from './model';
 import { blueprintCallName } from './blueprint-names';
@@ -58,7 +59,7 @@ export function createChapterPerformance(project: Project, mode: 'text' | 'image
 
 /** A callable chapter is a logic graph. Its animation is an ordinary child component. */
 export function chapterBlueprintPair(source: BlueprintGraph, occupied: string[] = []): [BlueprintGraph, BlueprintGraph] {
-  const timeline = structuredClone(source);
+  const timeline = cloneData(source);
   let suffix = 0;
   const stem = source.id.slice(0, 48) + '_timeline';
   timeline.id = stem;
@@ -66,13 +67,13 @@ export function chapterBlueprintPair(source: BlueprintGraph, occupied: string[] 
   timeline.name = source.name + ' · 时间轴';
   delete timeline.callName; delete timeline.chapterVariant;
   const graph = createBlueprintGraph('effect', source.name);
-  Object.assign(graph, { id: source.id, name: source.name, callName: source.callName, chapterVariant: source.chapterVariant, chapterPresetRevision: source.chapterPresetRevision, playback: source.playback, performanceKind: 'dialogue', exposedInputs: structuredClone(source.exposedInputs), exposedOutputs: structuredClone(source.exposedOutputs) });
+  Object.assign(graph, { id: source.id, name: source.name, callName: source.callName, chapterVariant: source.chapterVariant, chapterPresetRevision: source.chapterPresetRevision, playback: source.playback, performanceKind: 'dialogue', exposedInputs: cloneData(source.exposedInputs), exposedOutputs: cloneData(source.exposedOutputs) });
   const call = blueprintNodeDefaults('callFunction');
   call.name = timeline.name; call.properties.graphId = timeline.id; call.pins = callablePins(timeline); call.x = 450; call.y = 100;
   graph.nodes.push(call);
   connectBlueprintPins(graph, graph.nodes[0].id, 'exec', call.id, 'exec_in');
   graph.exposedInputs.forEach((pin, index) => {
-    const input = blueprintNodeDefaults('getInput'); input.name = '输入 · ' + pin.name; input.properties.inputId = pin.id; input.pins[0].dataType = pin.dataType; input.x = 40; input.y = 230 + index * 140;
+    const input = blueprintNodeDefaults('getInput'); input.name = '输入 · ' + pin.name; input.properties.inputId = pin.id; input.pins[0].dataType = pin.dataType; input.x = 40; input.y = 230 + index * 56;
     graph.nodes.push(input); connectBlueprintPins(graph, input.id, 'value', call.id, 'arg_' + pin.id);
   });
   let previous = call;

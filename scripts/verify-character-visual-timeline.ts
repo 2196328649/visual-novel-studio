@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
+import { projectGraphs } from '../src/core/project-resources';
 import path from 'node:path';
 import { PNG } from 'pngjs';
 import { expect } from '@playwright/test';
@@ -64,8 +65,8 @@ try {
   await library.getByRole('button', { name: '添加角色 苏怜烟', exact: true }).click();
   await expect(page.locator('.timeline-clip')).toHaveCount(1);
   await expect(page.locator('.timeline-clip-thumbnails')).toHaveAttribute('data-thumbnail-asset', 'portrait_normal');
-  await expect(page.locator('.timeline-clip-effects')).not.toHaveAttribute('open');
-  await expect(page.locator('.timeline-clip-parameters')).not.toHaveAttribute('open');
+  // Effects and replaceable parameters stay on their own tabs; a new clip opens on 基础.
+  await expect(page.getByRole('tablist', { name: '片段属性分类', exact: true }).getByRole('tab', { name: '基础', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByLabel('片段显示时长', { exact: true })).toHaveValue('3');
   const role = page.locator('.timeline-clip-basics select[aria-label="角色图片角色"]');
   const expression = page.locator('.timeline-clip-basics select[aria-label="角色图片表情"]');
@@ -82,7 +83,7 @@ try {
   await seek(1);
   await expect(page.locator('[data-visual-instance]')).toHaveCount(1);
   await expect(page.locator('[data-visual-instance] image[href]')).toHaveAttribute('href', /portrait_smile\.png/);
-  let stored = await save(), graph = stored.blueprints.find(item => item.id === timeline.id)!;
+  let stored = await save(), graph = projectGraphs(stored).find(item => item.id === timeline.id)!;
   const firstClip = performanceTimeline(stored, graph).clips[0];
   const first = savedBlueprintAction(graph.nodes.find(item => item.id === firstClip.nodeId)!);
   assert.equal(first?.kind, 'visual'); assert.equal(first?.content, 'image');
@@ -103,7 +104,7 @@ try {
   await seek(1);
   await expect(page.locator('[data-visual-instance]')).toHaveCount(2);
   await expect(page.getByLabel('片段开始秒数', { exact: true })).toBeInViewport();
-  stored = await save(); graph = stored.blueprints.find(item => item.id === timeline.id)!;
+  stored = await save(); graph = projectGraphs(stored).find(item => item.id === timeline.id)!;
   let model = performanceTimeline(stored, graph);
   assert.equal(timelineOverlap(model.clips), undefined);
   assert.equal(model.tracks[0].id, firstClip.trackId);

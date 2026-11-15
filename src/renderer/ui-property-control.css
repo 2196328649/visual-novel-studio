@@ -1,0 +1,47 @@
+.ui-inspector [data-ui-property] .field-label:focus-visible,
+.ui-inspector [data-ui-property] .ui-design-field-heading > label:focus-visible { outline: 1px solid var(--editor-accent); outline-offset: 3px; border-radius: 2px; }
+.ui-inspector .field-simple > .field-control > .ui-property-control-value { flex: 2 1 112px; width: 0; min-width: min(112px, 100%); max-width: 100%; }
+.ui-inspector .field[data-ui-property].field-simple > .field-control > span:not(.field-label) { flex: 2 1 112px; min-width: min(112px, 100%); max-width: 100%; font-size: 11px; overflow-wrap: anywhere; }
+.ui-property-control-value { display: inline-flex; align-items: center; gap: 6px; min-width: 0; width: 100%; min-height: 31px; padding: 6px 8px; border: 1px solid var(--editor-border); border-radius: 4px; background: var(--editor-raised); color: var(--editor-text); font-size: 11px; text-align: left; }
+.ui-property-control-value > svg { flex: none; color: var(--editor-accent); }
+.ui-property-control-value > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ui-property-control-value.has-problem { border-style: dashed; }
+.ui-inspector .ui-design-property-control:has(> [data-ui-property-bound="true"]) > .ui-design-reset,
+.ui-inspector .ui-design-property:has(> .ui-design-property-control > [data-ui-property-bound="true"]) > .ui-design-source,
+.ui-inspector .ui-layout-property-field:has(> [data-ui-property-bound="true"]) > .ui-layout-reset { display: none; }
+.ui-property-control-hint, .ui-property-control-notice { margin: 0 0 10px; color: var(--editor-muted); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.ui-property-control-notice { margin-top: 8px; }
+.ui-property-control-menu { position: fixed; z-index: 10020; box-sizing: border-box; width: 264px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow: auto; padding: 5px; border: 1px solid var(--editor-border); border-radius: 7px; background: var(--editor-panel); color: var(--editor-panel-text, var(--editor-text)); box-shadow: 0 8px 30px #0005; }
+.ui-property-control-menu-title { display: block; padding: 5px 8px 8px; color: var(--editor-panel-muted, var(--editor-muted)); font-size: 11px; overflow-wrap: anywhere; }
+.ui-property-control-menu button { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 32px; margin: 0; padding: 7px 9px; border: 0; border-radius: 3px; background: transparent; color: inherit; font-size: 12px; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.ui-property-control-menu button:is(:hover, :focus-visible) { background: var(--editor-raised); outline: 1px solid var(--editor-accent); outline-offset: -1px; }
+.ui-property-control-menu button:disabled { opacity: .5; outline: none; cursor: default; }
+.ui-property-control-menu-icon { display: flex; width: 14px; flex: none; }
+.ui-property-control-menu-graphs { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--editor-border); }
+.dialog.ui-property-control-dialog { width: min(530px, calc(100vw - 28px)); max-width: none; max-height: calc(100vh - 32px); box-sizing: border-box; margin: auto; padding: 22px; overflow: auto; border: 1px solid var(--editor-border); border-radius: 9px; color: var(--editor-panel-text, var(--editor-text)); background: var(--editor-panel); box-shadow: 0 16px 60px #0007; }
+.ui-property-control-dialog::backdrop { background: #0007; }
+.ui-property-control-dialog h2 { margin: 0 0 5px; font-size: 17px; }
+.ui-property-control-dialog p { font-size: 12px; line-height: 1.7; }
+.ui-property-control-dialog .ui-property-control-owner { margin: 0 0 18px; color: var(--editor-muted); overflow-wrap: anywhere; }
+.ui-property-control-form-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin: 12px 0; font-size: 12px; }
+.ui-property-control-form-row > :is(input, select) { flex: 1 1 240px; width: 0; min-width: min(160px, 100%); max-width: 100%; font-size: 12px; }
+.ui-property-control-explanation { padding: 9px 11px; border-left: 2px solid var(--editor-accent); background: var(--editor-raised); }
+.ui-property-control-actions { display: flex; flex-wrap: wrap; gap: 7px 16px; }
+.ui-property-control-dialog .ui-property-control-default { margin: 16px 0 8px; color: var(--editor-muted); font-size: 11px; overflow-wrap: anywhere; }
+.ui-property-control-default > span { display: inline; white-space: pre-wrap; }
+.ui-property-control-create { min-width: 0; margin: 12px 0; padding: 8px 12px 10px; border: 1px solid var(--editor-border); border-radius: 5px; }
+.ui-property-control-create legend { padding: 0 5px; font-size: 12px; }
+.ui-property-control-create > small { display: block; margin: 3px 0; color: var(--editor-muted); font-size: 11px; }
+.ui-property-control-dialog footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding-top: 17px; }
+.ui-property-control-dialog footer > button { min-width: 80px; }
+.ui-property-control-error { margin: 7px 0; padding-left: 8px; border-left: 2px solid var(--editor-accent); color: var(--editor-text); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.ui-property-control-summary { min-width: 0; }
+.ui-property-control-summary > [data-linked-property] { padding: 5px 0 9px; border-bottom: 1px solid var(--editor-border); margin-bottom: 5px; }
+.ui-property-control-summary button, .ui-property-control-references button { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 4px 7px; max-width: 100%; font-size: 11px; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.ui-property-control-summary [data-linked-property] > button { flex-direction: column; width: 100%; }
+.ui-property-control-summary button > small, .ui-property-control-references button > small { font-size: 10px; color: var(--editor-muted); }
+.ui-property-control-summary p, .ui-property-control-references p { margin: 6px 0 9px; font-size: 11px; line-height: 1.6; color: var(--editor-muted); overflow-wrap: anywhere; }
+.ui-property-control-references { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--editor-border); font-size: 11px; }
+.ui-property-control-references > summary { padding: 4px 0; cursor: pointer; }
+.ui-property-control-references > div { margin: 7px 0; }
+@media (max-width: 430px) { .dialog.ui-property-control-dialog { padding: 16px; } }

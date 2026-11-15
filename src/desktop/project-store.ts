@@ -2,11 +2,14 @@ import { createReadStream, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { assetFiles, projectSchema, type Asset, type AssetCategory, type Project } from '../core/model';
+import { assetFiles, blueprintNodeSchema, projectSchema, type Asset, type AssetCategory, type Project } from '../core/model';
 import { assetCategoryNames, ensureAssetAssignments, ensureResourceFolders, inferAssetCategory } from '../core/asset-library';
-import type { ProjectSession } from '../core/bridge';
-import { pngMetadata, withPortraitMetadata } from './image-metadata';
-import { legacyTemplateFlowText, repairTemplateFlow, repairTemplateVoiceCollection, templateFlowFontId, legacyTemplateVoiceArtwork, templateVoiceArtworkAssetIds, restoreTemplateVoiceArtwork } from '../core/template-repairs';
+import type { ProjectRecoveryOptions, ProjectSession } from '../core/bridge';
+import { projectDraftSchema } from '../core/project-draft-schema';
+import { applyUiDraft } from '../core/ui-draft';
+import { sameProjectValue } from '../core/project-history';
+import { pngMetadataAsync, withPortraitMetadata } from './image-metadata';
+import { legacyTemplateFlowText, repairTemplateFlow, repairTemplateFlowDraft, repairTemplateVoiceCollection, templateFlowFontId, legacyTemplateVoiceArtwork, templateVoiceArtworkAssetIds, restoreTemplateVoiceArtwork } from '../core/template-repairs';
 import { legacyTemplateHistory, repairTemplateHistory, historyTemplateAssets } from '../core/template-history';
 import { migrateStandaloneNames, normalizeChapterPerformances } from '../core/standalone-performance';
 import { normalizeChapterCompositions } from '../core/chapter-composition';
@@ -72,10 +75,47 @@ export async function atomicWrite(file: string, contents: string, createDirector
   }
 }
 
-export function parseProject(input: unknown): { project: Project; migrated: boolean } {
+/** A readable but unsupported document is not a crashed write. Falling back to
+ * an older autosave/previous file could silently erase its unknown nodes. */
+export class UnsupportedProjectFormatError extends Error {
+  constructor(message: string) { super(message); this.name = 'UnsupportedProjectFormatError'; }
+}
+const supportedBlueprintNodeTypes = new Set<string>(blueprintNodeSchema.shape.type.options);
+function checkBlueprintFormat(source: Record<string, unknown>) {
+  for (const collection of ['blueprints', 'timelinePresets']) {
+    const graphs = source[collection]; if (!Array.isArray(graphs)) continue;
+    for (const [graphIndex, graph] of graphs.entries()) {
+      if (!graph || typeof graph !== 'object' || !Array.isArray(graph.nodes)) continue;
+      for (const [nodeIndex, node] of graph.nodes.entries()) {
+        if (node && typeof node === 'object' && typeof node.type === 'string' && !supportedBlueprintNodeTypes.has(node.type)) {
+          throw new UnsupportedProjectFormatError(`项目包含暂不支持的蓝图节点类型“${node.type}”（${collection}.${graphIndex}.nodes.${nodeIndex}）。原文件保持不变，不会自动用旧备份替换，请使用支持该节点的编辑器。`);
+        }
+      }
+    }
+  }
+}
+
+/** Never overwrite the first recovery copy; a later distinct migration keeps
+ * its own content-addressed copy, including autosave/previous-file envelopes. */
+async function preserveMigrationSource(file: string) {
+  const source = await fs.readFile(file), first = `${file}.before-migration`;
+  const preserve = async (destination: string) => {
+    try { await fs.writeFile(destination, source, { flag: 'wx' }); return true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; return (await fs.readFile(destination)).equals(source); }
+  };
+  if (await preserve(first)) return;
+  const digest = createHash('sha256').update(source).digest('hex').slice(0, 16);
+  if (!await preserve(`${first}-${digest}`)) throw new Error('迁移恢复副本标识冲突，请先手动备份原工程。');
+}
+function checkProjectFormat(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== 'object') throw new Error('项目文件不是有效的对象。');
   const source = input as Record<string, unknown>;
-  if (typeof source.schemaVersion !== 'number' || source.schemaVersion > 1) throw new Error('项目由不兼容的版本创建，请使用支持该格式的编辑器。');
+  if (source.schemaVersion !== 0 && source.schemaVersion !== 1) throw new UnsupportedProjectFormatError('项目由不兼容的版本创建，请使用支持该格式的编辑器；原文件保持不变，不会自动使用旧备份。');
+  checkBlueprintFormat(source);
+  return source;
+}
+export function parseProject(input: unknown): { project: Project; migrated: boolean } {
+  const source = checkProjectFormat(input);
   const migrated = source.schemaVersion === 0;
   const candidate = migrated ? { ...source, schemaVersion: 1, name: source.name ?? source.title, version: source.version ?? '1.0.0' } : source;
   const result = projectSchema.safeParse(candidate);
@@ -103,33 +143,48 @@ export function parseProject(input: unknown): { project: Project; migrated: bool
   return { project: result.data, migrated: migrated || endingsConverted || chaptersConverted || standaloneNamesConverted || performanceSyntaxConverted || chapterCompositionsConverted || chapterBlueprintsConverted || chapterCallsConverted || chapterEntrypointsConverted || chapterSlotsConverted || chapterTypographyConverted || chapterCatalogConverted || playbackSyntaxConverted || resourcesSeparated };
 }
 
-async function readJson(file: string): Promise<unknown> {
+async function readJson(file: string, limit = MAX_PROJECT_BYTES): Promise<unknown> {
   const stat = await fs.stat(file);
-  if (stat.size > MAX_PROJECT_BYTES) throw new Error('项目文件超过 32 MB，请拆分过大的内容。');
+  if (stat.size > limit) throw new Error(`项目文件超过 ${Math.floor(limit / 1024 / 1024)} MB，请拆分过大的内容。`);
   return JSON.parse(await fs.readFile(file, 'utf8'));
 }
 
 export async function loadProject(file: string, templateRoot?: string): Promise<ProjectSession> {
   let project: Project | undefined;
   let originalError: unknown;
-  let migrated = false;
+  let migrated = false, migrationSource = file;
   try { ({ project, migrated } = parseProject(await readJson(file))); }
-  catch (error) { originalError = error; }
+  catch (error) { if (error instanceof UnsupportedProjectFormatError) throw error; originalError = error; }
   let recovered = false;
+  let recoveredDraft: { base: Project; value: Project } | undefined;
+  let recoveredProjectDirty: boolean | undefined;
   const autoFile = `${file}.autosave`;
   try {
-    const auto = await readJson(autoFile) as { savedAt: number; project: unknown };
-    const candidate = parseProject(auto.project).project;
+    const auto = await readJson(autoFile, MAX_PROJECT_BYTES * 2 + 4096) as { savedAt: number; project: unknown; uiDraft?: unknown; projectDirty?: boolean };
     const savedMtime = (await fs.stat(file).catch(() => ({ mtimeMs: 0 }))).mtimeMs;
-    if ((!project || candidate.id === project.id) && auto.savedAt > savedMtime) { project = candidate; recovered = true; }
-  } catch { /* A partial or obsolete recovery file never replaces valid project data. */ }
+    const sameProject = !project || !!auto.project && typeof auto.project === 'object' && (auto.project as { id?: unknown }).id === project.id;
+    // Old or unrelated recovery data must not block the valid primary file.
+    if (sameProject && typeof auto.savedAt === 'number' && Number.isFinite(auto.savedAt) && auto.savedAt > savedMtime) {
+      const candidate = parseProject(auto.project);
+      // Validate the complete envelope before accepting either half. Incomplete
+      // UI bindings are recoverable, but cannot weaken normal save validation.
+      if (auto.uiDraft !== undefined) checkProjectFormat(auto.uiDraft);
+      const draft = auto.uiDraft === undefined ? undefined : projectDraftSchema.parse(auto.uiDraft);
+      if (draft && draft.id !== candidate.project.id) throw new Error('界面恢复草稿不属于此工程。');
+      const repairedDraft = draft ? repairTemplateFlowDraft(projectDraftSchema.parse(auto.project), draft) : undefined;
+      recoveredProjectDirty = auto.projectDirty !== false || !project || !sameProjectValue(project, candidate.project) || candidate.migrated;
+      recoveredDraft = repairedDraft ? { base: candidate.project, value: repairedDraft } : undefined;
+      project = candidate.project; migrated = candidate.migrated; migrationSource = autoFile; recovered = true;
+    }
+  } catch (error) {
+    if (error instanceof UnsupportedProjectFormatError) throw error;
+    // A partial recovery file never replaces valid project data.
+  }
   if (!project) {
-    try { project = parseProject(await readJson(`${file}.previous`)).project; recovered = true; }
-    catch { throw originalError ?? new Error('无法读取项目及其备份。'); }
+    try { const candidate = parseProject(await readJson(`${file}.previous`)); project = candidate.project; migrated = candidate.migrated; migrationSource = `${file}.previous`; recovered = true; }
+    catch (error) { if (error instanceof UnsupportedProjectFormatError) throw error; throw originalError ?? new Error('无法读取项目及其备份。'); }
   }
-  if (migrated) {
-    await fs.copyFile(file, `${file}.before-migration`, fs.constants.COPYFILE_EXCL).catch(error => { if (error.code !== 'EEXIST') throw error; });
-  }
+  if (migrated) await preserveMigrationSource(migrationSource);
   if (templateRoot && legacyTemplateFlowText(project).length && !project.assets.some(asset => asset.id === templateFlowFontId)) {
     const template = projectSchema.parse(await readJson(path.join(templateRoot, PROJECT_FILENAME)));
     const font = template.assets.find(asset => asset.id === templateFlowFontId && asset.kind === 'font');
@@ -167,7 +222,11 @@ export async function loadProject(file: string, templateRoot?: string): Promise<
   const root = path.dirname(file);
   project = relocateProjectAssets(project, project.assets.filter(asset => !asset.externalPath && !Object.keys(asset.externalFiles ?? {}).length).map(asset => ({ assetId: asset.id, files: Object.fromEntries(assetFiles(asset).map(relative => [relative, relativeResourcePath(root, resolveResourcePath(root, relative, asset.id))])) })));
   ensureAssetAssignments(project);
-  return { project: await withPortraitMetadata(project, root), path: file, recovered: recovered || migrated };
+  project = await withPortraitMetadata(project, root);
+  return { project, path: file, recovered: recovered || migrated,
+    ...(recoveredDraft ? { uiDraft: applyUiDraft(project, recoveredDraft) } : {}),
+    ...(recoveredProjectDirty !== undefined ? { recoveredProjectDirty } : {}),
+  };
 }
 
 async function fileDigest(file: string): Promise<string> {
@@ -228,10 +287,12 @@ export async function saveProject(file: string, project: Project, sourceDir?: st
   return { project: valid, path: file, recovered: false, ...(layout?.relocations.length || layout?.skipped.length ? { assetRelocations: layout.relocations, resourceReport: { moved: layout.relocations.length, skipped: layout.skipped, retained } } : {}) };
 }
 
-export async function autosaveProject(file: string, project: Project, createDirectory = true): Promise<{ savedAt: number }> {
+export async function autosaveProject(file: string, project: Project, createDirectory = true, options: ProjectRecoveryOptions = {}): Promise<{ savedAt: number }> {
   const valid = parseProject(project).project;
+  const uiDraft = options.uiDraft === undefined ? undefined : projectDraftSchema.parse(options.uiDraft);
+  if (uiDraft && uiDraft.id !== valid.id) throw new Error('界面恢复草稿不属于此工程。');
   const savedAt = Date.now();
-  await atomicWrite(`${file}.autosave`, JSON.stringify({ savedAt, project: valid }), createDirectory);
+  await atomicWrite(`${file}.autosave`, JSON.stringify({ savedAt, project: valid, ...(uiDraft ? { uiDraft } : {}), ...(options.projectDirty !== undefined ? { projectDirty: options.projectDirty } : {}) }), createDirectory);
   return { savedAt };
 }
 
@@ -259,13 +320,15 @@ export async function importAsset(dir: string, source: string, options: { mode?:
   const id = `asset_${digest}`;
   const relative = `${options.directory ?? 'assets'}/${options.subdirectory ?? assetCategoryNames[category]}/${id}${extension}`;
   const destination = containedPath(dir, relative);
+  // Reject unreadable images before copying so metadata failures cannot leave
+  // an unregistered asset on disk. Decode without rewriting the original bytes.
+  const dimensions = extension === '.png' && contents.length >= 24 && contents.subarray(1, 4).toString() === 'PNG'
+    ? await pngMetadataAsync(contents) : {};
   if (options.mode !== 'reference') {
     await fs.mkdir(path.dirname(destination), { recursive: true });
     try { await fs.writeFile(destination, contents, { flag: 'wx' }); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; if (!(await fs.readFile(destination)).equals(contents)) throw new Error('目标路径已被不同的文件使用。'); }
   }
-  const dimensions = extension === '.png' && contents.length >= 24 && contents.subarray(1, 4).toString() === 'PNG'
-    ? pngMetadata(contents) : {};
   return { id, name: path.basename(source, extension), kind, category, path: relative, ...(options.mode === 'reference' ? { externalPath: path.resolve(source) } : {}), ...dimensions };
 }
 

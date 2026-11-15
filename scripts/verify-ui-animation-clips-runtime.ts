@@ -25,7 +25,13 @@ const shared=createBlueprintGraph('function','共享命名动画'),sharedPlay=bl
 chain(event('wait'),node('callFunction',{graphId:shared.id}),node('setUiProperty',{componentId:'target',property:'text',value:'原等待结束'}));
 chain(event('replace'),node('callFunction',{graphId:shared.id}),node('setUiProperty',{componentId:'target',property:'text',value:'替换回调结束'}));
 chain(event('property'),node('animateUiProperty',{componentId:'target',property:'x',value:.8,duration:1,easing:'linear',wait:false}),node('stopUiAnimationPlayback',{animationId:clip.id,finish:true}));
-const saved=createUiEventGraph(project,'ui:say','存档关键帧动画'),savedPlay=blueprintNodeDefaults('playUiAnimation');savedPlay.properties={animationId:savedClip.id,wait:false};saved.nodes.push(savedPlay);connectBlueprintPins(saved,saved.nodes[0].id,'exec',savedPlay.id,'exec_in');
+const saved=createUiEventGraph(project,'ui:say','存档关键帧动画'),savedPlay=blueprintNodeDefaults('playUiAnimation');savedPlay.properties={animationId:savedClip.id,wait:false};saved.nodes.push(savedPlay);
+project.variables.push({id:'saved_show_count',name:'台词页面进入次数',type:'number',initial:0,persistent:false});
+const savedRead=blueprintNodeDefaults('getVariable'),savedAdd=blueprintNodeDefaults('math'),savedStore=blueprintNodeDefaults('setVariable');
+savedRead.properties={variableId:'saved_show_count'};savedAdd.properties={operation:'add',b:1};savedStore.properties={variableId:'saved_show_count'};
+saved.nodes.push(savedRead,savedAdd,savedStore);
+connectBlueprintPins(saved,saved.nodes[0].id,'exec',savedStore.id,'exec_in');connectBlueprintPins(saved,savedStore.id,'exec_out',savedPlay.id,'exec_in');
+connectBlueprintPins(saved,savedRead.id,'value',savedAdd.id,'a');connectBlueprintPins(saved,savedAdd.id,'result',savedStore.id,'value');
 const passage=project.nodes.find(n=>n.kind==='passage')!;passage.lines=[{id:'save_line',text:'这里测试关键帧动画的保存与读取。',actions:[]}];project.entryId=passage.id;
 synchronizeBlueprintSignatures(project);await fs.writeFile(path.join(output,'project.vns.json'),JSON.stringify(project));
 const game=path.join(output,'game'),sdk=path.join(root,'resources/runtime');const built=await buildProject({project,outputDir:game,sdkRoot:sdk,development:true});assert.ok(built.ok,built.log);
@@ -34,6 +40,7 @@ default qa_opacity = 0.0
 default qa_saved_x = 0.0
 default qa_saved_token = 0
 default qa_saved_elapsed = 0.0
+default qa_saved_page_token = 0
 testsuite global:
     before testcase:
         $ _test.timeout = 15.0
@@ -83,6 +90,8 @@ testcase named_widget_animation:
     assert eval 0.25 < qa_saved_x < 0.5
     $ qa_saved_token = vn_ui_animations[("saved_target", "x")]["token"]
     $ qa_saved_elapsed = vn_ui_animations[("saved_target", "x")]["elapsed"]
+    $ qa_saved_page_token = vn_ui_native_page_scope("ui:say", create=False)["token"]
+    assert eval vn_var_saved_show_count == 1
     $ print("NAMED_QA_SAVE", qa_saved_x, repr(vn_ui_animations))
     run FileSave("qa_named_widget", confirm=False, slot=True)
     assert eval renpy.can_load("qa_named_widget")
@@ -92,6 +101,7 @@ testcase named_widget_animation:
     assert eval abs(vn_ui_get("saved_target", "x") - qa_saved_x) < 0.03
     assert eval vn_ui_animations[("saved_target", "x")]["token"] == qa_saved_token
     assert eval abs(vn_ui_animations[("saved_target", "x")]["elapsed"] - qa_saved_elapsed) < 0.03
+    assert eval vn_ui_native_page_scope("ui:say", create=False)["token"] == qa_saved_page_token and vn_var_saved_show_count == 1
     pause 0.2
     assert eval qa_saved_x + 0.04 < vn_ui_get("saved_target", "x") < qa_saved_x + 0.2
     pause until eval not vn_ui_animations

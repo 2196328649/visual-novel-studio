@@ -1,3 +1,4 @@
+import { setUiNativeContent } from './lib/ui-design-controls';
 /** Create settings and a branching confirmation using actual desktop controls. */
 import { _electron as electron, expect, type ElectronApplication, type Page } from '@playwright/test';
 import { createRequire } from 'node:module';
@@ -108,7 +109,7 @@ try {
   for (const label of ['总音量', '环境音量', '对话框不透明度', '角色音量', '点击时停止', '持续到下一段配音', '640 × 360', '恢复初始设置']) await expect(standard.getByRole('button', { name: `编辑${label}`, exact: true })).toHaveCount(1);
   await standard.getByRole('button', { name: '编辑恢复初始设置', exact: true }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(output, 'standard-settings-preview.png') });
-  await page.getByLabel('当前页面布局', { exact: true }).selectOption('custom');
+  await setUiNativeContent(page, false);
   await page.getByText('玩家初始设置', { exact: true }).click();
   await page.getByLabel('初始音乐音量', { exact: true }).fill('0.65');
   await page.getByLabel('初始角色单独音量', { exact: true }).fill('0.75');
@@ -130,7 +131,7 @@ try {
   ids.confirm = await button('询问并静音', 'return', 8, 59, 42);
   ids.back = await button('返回', 'return', 56, 82, 34);
   await page.screenshot({ path: path.join(output, 'authored-settings.png') });
-  await uiPage('角色音量'); await page.getByLabel('当前页面布局', { exact: true }).selectOption('custom');
+  await uiPage('角色音量'); await setUiNativeContent(page, false);
   await page.getByLabel('添加标准组件', { exact: true }).selectOption('preference:characterVolume'); ids.character = await selectedComponent();
   await page.getByLabel('配音角色', { exact: true }).selectOption('char_yu');
   await page.getByLabel('文字', { exact: true }).fill('穗的声音'); await bounds(10, 25, 60, 12);

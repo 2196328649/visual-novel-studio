@@ -1,7 +1,7 @@
 import { addProjectGraphs, projectGraphs } from '../src/core/project-resources';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { placeTimelineClip, trimTimelineClip, trimTimelineClipLeft, timelineOverlap } from '../src/core/timeline-editing';
+import { moveTimelineSelection, placeTimelineClip, trimTimelineClip, trimTimelineClipLeft, timelineOverlap } from '../src/core/timeline-editing';
 import { createProject, projectSchema } from '../src/core/model';
 import { blueprintFromPerformance, exposePerformanceInputs, performanceInputs } from '../src/core/blueprint-authoring';
 import { arrangePerformanceTimeline, insertTimelineAction, performanceTimeline, timelinePreviewLayout } from '../src/core/performance-timeline';
@@ -21,6 +21,75 @@ test('moving and trimming fit whole clips into same-track gaps without moving ne
   assert.deepEqual(clips, original);
   assert.equal(timelineOverlap(clips), undefined);
   assert.ok(timelineOverlap([...clips, { nodeId: 'bad', trackId: 'one', at: 1, duration: 1 }]));
+});
+
+test('moving a selection preserves its time and track spacing, source data, and unrelated clips', () => {
+  const tracks = ['front', 'middle', 'back', 'floor'].map(id => ({ id }));
+  const clips = [
+    { nodeId: 'a', trackId: 'front', at: 1, duration: 1, offset: .5 },
+    { nodeId: 'b', trackId: 'back', at: 3, duration: 2, offset: 1 },
+    { nodeId: 'unselected', trackId: 'floor', at: 8, duration: 2, offset: 0 },
+  ];
+  const original = structuredClone(clips);
+  const moved = moveTimelineSelection(clips, ['a', 'b'], tracks, 2, 1);
+  assert.deepEqual(moved.map(clip => [clip.at, clip.trackId]), [[3, 'middle'], [5, 'floor'], [8, 'floor']]);
+  assert.deepEqual(moved.map(clip => [clip.duration, clip.offset]), clips.map(clip => [clip.duration, clip.offset]));
+  assert.strictEqual(moved[2], clips[2]); assert.deepEqual(clips, original);
+  const bounded = moveTimelineSelection(clips, ['a', 'b'], tracks, -10, -10);
+  assert.deepEqual(bounded.map(clip => [clip.at, clip.trackId]), [[0, 'front'], [2, 'back'], [8, 'floor']]);
+  assert.equal(timelineOverlap(moved), undefined); assert.equal(timelineOverlap(bounded), undefined);
+});
+
+test('group collision fitting uses the nearest offset that fits every selected clip together', () => {
+  const tracks = [{ id: 'one' }, { id: 'two' }];
+  const clips = [
+    { nodeId: 'a', trackId: 'one', at: 0, duration: 1 },
+    { nodeId: 'b', trackId: 'two', at: 4, duration: 1 },
+    { nodeId: 'before', trackId: 'one', at: 2, duration: 1 },
+    { nodeId: 'after', trackId: 'two', at: 7, duration: 1 },
+    { nodeId: 'trigger', trackId: 'one', at: 1.5, duration: 0 },
+  ];
+  const original = structuredClone(clips);
+  for (const [requested, expected] of [[2, 1], [3.6, 4]]) {
+    const moved = moveTimelineSelection(clips, ['a', 'b'], tracks, requested);
+    assert.deepEqual(moved.slice(0, 2).map(clip => clip.at), [expected, expected + 4]);
+    assert.equal(timelineOverlap(moved), undefined);
+    assert.deepEqual(moved.slice(2), clips.slice(2));
+  }
+  assert.deepEqual(clips, original);
+});
+
+test('group movement can land exactly in a gap touching two neighbouring clips', () => {
+  const tracks = [{ id: 'one' }], clips = [
+    { nodeId: 'moving', trackId: 'one', at: 0, duration: 1 },
+    { nodeId: 'left', trackId: 'one', at: 2, duration: 1 },
+    { nodeId: 'right', trackId: 'one', at: 4, duration: 1 },
+  ];
+  assert.equal(moveTimelineSelection(clips, ['moving'], tracks, 3)[0].at, 3);
+  assert.equal(moveTimelineSelection(clips, ['moving'], tracks, 2.8)[0].at, 3);
+});
+
+test('exact selection nudges use decimal seconds and reject collisions without shifting to another gap', () => {
+  const tracks = [{ id: 'one' }, { id: 'two' }];
+  let clips = [{ nodeId: 'a', trackId: 'one', at: 0, duration: 1 }, { nodeId: 'b', trackId: 'two', at: 2, duration: 1 }];
+  for (let step = 0; step < 3; step++) clips = moveTimelineSelection(clips, ['a', 'b'], tracks, .1, 0, false);
+  assert.deepEqual(clips.map(clip => clip.at), [.3, 2.3]);
+  clips = moveTimelineSelection(clips, ['a', 'b'], tracks, 1, 0, false);
+  assert.deepEqual(clips.map(clip => clip.at), [1.3, 3.3]);
+  clips.push({ nodeId: 'blocker', trackId: 'one', at: 2.3, duration: 1 });
+  const original = structuredClone(clips);
+  assert.throws(() => moveTimelineSelection(clips, ['a', 'b'], tracks, .1, 0, false), /重叠/);
+  assert.deepEqual(clips, original);
+});
+
+test('selection movement rejects stale identities and invalid offsets without changing the source', () => {
+  const tracks = [{ id: 'one' }], clips = [{ nodeId: 'a', trackId: 'one', at: 0, duration: 1 }];
+  const original = structuredClone(clips);
+  assert.throws(() => moveTimelineSelection(clips, ['a', 'removed'], tracks, 1), /不存在/);
+  assert.throws(() => moveTimelineSelection(clips, ['a'], [], 1), /轨道/);
+  assert.throws(() => moveTimelineSelection(clips, ['a'], tracks, Number.NaN), /有效数值/);
+  assert.throws(() => moveTimelineSelection(clips, ['a'], tracks, 1, .5), /有效数值/);
+  assert.deepEqual(clips, original);
 });
 
 test('left trim keeps the right edge, respects the previous clip, and enforces a minimum duration', () => {

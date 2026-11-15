@@ -1,17 +1,25 @@
 import { allUiComponents, type Project } from './model';
 
-export interface StoryMenuEntry { id: string; name: string; nodeId?: string; styleId?: string }
+export interface StoryMenuEntry { id: string; name: string; nodeId?: string; styleId?: string; parts?: string[]; owner?: { kind: 'chapter' | 'scene' | 'node'; id: string }; title?: string; action?: 'replay' | 'inspect'; groupId?: string; memberIds?: string[]; callId?: string; targetId?: string; viewId?: string; sourceEntryId?: string }
+
+/** Node text split by ｜ into parts that can each have their own font and size. */
+export const flowCaptionParts = (text: string) => text.split('｜').map(part => part.trim()).filter(Boolean);
+
 export function storyMenuEntries(project: Project, kind: 'chapterList' | 'flowchart'): StoryMenuEntry[] {
   if (kind === 'flowchart') {
     const entries = new Map<string, StoryMenuEntry>();
-    const add = (nodeId: string | undefined, name: string, styleId?: string) => { if (nodeId) entries.set(nodeId, { id: nodeId, nodeId, name, ...(styleId ? { styleId } : {}) }); };
+    const add = (nodeId: string | undefined, kind: 'chapter' | 'scene' | 'node', owner: { id: string; name: string; flowchart?: { name?: string; styleId?: string } }) => {
+      if (!nodeId) return;
+      const parts = flowCaptionParts(owner.flowchart?.name?.trim() || owner.name);
+      entries.set(nodeId, { id: nodeId, nodeId, name: parts.join(' ') || owner.name, title: owner.name, owner: { kind, id: owner.id }, ...(parts.length > 1 ? { parts } : {}), ...(owner.flowchart?.styleId ? { styleId: owner.flowchart.styleId } : {}) });
+    };
     const sceneEntry = (sceneId: string) => project.nodes.find(node => node.sceneId === sceneId && node.kind === 'start') ?? project.nodes.find(node => node.sceneId === sceneId);
     for (const chapter of project.chapters) if (chapter.flowchart?.visible !== false) {
       const scene = project.scenes.find(scene => scene.chapterId === chapter.id && sceneEntry(scene.id));
-      add(scene && sceneEntry(scene.id)?.id, chapter.flowchart?.name?.trim() || chapter.name, chapter.flowchart?.styleId);
+      add(scene && sceneEntry(scene.id)?.id, 'chapter', chapter);
     }
-    for (const scene of project.scenes) if (scene.flowchart?.visible === true) add(sceneEntry(scene.id)?.id, scene.flowchart.name?.trim() || scene.name, scene.flowchart.styleId);
-    for (const node of project.nodes) if (node.flowchart?.visible === true) add(node.id, node.flowchart.name?.trim() || node.name, node.flowchart.styleId);
+    for (const scene of project.scenes) if (scene.flowchart?.visible === true) add(sceneEntry(scene.id)?.id, 'scene', scene);
+    for (const node of project.nodes) if (node.flowchart?.visible === true) add(node.id, 'node', node);
     return project.nodes.flatMap(node => entries.has(node.id) ? [entries.get(node.id)!] : []);
   }
   return project.chapters.map(chapter => {

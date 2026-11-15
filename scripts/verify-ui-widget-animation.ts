@@ -5,8 +5,11 @@ import { expect } from '@playwright/test';
 import { createServer } from 'vite';
 import { createProject, projectSchema } from '../src/core/model';
 import { launchDesktopFixture } from './lib/desktop-fixture';
+import { openUiPreviewForTest, uiPreviewPlacement } from './lib/ui-preview-window';
 
 const root=path.resolve('.'),output=path.join(root,'artifacts/ui-widget-animation',new Date().toISOString().replaceAll(':','-'));await fs.mkdir(output,{recursive:true});
+// Screenshots stay out of the project folder: the editor imports new media found there, changing the project mid-test.
+const shots=path.join(output,'shots');await fs.mkdir(shots,{recursive:true});
 const project=createProject('事件图控件动画验收');project.ui.pages={...project.ui.pages,main:{layout:'custom'}};
 project.ui.components.push(
  {id:'play',name:'播放按钮',kind:'button',page:'main',text:'移动并淡出',x:.1,y:.1,width:.25,height:.1},
@@ -15,7 +18,7 @@ project.ui.components.push(
 project.variables.push({id:'goal_x',name:'目标位置',type:'number',initial:.7,persistent:false,parameterSetId:'parameters_story'});
 const original=JSON.stringify(project),projectFile=path.join(output,'project.vns.json');await fs.writeFile(projectFile,original);
 const server=await createServer({root,server:{host:'127.0.0.1',port:0,watch:{ignored:['**/artifacts/**','**/resources/**','**/release/**']}}});await server.listen();
-const app=await launchDesktopFixture({root,projectFile,profile:path.join(output,'profile'),devUrl:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port}),page=await app.firstWindow();page.setDefaultTimeout(10000);
+const app=await launchDesktopFixture({root,projectFile,profile:path.join(output,'profile'),devUrl:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port}),editor=await app.firstWindow();let page=editor;page.setDefaultTimeout(10000);
 const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
 const button=(name:string)=>page.getByRole('button',{name,exact:true});
 const component=(id:string)=>page.locator('[data-ui-component-id="'+id+'"]');
@@ -34,23 +37,23 @@ try{
  await fade.getByLabel('控件属性动画 · 缓动',{exact:true}).selectOption('linear');await fade.getByLabel('控件属性动画 · 持续秒数',{exact:true}).fill('2');
  await button('设置属性').click();const setter=nodes('setUiProperty');await setter.getByLabel('设置组件属性 · 属性值',{exact:true}).selectOption('false');
  await expect(page.locator('.react-flow__edge')).toHaveCount(3);
- await page.locator('[data-ui-variable-id="goal_x"]').dragTo(page.locator('.flow-container'),{targetPosition:{x:100,y:90}});await page.getByRole('dialog',{name:'添加蓝图节点'}).getByRole('button',{name:/^读取变量/}).click();
+ // Project parameters are listed under the 作品状态 scope of the 状态 group.
+ await page.locator('.ui-event-library').getByLabel('状态列表作用域').selectOption('project');await page.locator('[data-ui-variable-id="goal_x"]').dragTo(page.locator('.flow-container'),{targetPosition:{x:100,y:90}});await page.getByRole('dialog',{name:'添加蓝图节点'}).getByRole('button',{name:/^读取变量/}).click();
  await arrange();await nodes('getVariable').locator('.react-flow__handle[data-handleid="value"]').click();await move.locator('.react-flow__handle[data-handleid="value"]').click();
  await expect(page.locator('.react-flow__edge')).toHaveCount(4);
  await component('stop').click();await button('点击时 · OnClicked').click();await component('target').click();await button('停止动画').click();
  await expect(nodes('stopUiAnimation')).toBeVisible();await expect(page.locator('.react-flow__edge')).toHaveCount(5);
  await arrange();if(await button('关闭事件图提示').isVisible())await button('关闭事件图提示').click();
- await page.screenshot({path:path.join(output,'event-graph.png')});
- await button('交互预演').click();await page.getByLabel('按时间预演',{exact:true}).check();
+ await page.screenshot({path:path.join(shots,'event-graph.png')});
+ page=await openUiPreviewForTest(app,editor,errors);page.setDefaultTimeout(10000);await page.getByLabel('按时间预演',{exact:true}).check();
  const preview=page.locator('.ui-logic-preview-frame'),target=preview.locator('[data-preview-component="target"]');
- const sampled=()=>target.evaluate(e=>({x:parseFloat((e as HTMLElement).style.left)/e.parentElement!.getBoundingClientRect().width,opacity:Number((e as HTMLElement).style.opacity)}));
+ const sampled=()=>uiPreviewPlacement(target);
  await preview.getByRole('button',{name:'移动并淡出',exact:true}).click();await button('推进 1 秒').click();
  const half=await sampled();assert.ok(Math.abs(half.x-.4)<.01,JSON.stringify(half));assert.ok(Math.abs(half.opacity-.5)<.01,JSON.stringify(half));
- const divider=page.getByRole('separator',{name:'调整画布与页面设置高度',exact:true});await divider.focus();for(let i=0;i<14;i++)await page.keyboard.press('ArrowUp');
- await preview.scrollIntoViewIfNeeded();await page.screenshot({path:path.join(output,'half-way-preview.png')});await button('推进 1 秒').click();await expect(target).toHaveCount(0);
+ await preview.scrollIntoViewIfNeeded();await page.screenshot({path:path.join(shots,'half-way-preview.png')});await button('推进 1 秒').click();await expect(target).toHaveCount(0);
  await button('恢复测试值').click();await expect(target).toBeVisible();await preview.getByRole('button',{name:'移动并淡出',exact:true}).click();await button('推进 0.1 秒').click();await preview.getByRole('button',{name:'停止动画',exact:true}).click();await expect(target).toHaveCount(0);
  await button('恢复测试值').click();assert.equal(await fs.readFile(projectFile,'utf8'),original);
- await button('交互预演').click();await button('保存界面').click();await expect(button('保存界面')).toBeDisabled();
+ page=editor;await button('保存界面').click();await expect(page.locator('.ui-save-status')).toHaveText('已保存');await expect(button('保存界面')).toBeDisabled();
  const saved=projectSchema.parse(JSON.parse(await fs.readFile(projectFile,'utf8'))),graph=saved.blueprints.find(g=>g.uiPageId==='ui:main')!;
  assert.equal(graph.nodes.filter(n=>n.type==='animateUiProperty').length,2);assert.equal(graph.links.length,5);
  assert.equal(saved.ui.components.find(c=>c.id==='target')!.x,.1);assert.equal(saved.ui.components.find(c=>c.id==='target')!.style?.opacity,undefined);

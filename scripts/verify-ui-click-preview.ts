@@ -8,6 +8,7 @@ import { createServer } from 'vite';
 import { createProject } from '../src/core/model';
 import { blueprintNodeDefaults, createBlueprintGraph, connectBlueprintPins, synchronizeBlueprintSignatures } from '../src/core/blueprint';
 import { launchDesktopFixture } from './lib/desktop-fixture';
+import { openUiPreviewForTest } from './lib/ui-preview-window';
 const root=path.resolve('.'), output=path.join(root,'artifacts/ui-click-preview',new Date().toISOString().replaceAll(':','-'));
 await fs.mkdir(output,{recursive:true});
 const project=createProject('高级UI编辑验收');
@@ -23,14 +24,16 @@ const write=blueprintNodeDefaults('setVariable');write.properties={variableId:'s
 const enable=blueprintNodeDefaults('setVariable');enable.properties={variableId:'show_title',value:true};
 clickGraph.nodes.push(click,read,compare,write,enable);synchronizeBlueprintSignatures(project);
 for(const [from,out,to,input] of [[click.id,'exec',compare.id,'exec_in'],[read.id,'value',compare.id,'condition'],[compare.id,'true',write.id,'exec_in'],[compare.id,'false',enable.id,'exec_in']]){const error=connectBlueprintPins(clickGraph,from,out,to,input);if(error)throw Error(error);}
+// Screenshots stay out of the project folder: the editor imports new media found there, changing the project mid-test.
+const shots=path.join(output,'shots');await fs.mkdir(shots,{recursive:true});
 const projectFile=path.join(output,'project.vns.json');await fs.writeFile(projectFile,JSON.stringify(project));
 const server=await createServer({root,server:{host:'127.0.0.1',port:0,watch:{ignored:['**/artifacts/**','**/resources/**','**/release/**']}}});await server.listen();
-const app=await launchDesktopFixture({root,projectFile,profile:path.join(output,'profile'),devUrl:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port}),page=await app.firstWindow();
+const app=await launchDesktopFixture({root,projectFile,profile:path.join(output,'profile'),devUrl:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port}),editor=await app.firstWindow();let page=editor;
 try {
  await expect(page.locator('.project-title strong')).toHaveText(project.name,{timeout:45000});
- await page.locator('[data-workspace-tab="ui"]').click();await page.getByRole('button',{name:'高级 UI 蓝图',exact:true}).click();
+ await page.locator('[data-workspace-tab="ui"]').click();await page.getByLabel('界面编辑模式').getByRole('button',{name:'事件图',exact:true}).click();await page.getByLabel('事件图页面').selectOption('ui:main');
  const savedBefore=await fs.readFile(projectFile,'utf8');
- await page.locator('.ui-logic-preview > summary').click();
+ page=await openUiPreviewForTest(app,editor);
  const object=page.locator('[data-preview-component="title_probe"]');
  await expect(object).toContainText('默认标题');
  const toggle=page.getByRole('button',{name:'切换显示',exact:true});await toggle.click();await expect(object).toHaveCount(0);
@@ -42,10 +45,10 @@ try {
  const first=(await object.boundingBox())!.x;
  await page.getByLabel('预演参数 预演横向位置',{exact:true}).fill('0.4');await page.getByLabel('预演参数 预演标题',{exact:true}).click();
  await expect.poll(async()=>(await object.boundingBox())!.x).toBeGreaterThan(first+20);
- await page.screenshot({path:path.join(output,'dynamic-preview.png')});
+ await page.screenshot({path:path.join(shots,'dynamic-preview.png')});
  await page.getByRole('button',{name:'恢复测试值',exact:true}).click();await expect(object).toContainText('默认标题');
- await expect(page.locator('.dirty-dot')).toHaveCount(0);expect(await fs.readFile(projectFile,'utf8')).toBe(savedBefore);
- await page.locator('[data-workspace-tab="script"]').click();await expect(page.getByRole('dialog',{name:'保存界面修改'})).toHaveCount(0);
+ await expect(editor.locator('.dirty-dot')).toHaveCount(0);expect(await fs.readFile(projectFile,'utf8')).toBe(savedBefore);
+ page=editor;await page.locator('[data-workspace-tab="script"]').click();await expect(page.getByRole('dialog',{name:'保存界面修改'})).toHaveCount(0);
  await fs.writeFile(path.join(output,'report.json'),JSON.stringify({status:'passed',checks:['高级UI参数预演入口','点击按钮改变参数并隐藏组件','键盘触发按钮恢复组件','开关即时控制组件显示','文字及位置即时变化','恢复测试值','预演不改初始值不产生未保存修改','离开无误报保存提醒']}));console.log(output);
-} catch(error){await page.screenshot({path:path.join(output,'failure.png')});throw error;}
+} catch(error){await page.screenshot({path:path.join(output,'failure.png')}).catch(()=>undefined);throw error;}
 finally {await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().forEach(w=>w.destroy())).catch(()=>undefined);await app.close();await server.close();}

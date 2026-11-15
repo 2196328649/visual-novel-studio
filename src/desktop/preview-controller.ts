@@ -1,3 +1,4 @@
+import { checkedBlueprintDebugRequest, mergeBlueprintDebugPacket, parseBlueprintDebugPacket, type BlueprintDebugRequest, type BlueprintDebugSnapshot } from '../core/blueprint-debug';
 import { BrowserWindow, screen } from 'electron';
 import type { ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -16,6 +17,7 @@ interface Session {
   traceback?: boolean;
   control: { revision: number; paused: boolean; focus: number; viewport?: PreviewViewport };
   controlWrite: Promise<void>;
+  project: Project; debug?: BlueprintDebugSnapshot; debugRevision: number; debugCommands: (BlueprintDebugRequest & { revision: number })[]; debugWrite: Promise<void>;
 }
 const cancelled: RunResult = { ok: false, cancelled: true, diagnostics: [], log: '' };
 
@@ -78,6 +80,22 @@ export class PreviewController {
     this.send({ command });
     return this.current?.controlWrite;
   }
+  async debugControl(raw: unknown): Promise<{ revision: number }> {
+    const session = this.current;
+    if (!session || session.options.blueprintDebug === false || !session.child) throw new Error('没有可控制的蓝图调试会话。');
+    const request = checkedBlueprintDebugRequest(session.project, raw, session.id);
+    session.debugCommands = session.debugCommands.filter(command => command.revision > (session.debug?.acknowledgement ?? 0));
+    if (session.debugCommands.length >= 128) throw new Error('游戏尚未确认前面的调试命令，请稍后重试或停止试玩。');
+    const revision = ++session.debugRevision;
+    session.debugCommands.push({ ...request, revision });
+    const contents = JSON.stringify({ version: 1, commands: session.debugCommands });
+    session.debugWrite = session.debugWrite.catch(() => undefined).then(async () => {
+      if (session !== this.current) throw new Error('试玩会话已经结束。');
+      await atomicWrite(path.join(session.buildPath, 'blueprint-debug-control.json'), contents);
+    });
+    await session.debugWrite;
+    return { revision };
+  }
   stop(notify = true) {
     const session = this.current;
     if (!session) return this.stopping;
@@ -105,14 +123,15 @@ export class PreviewController {
 
   async start(project: Project, input: PreviewOptions = {}): Promise<RunResult> {
     await this.stop(false);
-    const session: Session = { id: randomUUID(), abort: new AbortController(), options: { ...input, mode: input.mode === 'embedded' ? 'embedded' : 'window' }, buildPath: '', log: '', pending: '', ready: false, sourceMap: {}, control: { revision: 0, paused: false, focus: 0 }, controlWrite: Promise.resolve() };
+    const session: Session = { id: randomUUID(), abort: new AbortController(), options: { ...input, mode: input.mode === 'embedded' ? 'embedded' : 'window' }, buildPath: '', log: '', pending: '', ready: false, sourceMap: {}, control: { revision: 0, paused: false, focus: 0 }, controlWrite: Promise.resolve(), project, debugRevision: 0, debugCommands: [], debugWrite: Promise.resolve() };
+    if (input.blueprintBreakpoints?.length) session.options.blueprintBreakpoints = checkedBlueprintDebugRequest(project, { sessionId: session.id, action: 'breakpoints', breakpoints: input.blueprintBreakpoints }, session.id).breakpoints;
     session.buildPath = path.join(this.host.userData, 'builds', project.id, 'preview', session.id);
     this.current = session;
     this.state(session, 'compiling', '正在编译最新内容并准备素材…');
     try {
       const sdk = this.host.sdk();
       if (!sdk) throw new Error('未找到 Ren\'Py 运行时，请检查编辑器运行环境。');
-      const result = await buildProject({ project, projectDir: this.host.projectDirectory(project), sdkRoot: sdk, spineRuntimeDir: path.join(this.host.resources, 'spine'), outputDir: session.buildPath, development: true, preview: input, previewHost: true, signal: session.abort.signal });
+      const result = await buildProject({ project, projectDir: this.host.projectDirectory(project), sdkRoot: sdk, spineRuntimeDir: path.join(this.host.resources, 'spine'), outputDir: session.buildPath, development: true, preview: session.options, previewHost: true, signal: session.abort.signal });
       if (session !== this.current) return cancelled;
       if (!result.ok) { this.fail(session, result.diagnostics.find(d => d.severity === 'error')?.message ?? '试玩编译失败', result); return result; }
       session.sourceMap = JSON.parse(await fs.readFile(path.join(session.buildPath, 'source-map.json'), 'utf8'));
@@ -124,13 +143,30 @@ export class PreviewController {
         session.finish = resolve;
         const child = session.child = spawnRenpy(sdk, session.buildPath, ['run'], {
           savedir: path.join(this.host.userData, 'preview-saves', project.id, session.id),
-          env: { VNS_PREVIEW_BOOT: JSON.stringify({ id: session.id, mode: session.options.mode, parent, viewport: this.physicalViewport() }) },
+          env: { VNS_PREVIEW_BOOT: JSON.stringify({ id: session.id, mode: session.options.mode, parent, viewport: this.physicalViewport() }), ...(session.options.blueprintDebug !== false ? { VNS_BLUEPRINT_DEBUG: JSON.stringify({ sessionId: session.id, breakpoints: session.options.blueprintBreakpoints ?? [] }) } : {}) },
           onData: text => {
             if (session !== this.current) return;
             session.pending += text;
+            if (session.pending.length > 2_000_000 && !session.pending.includes('\n')) { this.fail(session, '游戏返回了超出上限的未终止日志。'); return; }
             const lines = session.pending.split(/\r?\n/); session.pending = lines.pop() ?? '';
             for (const line of lines) {
-              if (line.startsWith('VNS_PREVIEW:')) {
+              if (line.startsWith('VNS_BLUEPRINT_DEBUG:')) {
+                if (session.options.blueprintDebug === false || line.length > 2_000_000) continue;
+                try {
+                  const packet = parseBlueprintDebugPacket(JSON.parse(line.slice('VNS_BLUEPRINT_DEBUG:'.length)), session.id);
+                  if (!packet) continue;
+                  const merged = mergeBlueprintDebugPacket(session.debug, packet);
+                  if (merged === session.debug) continue;
+                  session.debug = merged;
+                  this.host.emit({ kind: 'blueprintDebug', message: '', sessionId: session.id, blueprintDebug: packet });
+                  // A startup breakpoint is usable even before the first visual
+                  // interaction. Do not fake a frame-ready signal or time it out.
+                  if (!session.ready && packet.phase === 'paused') {
+                    session.ready = true; clearTimeout(session.timer); resolve(result);
+                    this.state(session, 'paused', '蓝图在首帧前暂停；可单步、继续或停止。', { firstFramePending: true });
+                  }
+                } catch { /* Invalid game output cannot issue renderer commands. */ }
+              } else if (line.startsWith('VNS_PREVIEW:')) {
                 try {
                   const state = JSON.parse(line.slice('VNS_PREVIEW:'.length));
                   if (state.sessionId !== session.id) continue;
@@ -139,14 +175,14 @@ export class PreviewController {
                   if (!['running', 'paused'].includes(state.phase)) continue;
                   // Native shortcuts must also update the state carried by
                   // later viewport writes, otherwise resizing clears a pause.
-                  session.control.paused = state.phase === 'paused';
+                  session.control.paused = typeof state.manualPaused === 'boolean' ? state.manualPaused : state.phase === 'paused';
                   if (!session.ready && state.visible !== true) continue;
                   if (!session.ready) {
                     session.ready = true; clearTimeout(session.timer);
                     resolve(result);
                     void fs.writeFile(path.join(session.buildPath, 'preview-ready.json'), JSON.stringify(state, null, 2)).catch(() => undefined);
                   }
-                  this.state(session, state.phase, state.phase === 'paused' ? '试玩已暂停' : '试玩已启动', { windowId: state.windowId, visible: state.visible });
+                  this.state(session, state.phase, state.phase === 'paused' ? '试玩已暂停' : '试玩已启动', { windowId: state.windowId, visible: state.visible, ...(state.bounds ? { firstFramePending: false } : {}) });
                 } catch { /* Invalid output is never treated as readiness. */ }
               } else {
                 const position = runtimePosition(line);

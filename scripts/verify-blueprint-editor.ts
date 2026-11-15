@@ -1,3 +1,4 @@
+import { openBlueprintOptions, closeBlueprintOptions, setBlueprintOption } from './lib/blueprint-canvas';
 import { chromium, expect, type Page } from '@playwright/test';
 import { createServer } from 'vite';
 import { promises as fs } from 'node:fs';
@@ -6,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { projectSchema, type Project } from '../src/core/model';
 import type { StudioBridge } from '../src/core/bridge';
 import { compileProject } from '../src/runtime/compiler';
+import { parseProject } from '../src/desktop/project-store';
 
 interface BlueprintHarness { snapshot?: () => { project: Project; dirty: boolean }; saved?: Project; previewed?: Project }
 declare global { interface Window { __blueprintTest: BlueprintHarness } }
@@ -70,8 +72,11 @@ async function connect(page: Page, fromId: string, fromPin: string, toId: string
 }
 
 try {
-  const sample = projectSchema.parse(JSON.parse(await fs.readFile(path.join(root, 'resources/example/project.vns.json'), 'utf8')));
+  // Mirror actual project loading. The legacy sample's endings need their
+  // built-in preset; merely visiting or editing a resource must not install it.
+  const sample = parseProject(JSON.parse(await fs.readFile(path.join(root, 'resources/example/project.vns.json'), 'utf8'))).project;
   sample.blueprints = [];
+  expect(compileProject(sample).diagnostics.filter(issue => issue.severity === 'error')).toEqual([]);
   const testSound = sample.assets.find(asset => asset.kind === 'audio');
   if (testSound) testSound.category = 'sound';
   page = await editor(sample);
@@ -92,7 +97,7 @@ try {
   await page.screenshot({ path: path.join(output, 'blueprint-1280.png') });
   checks.push('入门示例自动接线；角色和继承表情按名称选择；快捷站位保存为可复用预设。');
 
-  await page.getByRole('button', { name: '新建用户节点', exact: true }).click();
+  await (await openBlueprintOptions(page)).getByRole('button', { name: '新建用户节点', exact: true }).click();
   let macro = (await snapshot(page)).blueprints!.at(-1)!;
   await page.getByRole('button', { name: '输入与输出', exact: true }).click();
   await page.getByLabel('蓝图名称', { exact: true }).fill('晨间问候');
@@ -118,8 +123,9 @@ try {
 
   await page.locator('.performance-workspace > .workspace-toolbar').getByRole('button', { name: '新建蓝图', exact: true }).click();
   const callerId = (await snapshot(page)).blueprints!.at(-1)!.id;
-  await page.getByLabel('搜索蓝图节点').fill('晨间问候');
-  await page.locator('.blueprint-user-library').getByRole('button', { name: '晨间问候', exact: true }).click();
+  await page.locator('.blueprint-module-library > summary').click();
+  await page.getByLabel('搜索可复用模块').fill('晨间问候');
+  await page.getByRole('button', { name: '添加模块调用：晨间问候', exact: true }).click();
   await expect(page.getByLabel('等待时长', { exact: true })).toHaveValue('1.5');
   await expect(page.getByLabel('启用', { exact: true })).toHaveValue('false');
   await page.getByLabel('等待时长', { exact: true }).fill('2.25');

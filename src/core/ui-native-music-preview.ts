@@ -1,10 +1,13 @@
+import { uiPageTheme } from './ui-page-settings';
 import { declaredUiComponents, effectiveUiTheme, type Project, type UiComponent } from './model';
 import { dialogueLayout } from './ui';
 import type { NativePreferenceLayout } from './ui-native-preview';
 import { musicRoomEntries } from './music-preview';
+import { uiMenuButtons } from './ui-page-catalog';
+import { uiActionAvailable } from './ui-availability';
 
 export function nativeMusicPreview(project: Project, pageId: string, authored: UiComponent[]): NativePreferenceLayout | undefined {
- const theme = effectiveUiTheme(project.ui);
+ const theme = uiPageTheme(project, pageId);
  if (pageId !== 'ui:musicRoom' || theme.pages?.musicRoom?.layout === 'custom') return;
  const { width, height } = project, { margin, contentWidth } = dialogueLayout(width, height, theme), font = Math.min(24, theme.fontSize);
  const components: UiComponent[] = [], bodyIds: string[] = [], occupied = new Set([...declaredUiComponents(project), ...authored].map(c => c.id));
@@ -17,7 +20,7 @@ export function nativeMusicPreview(project: Project, pageId: string, authored: U
  add('title', 'text', '音乐', margin, 22, contentWidth * .6, buttonH, {}, false);
  add('return', 'button', '返回', width - margin - 150, 22, 150, buttonH, { action: 'return' }, false);
  let navX = margin;
- for (const [action, text] of [['save','存档'],['load','读档'],['preferences','设置'],['history','历史'],['gallery','画廊'],['music','音乐'],['mainMenu','标题']] as const) {
+ for (const [action, text] of uiMenuButtons.filter(([action]) => uiActionAvailable(theme, action))) {
   const w = Math.min(96, (contentWidth - 30) / 7);
   add('nav_' + action, 'button', text, navX, 22 + buttonH + 12, w, buttonH, { action }, false); navX += w + 5;
  }

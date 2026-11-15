@@ -86,8 +86,7 @@ try {
     await row(realButton.id).click(); await expect(page!.locator('.ui-resize-handle')).toHaveCount(8);
     await page!.screenshot({ path: path.join(output, '01-author-handles.png') });
   }
-  await page!.getByLabel('设计页面', { exact: true }).selectOption('custom');
-  await page!.getByLabel('选择自定义页面', { exact: true }).selectOption(fixtureId);
+  await page!.getByLabel('设计页面', { exact: true }).selectOption(fixtureId);
   await expect.poll(roots).toEqual([c, b, a]);
   const originalPaint = await paint(), originalBounds = await bounds(c);
   phase = 'insert-preview';
@@ -169,8 +168,7 @@ try {
   phase = 'reopen';
   const finalOrder = await order(), finalData = await saved(), finalParent = await bounds(a), finalChild = await bounds(ca);
   await close(); await launch();
-  await page!.getByLabel('设计页面', { exact: true }).selectOption('custom');
-  await page!.getByLabel('选择自定义页面', { exact: true }).selectOption(fixtureId);
+  await page!.getByLabel('设计页面', { exact: true }).selectOption(fixtureId);
   await expect.poll(order).toEqual(finalOrder); sameRect(await bounds(a), finalParent); sameRect(await bounds(ca), finalChild);
   assert.deepEqual(await saved(), finalData); await row(a).click();
   await page!.screenshot({ path: path.join(output, '04-reopened.png') });

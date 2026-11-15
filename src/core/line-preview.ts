@@ -5,7 +5,7 @@ import type { ActorTransitionRule } from './model';
 import { carryPreviewAudio, type PreviewAudioEvent } from './preview-audio';
 import { applyMoveOffsets, applyAfterOffsets, afterOffsetDuration } from './move-offsets';
 import { effectiveScene, type Project, type StageAction, type StoryLine } from './model';
-import { createPreviewActionExpander, previewActionContext } from './preview-actions';
+import { createPreviewActionExpander, previewActionContext, previewTimelineWaitActions } from './preview-actions';
 import { actionTiming } from './performance-timing';
 import { actorKey, actorReference } from './actor-instance';
 import { actorAnimationDuration, actorCurvePose, sampleActorAnimation, type ActorAnimation } from './actor-animation';
@@ -37,7 +37,7 @@ export function applyPreviewAction(state: PreviewStage, action: StageAction) {
     case 'stopMusic': state.musicId = undefined; break;
 
     case 'camera': state.camera = action; delete state.cameraMotion; break;
-    case 'animate': { state.settledShows.delete(actorKey(action)); const key = actorKey(action), actor = state.actors.get(key), frame = action.keyframes.at(-1); if (actor && frame) state.actors.set(key, actorCurvePose(action, actorAnimationDuration(action), { ...actor, presetId: undefined, x: frame.x, y: frame.y, scale: frame.scale, rotation: frame.rotation, opacity: frame.opacity })); break; }
+    case 'animate': { const key = actorKey(action); state.settledShows.delete(key); const actor = state.actors.get(key), frame = action.keyframes.at(-1); if (actor && frame) { state.actorBlends?.delete(key); state.actors.set(key, actorCurvePose(action, actorAnimationDuration(action), { ...actor, presetId: undefined, x: frame.x, y: frame.y, scale: frame.scale, rotation: frame.rotation, opacity: frame.opacity })); } break; }
   }
 }
 export function finishPreviewLine(state: PreviewStage) {
@@ -116,27 +116,21 @@ export function linePlaybackPlan(before: PreviewStage, actions: StageAction[]): 
   const state = clonePreviewStage(before);
   let at = 0, until = 0, actorWaitUntil = 0, dialogueAt: number | undefined;
   for (const item of before.visuals.values()) if (item.blend) until = Math.max(until, (item.blend.rule.duration - item.blend.elapsed) * 1000);
-  const continued = new Set(actions.filter(action => action.kind === 'show').map(actorKey));
-  const departures: StageAction[] = [...(before.pendingActorExits ?? [])].filter(id => actions[0]?.kind !== 'background' && !continued.has(id) && !actions.some(action => action.kind === 'hide' && actorKey(action) === id)).flatMap(id => {
-    const actor = before.actors.get(id), rule = actor?.actorTransitions?.exit;
-    return actor && rule ? [{ kind: 'hide' as const, ...actorReference(actor), transition: rule.mode, duration: rule.duration, wait: actor.wait !== false }] : [];
-  });
   const visualEnds = new Map([...before.visuals].filter(([, item]) => !item.object.persistent).map(([id, item]) => [id, Math.max(0, (actionTiming(item.object).duration - item.elapsed) * 1000)]));
   const finishVisual = (id: string) => {
     const end = visualEnds.get(id);
     if (end !== undefined) until = Math.max(until, Math.min(at, end));
     visualEnds.delete(id);
   };
-  for (const action of [...departures, ...actions]) {
+  const addStep = (action: StageAction, durationOverride?: number) => {
     const modern = action.kind === 'show' ? !!action.actorTransitions : action.kind === 'hide' && !!state.actors.get(actorKey(action))?.actorTransitions;
-    if (!modern) at = Math.max(at, actorWaitUntil);
     if (action.kind === 'startDialogue' && dialogueAt === undefined) dialogueAt = at;
     const prior = sampleLinePlayback(before, { steps, dialogueAt: at, until: at }, at).state;
     const previous = action.kind === 'show' || action.kind === 'hide' ? prior.actors.get(actorKey(action)) : undefined;
     const unchanged = action.kind === 'show' && modern && !!previous && sameActorPose(previous, action);
     const rule = modern ? action.kind === 'show' ? unchanged ? { mode: 'none' as const, duration: 0 } : (action.actorTransitions?.[previous?.characterId === action.characterId ? 'expression' : 'enter'] ?? actorTransitionDefaults(action.transition, action.duration).enter) : action.kind === 'hide' ? { mode: action.transition, duration: action.duration ?? .5 } : undefined : undefined;
     const visual = action.kind === 'visual' || action.kind === 'hideVisual' ? previewVisualAction(prior.visuals.get(action.instanceId), action) : undefined;
-    const timing = actionTiming(action), duration = (rule ? actorTransitionSeconds(rule) : action.kind === 'hideVisual' ? visual!.seconds : timing.duration) * 1000, wait = action.kind === 'hideVisual' ? action.wait !== false : timing.wait;
+    const timing = actionTiming(action), duration = durationOverride ?? (rule ? actorTransitionSeconds(rule) : action.kind === 'hideVisual' ? visual!.seconds : timing.duration) * 1000, wait = action.kind === 'hideVisual' ? action.wait !== false : timing.wait;
     applyPreviewAction(state, action);
     if (action.kind === 'show' || action.kind === 'hide') state.pendingActorExits?.delete(actorKey(action));
     steps.push({ at, duration, action, before: prior, after: clonePreviewStage(state), actorTransition: rule, actorUnchanged: unchanged });
@@ -147,14 +141,66 @@ export function linePlaybackPlan(before: PreviewStage, actions: StageAction[]): 
       until = Math.max(until, at + visual!.seconds * 1000);
     } else if (action.kind === 'hideVisual') { finishVisual(action.instanceId);
       until = Math.max(until, at + duration);
-    } else if (action.kind !== 'camera' && action.kind !== 'animate') until = Math.max(until, at + duration + (action.kind === 'show' ? afterOffsetDuration(action.afterOffsets) * 1000 : 0));
-    if (wait) { if (modern) actorWaitUntil = Math.max(actorWaitUntil, at + duration); else at += duration; }
-    else if (action.kind === 'visual' && action.transitionWait) at += visual!.seconds * 1000;
+    } else if (!modern && action.kind !== 'camera' && action.kind !== 'animate') until = Math.max(until, at + duration + (action.kind === 'show' ? afterOffsetDuration(action.afterOffsets) * 1000 : 0));
+    if (wait && modern) actorWaitUntil = Math.max(actorWaitUntil, at + duration);
+    return { modern, duration, wait, visual };
+  };
+  const retirePendingActors = () => {
+    for (const id of [...(state.pendingActorExits ?? [])]) {
+      const actor = state.actors.get(id), rule = actor?.actorTransitions?.exit;
+      if (actor && rule) addStep({ kind: 'hide', ...actorReference(actor), transition: rule.mode, duration: rule.duration, wait: actor.wait !== false });
+    }
+  };
+  const flushActors = () => {
+    // Consume only this contiguous display batch. Looking ahead through a pause
+    // or other stage action would keep actors that the game has already retired.
+    retirePendingActors();
+    at = Math.max(at, actorWaitUntil);
+  };
+  for (const action of actions) {
+    const timelineActions = previewTimelineWaitActions(action);
+    let timelineEnd: number | undefined;
+    if (timelineActions) {
+      const members = new Set(timelineActions);
+      timelineEnd = at;
+      for (const step of steps) if (members.has(step.action) && step.action.kind !== 'pause') {
+        const seconds = actionTiming(step.action).duration + (step.action.kind === 'show' ? afterOffsetDuration(step.action.afterOffsets) : 0);
+        timelineEnd = Math.max(timelineEnd, step.at + seconds * 1000);
+      }
+    }
+    // Match compiler.stage: nested performances expand into their own actions;
+    // showing/hiding an actor consumes only that actor's pending departure.
+    if (!['show', 'hide', 'background', 'blueprint', 'effect', 'characterFeature'].includes(action.kind)) flushActors();
+    // A timeline join uses the clips' original deadlines, so an actor flush
+    // contributes elapsed time instead of postponing the entire tail again.
+    const { modern, duration, wait, visual } = addStep(action, timelineEnd === undefined ? undefined : Math.max(0, timelineEnd - at));
+    if (action.kind === 'background') actorWaitUntil = at;
+    if (wait && !modern) {
+      if (action.kind === 'show' && action.transition === 'move' && duration > 0) flushActors();
+      else if ((action.kind === 'show' || action.kind === 'hide') && duration > 0) {
+        // Legacy blocking stage transitions start departures alongside their
+        // own animation. The next flush waits only the remaining actor time.
+        retirePendingActors();
+      }
+      at += duration;
+    } else if (!wait && action.kind === 'visual' && action.transitionWait) at += visual!.seconds * 1000;
   }
-  at = Math.max(at, actorWaitUntil);
+  flushActors();
   until = Math.max(until, at, ...visualEnds.values());
   for (let index = 0; index < steps.length; index++) {
     const step = steps[index], action = step.action;
+    if (step.actorTransition && (action.kind === 'show' || action.kind === 'hide')) {
+      let end = step.at + step.duration + (action.kind === 'show' ? afterOffsetDuration(action.afterOffsets) * 1000 : 0);
+      for (let next = index + 1; next < steps.length; next++) {
+        const replacement = steps[next], candidate = replacement.action;
+        if (replacement.at >= end) break;
+        const replacesActor = !replacement.actorUnchanged && (candidate.kind === 'show' || candidate.kind === 'hide' || candidate.kind === 'animate' && replacement.before.actors.has(actorKey(candidate))) && actorKey(candidate) === actorKey(action);
+        const clearsActor = candidate.kind === 'background' && step.after.actors.get(actorKey(action))?.lifetime !== 'persistent';
+        if (replacesActor || clearsActor) { end = replacement.at; break; }
+      }
+      until = Math.max(until, end);
+      continue;
+    }
     if (action.kind !== 'camera' && action.kind !== 'animate') continue;
     let end = step.at + step.duration;
     for (let next = index + 1; next < steps.length; next++) {
@@ -188,7 +234,7 @@ export function linePlaybackPlan(before: PreviewStage, actions: StageAction[]): 
   }
   for (const [id, blend] of before.actorBlends ?? []) {
     const remaining = Math.max(0, actorTransitionSeconds(blend.rule) - blend.elapsed) * 1000;
-    const replacement = steps.find(step => !step.actorUnchanged && ((step.action.kind === 'show' || step.action.kind === 'hide') && actorKey(step.action) === id || step.action.kind === 'background' && blend.current?.lifetime !== 'persistent'));
+    const replacement = steps.find(step => !step.actorUnchanged && ((step.action.kind === 'show' || step.action.kind === 'hide' || step.action.kind === 'animate' && step.before.actors.has(id)) && actorKey(step.action) === id || step.action.kind === 'background' && blend.current?.lifetime !== 'persistent'));
     until = Math.max(until, Math.min(remaining, replacement?.at ?? remaining));
   }
   return { steps, dialogueAt: dialogueAt ?? at, until, actionsEnd: at };

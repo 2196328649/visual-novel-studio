@@ -1,65 +1,191 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { Image as ImageIcon } from 'lucide-react';
 import { makeId, type GalleryGroup, type Project, type UiComponent } from '../core/model';
 import { galleryEntries } from '../core/gallery';
 import { Field } from './components';
 import { UiAssetSelect } from './AssetPicker';
-import { NumberInput } from './NumberInput';
 import type { AssetUrl } from './StageEditor';
 import { GalleryUnlockFields } from './GalleryUnlockFields';
+import './ui-collection-content-dialog.css';
 
-export function UiGalleryGroups({ project, component, edit, assetUrl }: { project: Project; component: UiComponent; edit: (change: (component: UiComponent) => void) => void; assetUrl: AssetUrl }) {
+type EditOptions = { separate?: boolean };
+type GalleryEditorProps = { project: Project; component: UiComponent; edit: (change: (component: UiComponent) => void, options?: EditOptions) => void; assetUrl: AssetUrl };
+const maxGalleryEntries = 2048;
+
+/** Content only: grid geometry and detail-page appearance remain in the inspector. */
+export function UiGalleryContentFields({ project, component, edit, assetUrl }: GalleryEditorProps) {
   const [selection, setSelection] = useState(''), [query, setQuery] = useState('');
-  const [imageSelection, setImageSelection] = useState('');
+  const [imageSelection, setImageSelection] = useState(''), [variantSelection, setVariantSelection] = useState('');
+  const [notice, setNotice] = useState('');
+  const assets = useMemo(() => new Map(project.assets.filter(asset => asset.kind === 'image').map(asset => [asset.id, asset])), [project.assets]);
+  const allImageIds = useMemo(() => [...assets.keys()], [assets]);
   const groups = component.list?.galleryGroups;
-  const filtered = groups?.filter(group => group.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())) ?? [];
+  const search = query.trim().toLocaleLowerCase();
+  const filtered = groups?.filter(group => `${group.name} ${group.id}`.toLocaleLowerCase().includes(search)) ?? [];
   const group = filtered.find(item => item.id === selection) ?? filtered[0];
   const index = groups?.findIndex(item => item.id === group?.id) ?? -1;
-  const images = galleryEntries(project, component);
-  const selectedImage = images.find(item => item.id === imageSelection) ?? images[0];
-  const changeGroup = (change: (group: GalleryGroup) => void) => edit(c => { const target = c.list?.galleryGroups?.find(item => item.id === group?.id); if (target) change(target); });
-  const move = (offset: number) => { if (group) setSelection(group.id); edit(c => {
-    const items = c.list?.galleryGroups;
-    if (items && index + offset >= 0 && index + offset < items.length) { const [item] = items.splice(index, 1); items.splice(index + offset, 0, item); }
-  }); };
-  return <details className="ui-property-group" open><summary>图鉴分组与分镜</summary>
-    <Field label="启用图鉴分组"><input type="checkbox" aria-label="启用图鉴分组" checked={groups !== undefined} onChange={event => edit(c => { c.list = { ...c.list, galleryGroups: event.target.checked ? galleryEntries(project, c) : undefined }; })} /></Field>
-    <p className="muted">把同一段剧情的多张 CG 合并为一组，打开后按顺序翻阅。解锁条件可按剧情显示记录或参数判断。</p>
-    {groups && <>
-      <input aria-label="搜索图鉴分组" placeholder="搜索分组名称" value={query} onChange={event => setQuery(event.target.value)} />
-      <div className="ui-gallery-group-list" role="group" aria-label="图鉴分组">{!filtered.length && <p className="muted">无匹配分组</p>}{filtered.map(item => <button type="button" key={item.id} aria-pressed={group?.id === item.id} onClick={() => setSelection(item.id)}><span>{item.name || '未命名分组'}</span><small>{item.assetIds.length} 张</small></button>)}</div>
-      <div className="button-row">
-        <button type="button" onClick={() => { const id = makeId('gallery'); setQuery(''); setSelection(id); edit(c => { c.list = { ...c.list, galleryGroups: [...(c.list?.galleryGroups ?? []), { id, name: '新分组', assetIds: [] }] }; }); }}>新增分组</button>
-        <button type="button" disabled={!group} onClick={() => edit(c => { c.list!.galleryGroups = c.list!.galleryGroups!.filter(item => item.id !== group!.id); })}>删除分组</button>
-        <button type="button" disabled={index <= 0} onClick={() => move(-1)}>上移分组</button>
-        <button type="button" disabled={index < 0 || index >= groups.length - 1} onClick={() => move(1)}>下移分组</button>
+  const imageIds = component.list?.assetIds ?? allImageIds;
+  const filteredImages = imageIds.filter(id => `${assets.get(id)?.name ?? '素材已移除'} ${id}`.toLocaleLowerCase().includes(search));
+  const selectedImageId = filteredImages.find(id => id === imageSelection) ?? filteredImages[0];
+  const selectedImage = assets.get(selectedImageId ?? '');
+  const missingImages = imageIds.filter(id => !assets.has(id)).length;
+  const change: GalleryEditorProps['edit'] = (update, options) => edit(current => { if (current.id === component.id && current.kind === 'galleryGrid') update(current); }, options);
+  const changeGroup = (id: string, update: (current: GalleryGroup) => void, options?: EditOptions) => change(current => {
+    const target = current.list?.galleryGroups?.find(item => item.id === id);
+    if (target) update(target);
+  }, options);
+  const moveGroup = (id: string, offset: number) => {
+    setSelection(id);
+    change(current => {
+      const items = current.list?.galleryGroups, from = items?.findIndex(item => item.id === id) ?? -1;
+      if (!items || from < 0 || from + offset < 0 || from + offset >= items.length) return;
+      const [item] = items.splice(from, 1); items.splice(from + offset, 0, item);
+    }, { separate: true });
+  };
+  const moveVariant = (groupId: string, id: string, offset: number) => changeGroup(groupId, current => {
+    const from = current.assetIds.indexOf(id), to = from + offset;
+    if (from < 0 || to < 0 || to >= current.assetIds.length) return;
+    [current.assetIds[from], current.assetIds[to]] = [current.assetIds[to], current.assetIds[from]];
+  }, { separate: true });
+  const manualImages = component.list?.assetIds !== undefined;
+  const setImageSource = (manual: boolean) => {
+    setQuery(''); setNotice('');
+    change(current => {
+      if (current.list?.galleryGroups !== undefined) return;
+      current.list ??= {};
+      if (!manual) delete current.list.assetIds;
+      else if (current.list.assetIds === undefined && allImageIds.length <= maxGalleryEntries) current.list.assetIds = [...allImageIds];
+    }, { separate: true });
+  };
+  const addImage = (id?: string) => {
+    if (!id) return;
+    if (imageIds.includes(id)) { setNotice('这张图片已在清单中。'); return; }
+    setNotice(''); setQuery(''); setImageSelection(id);
+    change(current => {
+      const ids = current.list?.assetIds;
+      if (current.list?.galleryGroups === undefined && ids && ids.length < maxGalleryEntries && !ids.includes(id)) ids.push(id);
+    }, { separate: true });
+  };
+  const moveImage = (id: string, offset: number) => change(current => {
+    if (current.list?.galleryGroups !== undefined) return;
+    const ids = current.list?.assetIds, from = ids?.indexOf(id) ?? -1;
+    if (!ids || from < 0 || from + offset < 0 || from + offset >= ids.length) return;
+    [ids[from], ids[from + offset]] = [ids[from + offset], ids[from]];
+  }, { separate: true });
+  return <div className="ui-gallery-content-fields">
+    <Field label="启用图鉴分组"><input type="checkbox" aria-label="启用图鉴分组" checked={groups !== undefined} disabled={groups === undefined && imageIds.length > maxGalleryEntries} onChange={event => {
+      const enabled = event.target.checked;
+      setQuery(''); setSelection(''); setVariantSelection(''); setNotice('');
+      change(current => {
+        current.list ??= {};
+        if (!enabled) delete current.list.galleryGroups;
+        else if (current.list.galleryGroups === undefined) {
+          const entries = galleryEntries(project, current);
+          if (entries.length <= maxGalleryEntries) {
+            const usedIds = new Set<string>();
+            current.list.galleryGroups = entries.map(entry => {
+              const id = usedIds.has(entry.id) ? makeId('gallery') : entry.id;
+              usedIds.add(id); return { ...entry, id };
+            });
+          }
+        }
+      }, { separate: true });
+    }} /></Field>
+    <p className="muted ui-collection-help">{groups !== undefined ? '每组在图鉴中显示一张缩略图，打开后按分镜顺序翻阅。关闭分组会移除分组设置，恢复单张图片清单。' : '每张图片单独显示；启用分组后，可以把同一段剧情的多张 CG 放在一起。'}</p>
+    {groups === undefined && imageIds.length > maxGalleryEntries && <p className="ui-collection-notice">当前图片超过 {maxGalleryEntries} 张，请先用指定图片清单缩小范围，再启用分组。</p>}
+    {groups !== undefined ? <div className="ui-gallery-content-layout">
+      <aside className="ui-gallery-content-navigation" aria-label="选择图鉴分组">
+        <div className="ui-collection-section-heading"><strong>分组 · {groups.length}</strong><button type="button" disabled={groups.length >= maxGalleryEntries} onClick={() => {
+          const id = makeId('gallery'); setQuery(''); setSelection(id); setVariantSelection('');
+          change(current => { const items = current.list?.galleryGroups; if (items && items.length < maxGalleryEntries) items.push({ id, name: '新分组', assetIds: [] }); }, { separate: true });
+        }}>新增分组</button></div>
+        <input aria-label="搜索图鉴分组" placeholder="搜索分组名称" value={query} onChange={event => setQuery(event.target.value)} />
+        <div className="ui-gallery-group-list" role="group" aria-label="图鉴分组">
+          {!filtered.length && <p className="ui-collection-empty">{groups.length ? '没有匹配的分组' : '暂无分组，点击“新增分组”开始。'}</p>}
+          {filtered.map(item => <button type="button" key={item.id} aria-pressed={group?.id === item.id} onClick={() => { setSelection(item.id); setVariantSelection(''); setNotice(''); }}><span>{item.name || '未命名分组'}</span><small>{item.assetIds.length} 张</small></button>)}
+        </div>
+        {groups.length >= maxGalleryEntries && <p className="muted">最多可添加 {maxGalleryEntries} 组。</p>}
+      </aside>
+      <section className="ui-gallery-content-detail" aria-label="编辑图鉴分组">
+        {group ? <div key={group.id}>
+          <div className="ui-collection-section-heading"><strong>第 {index + 1} 组</strong><div className="button-row">
+            <button type="button" disabled={index <= 0} onClick={() => moveGroup(group.id, -1)}>上移分组</button>
+            <button type="button" disabled={index < 0 || index >= groups.length - 1} onClick={() => moveGroup(group.id, 1)}>下移分组</button>
+            <button type="button" onClick={() => { setSelection(groups[index + 1]?.id ?? groups[index - 1]?.id ?? ''); change(current => { if (current.list?.galleryGroups) current.list.galleryGroups = current.list.galleryGroups.filter(item => item.id !== group.id); }, { separate: true }); }}>删除分组</button>
+          </div></div>
+          {search && <p className="muted">移动按全部分组的顺序进行，搜索只筛选当前清单。</p>}
+          <div className="ui-gallery-group-identity">
+            <Field label="分组名称"><input aria-label="分组名称" value={group.name} maxLength={120} onChange={event => { const name = event.target.value; setSelection(group.id); setQuery(''); changeGroup(group.id, current => { current.name = name; }); }} /></Field>
+            <Field label="分组缩略图"><UiAssetSelect project={project} kind="image" category="all" assetUrl={assetUrl} label="分组缩略图" value={group.thumbnailAssetId} empty="使用第一张分镜" onChange={value => changeGroup(group.id, current => { current.thumbnailAssetId = value; }, { separate: true })} /></Field>
+          </div>
+          <GalleryUnlockFields project={project} condition={group.unlockWhen} label="分组解锁条件" inherited={group.assetIds.some(id => !!component.list?.galleryUnlockWhen?.[id])} inheritedLabel="沿用各图片条件或剧情显示记录" onChange={(value, options) => changeGroup(group.id, current => { current.unlockWhen = value; }, options)} />
+          <div className="ui-collection-section-heading"><strong>分镜 · {group.assetIds.length}</strong><span className="muted">按清单顺序翻阅</span></div>
+          <div className="ui-gallery-variants">
+            {!group.assetIds.length && <p className="ui-collection-empty">这组还没有图片，在下方添加分镜。</p>}
+            {group.assetIds.map((id, variantIndex) => {
+              const asset = assets.get(id), inherited = group.unlockWhen ?? component.list?.galleryUnlockWhen?.[id];
+              return <div key={id} className="ui-gallery-variant" data-gallery-variant={id}>
+                <div className="gallery-variant-heading"><GalleryThumbnail id={asset?.id} assetUrl={assetUrl} /><span>{variantIndex + 1}. {asset?.name ?? '素材已移除'}{!asset && <small className="ui-collection-missing">{id}</small>}</span>
+                  <div className="button-row"><button type="button" aria-label={`上移分镜 ${variantIndex + 1}`} disabled={variantIndex === 0} onClick={() => moveVariant(group.id, id, -1)}>上移</button>
+                    <button type="button" aria-label={`下移分镜 ${variantIndex + 1}`} disabled={variantIndex === group.assetIds.length - 1} onClick={() => moveVariant(group.id, id, 1)}>下移</button>
+                    <button type="button" aria-label={`移除分镜 ${variantIndex + 1}`} onClick={() => changeGroup(group.id, current => { current.assetIds = current.assetIds.filter(value => value !== id); if (current.variantUnlockWhen) delete current.variantUnlockWhen[id]; }, { separate: true })}>移除</button></div>
+                </div>
+                <button type="button" className="ui-gallery-unlock-toggle" aria-expanded={variantSelection === id} onClick={() => setVariantSelection(variantSelection === id ? '' : id)}>分镜解锁条件 · {group.variantUnlockWhen?.[id] ? '单独设置' : group.unlockWhen ? '沿用分组' : inherited ? '沿用图片' : '剧情显示后解锁'}</button>
+                {variantSelection === id && <GalleryUnlockFields project={project} label={`分镜 ${variantIndex + 1} 解锁条件`} condition={group.variantUnlockWhen?.[id]} inherited={!!inherited} inheritedLabel={group.unlockWhen ? undefined : '沿用图片条件'} onChange={(value, options) => changeGroup(group.id, current => {
+                  if (!current.assetIds.includes(id)) return;
+                  if (value) (current.variantUnlockWhen ??= {})[id] = value;
+                  else if (current.variantUnlockWhen) delete current.variantUnlockWhen[id];
+                }, options)} />}
+              </div>;
+            })}
+          </div>
+          {group.assetIds.length < maxGalleryEntries ? <Field label="添加分镜"><UiAssetSelect project={project} kind="image" category="all" assetUrl={assetUrl} label="添加分镜" empty="搜索或浏览图片" allowEmpty={false} onChange={value => {
+            if (!value) return;
+            if (group.assetIds.includes(value)) { setNotice('这张图片已在当前分组中。'); return; }
+            setNotice(''); changeGroup(group.id, current => { if (current.assetIds.length < maxGalleryEntries && !current.assetIds.includes(value)) current.assetIds.push(value); }, { separate: true });
+          }} /></Field> : <p className="muted">每组最多可添加 {maxGalleryEntries} 张分镜。</p>}
+        </div> : <p className="ui-collection-empty">选择左侧分组后，在这里编辑名称、图片和解锁条件。</p>}
+      </section>
+    </div> : <>
+      <Field label="图片来源"><select aria-label="图鉴图片来源" value={manualImages ? 'selected' : 'all'} onChange={event => setImageSource(event.target.value === 'selected')}><option value="all">项目中的全部图片</option><option value="selected" disabled={!manualImages && allImageIds.length > maxGalleryEntries}>仅显示指定图片</option></select></Field>
+      {!manualImages && allImageIds.length > maxGalleryEntries && <button type="button" onClick={() => change(current => { if (current.list?.galleryGroups === undefined) { current.list ??= {}; current.list.assetIds = []; } }, { separate: true })}>创建空的指定图片清单</button>}
+      <div className="ui-collection-section-heading"><p className="muted ui-collection-help">{manualImages ? `已指定 ${imageIds.length} 张图片，按清单顺序显示。` : `当前包含 ${imageIds.length} 张图片，新增图片后自动加入。`}{missingImages > 0 ? `其中 ${missingImages} 张素材已移除。` : ''}</p>{manualImages && imageIds.length > 0 && <button type="button" title="只清空此控件的图片清单，素材仍保留在项目中。" onClick={() => change(current => { if (current.list?.galleryGroups === undefined && current.list?.assetIds) current.list.assetIds = []; }, { separate: true })}>清空图片清单</button>}</div>
+      <div className="ui-gallery-content-layout">
+        <aside className="ui-gallery-content-navigation" aria-label="选择图鉴图片">
+          <input aria-label="搜索图鉴图片" placeholder="搜索图片名称" value={query} onChange={event => setQuery(event.target.value)} />
+          <div className="ui-gallery-group-list" role="group" aria-label="图鉴图片">
+            {!filteredImages.length && <p className="ui-collection-empty">{imageIds.length ? '没有匹配的图片' : manualImages ? '清单为空，图鉴中不会显示图片。' : '项目中还没有图片。'}</p>}
+            {filteredImages.map((id, imageIndex) => <button type="button" key={`${id}-${imageIndex}`} aria-pressed={selectedImageId === id} onClick={() => { setImageSelection(id); setNotice(''); }}><span>{assets.get(id)?.name ?? '素材已移除'}</span>{!assets.has(id) && <small className="ui-collection-missing">丢失</small>}</button>)}
+          </div>
+          {manualImages && imageIds.length < maxGalleryEntries && <Field label="添加图片"><UiAssetSelect project={project} kind="image" category="all" assetUrl={assetUrl} label="添加图鉴图片" empty="搜索或浏览图片" allowEmpty={false} onChange={addImage} /></Field>}
+          {manualImages && imageIds.length >= maxGalleryEntries && <p className="muted">最多可指定 {maxGalleryEntries} 张图片。</p>}
+        </aside>
+        <section className="ui-gallery-content-detail" aria-label="图片解锁条件">
+          {selectedImageId ? <div key={selectedImageId}>
+            <div className="ui-gallery-selected-image"><GalleryThumbnail id={selectedImage?.id} assetUrl={assetUrl} /><strong>{selectedImage?.name ?? '素材已移除'}</strong></div>
+            {!selectedImage && <p className="ui-collection-missing">图片 {selectedImageId} 已不在项目中，游戏会跳过它。</p>}
+            {manualImages && <div className="button-row ui-gallery-image-actions">
+              <button type="button" disabled={imageIds.indexOf(selectedImageId) <= 0} onClick={() => moveImage(selectedImageId, -1)}>上移图片</button>
+              <button type="button" disabled={imageIds.indexOf(selectedImageId) >= imageIds.length - 1} onClick={() => moveImage(selectedImageId, 1)}>下移图片</button>
+              <button type="button" onClick={() => change(current => { if (current.list?.galleryGroups === undefined && current.list?.assetIds) current.list.assetIds = current.list.assetIds.filter(id => id !== selectedImageId); }, { separate: true })}>移除图片</button>
+            </div>}
+            {search && manualImages && <p className="muted">移动按全部图片的顺序进行，搜索只筛选当前清单。</p>}
+            <GalleryUnlockFields project={project} condition={component.list?.galleryUnlockWhen?.[selectedImageId]} onChange={(value, options) => change(current => {
+              if (current.list?.galleryGroups !== undefined || !(current.list?.assetIds ?? allImageIds).includes(selectedImageId)) return;
+              current.list ??= {};
+              if (value) (current.list.galleryUnlockWhen ??= {})[selectedImageId] = value;
+              else if (current.list.galleryUnlockWhen) delete current.list.galleryUnlockWhen[selectedImageId];
+            }, options)} />
+          </div> : <p className="ui-collection-empty">选择左侧图片后，在这里设置解锁条件。</p>}
+        </section>
       </div>
-      {group && <div key={group.id}>
-        <Field label="分组名称"><input aria-label="分组名称" value={group.name} maxLength={120} onChange={event => { setSelection(group.id); setQuery(''); changeGroup(item => { item.name = event.target.value; }); }} /></Field>
-        <Field label="分组缩略图"><UiAssetSelect project={project} kind="image" category="all" assetUrl={assetUrl} label="分组缩略图" value={group.thumbnailAssetId} empty="使用第一张分镜" onChange={value => changeGroup(item => { item.thumbnailAssetId = value; })} /></Field>
-        <GalleryUnlockFields project={project} condition={group.unlockWhen} label="分组解锁条件" onChange={value => changeGroup(item => { item.unlockWhen = value; })} />
-        <div className="ui-gallery-variants">{group.assetIds.map((id, variantIndex) => <div key={id} className="ui-gallery-variant" data-gallery-variant={id}>
-          <div className="gallery-variant-heading"><img src={assetUrl(id)} alt="" loading="lazy" /><span>{variantIndex + 1}. {project.assets.find(asset => asset.id === id)?.name ?? id}</span></div>
-          <div className="button-row"><button type="button" aria-label={`上移分镜 ${variantIndex + 1}`} disabled={variantIndex === 0} onClick={() => changeGroup(item => { [item.assetIds[variantIndex - 1], item.assetIds[variantIndex]] = [item.assetIds[variantIndex], item.assetIds[variantIndex - 1]]; })}>上移</button>
-            <button type="button" aria-label={`下移分镜 ${variantIndex + 1}`} disabled={variantIndex === group.assetIds.length - 1} onClick={() => changeGroup(item => { [item.assetIds[variantIndex + 1], item.assetIds[variantIndex]] = [item.assetIds[variantIndex], item.assetIds[variantIndex + 1]]; })}>下移</button>
-            <button type="button" aria-label={`移除分镜 ${variantIndex + 1}`} onClick={() => changeGroup(item => { item.assetIds.splice(variantIndex, 1); if (item.variantUnlockWhen) delete item.variantUnlockWhen[id]; })}>移除</button></div>
-          <details><summary>分镜解锁条件</summary><GalleryUnlockFields project={project} label={`分镜 ${variantIndex + 1} 解锁条件`} condition={group.variantUnlockWhen?.[id]} inherited={!!group.unlockWhen} onChange={value => changeGroup(item => { if (value) (item.variantUnlockWhen ??= {})[id] = value; else if (item.variantUnlockWhen) delete item.variantUnlockWhen[id]; })} /></details>
-        </div>)}</div>
-        <Field label="添加分镜"><UiAssetSelect project={project} kind="image" category="all" assetUrl={assetUrl} label="添加分镜" empty="选择图片" allowedIds={project.assets.filter(asset => asset.kind === 'image' && !group.assetIds.includes(asset.id)).map(asset => asset.id)} onChange={value => { if (value) changeGroup(item => { if (!item.assetIds.includes(value)) item.assetIds.push(value); }); }} /></Field>
-      </div>}
     </>}
-    {!groups && <>
-      <Field label="图鉴图片"><select aria-label="设置解锁条件的图鉴图片" value={selectedImage?.id ?? ''} onChange={event => setImageSelection(event.target.value)}>{!images.length && <option value="">暂无图片</option>}{images.map(image => <option key={image.id} value={image.id}>{image.name}</option>)}</select></Field>
-      {selectedImage && <GalleryUnlockFields project={project} condition={component.list?.galleryUnlockWhen?.[selectedImage.id]} onChange={value => edit(current => { current.list ??= {}; if (value) (current.list.galleryUnlockWhen ??= {})[selectedImage.id] = value; else if (current.list.galleryUnlockWhen) delete current.list.galleryUnlockWhen[selectedImage.id]; })} />}
-    </>}
-    <Field label="详情图片缩放"><select aria-label="详情图片缩放" value={component.list?.galleryFit ?? 'contain'} onChange={event => edit(c => { c.list = { ...c.list, galleryFit: event.target.value as 'contain' | 'cover' | 'stretch' }; })}><option value="contain">完整显示</option><option value="cover">裁切铺满</option><option value="stretch">拉伸铺满</option></select></Field>
-    <Field label="最后一张再点击"><select aria-label="最后一张再点击" value={component.list?.galleryEndAction ?? 'close'} onChange={event => edit(c => { c.list = { ...c.list, galleryEndAction: event.target.value as 'close' | 'loop' }; })}><option value="close">返回图鉴</option><option value="loop">从第一张循环</option></select></Field>
-    <Field label="详情显示翻页和关闭按钮"><input type="checkbox" aria-label="详情显示翻页和关闭按钮" checked={component.list?.galleryShowControls ?? true} onChange={event => edit(c => { c.list = { ...c.list, galleryShowControls: event.target.checked }; })} /></Field>
-    <Field label="最多同时显示页码"><NumberInput aria-label="最多同时显示页码" min={1} max={99} value={component.list?.galleryPageButtonLimit ?? 9} onChange={event => edit(c => { c.list = { ...c.list, galleryPageButtonLimit: Math.max(1, Math.min(99, Number(event.target.value) || 1)) }; })} /></Field>
-    <details className="ui-property-group"><summary>页码大小与文字</summary>
-      {(['pageButtonWidth', 'pageButtonHeight', 'pageGap', 'pageFontSize'] as const).map(key => <Field key={key} label={{ pageButtonWidth: '页码按钮宽度', pageButtonHeight: '页码按钮高度', pageGap: '页码按钮间距', pageFontSize: '页码字号' }[key]}><NumberInput min={key === 'pageGap' ? 0 : key === 'pageFontSize' ? 12 : 16} max={key === 'pageGap' ? 128 : key === 'pageFontSize' ? 96 : 256} value={component.list?.[key] ?? ''} placeholder="自动" onChange={event => edit(c => { c.list = { ...c.list, [key]: event.target.value === '' ? undefined : Number(event.target.value) }; })} /></Field>)}
-      <Field label="页码字体"><UiAssetSelect project={project} kind="font" assetUrl={assetUrl} label="页码字体" value={component.list?.pageFontAssetId} empty="沿用组件字体" onChange={value => edit(c => { c.list = { ...c.list, pageFontAssetId: value }; })} /></Field>
-      <Field label="页码粗体"><input type="checkbox" checked={component.list?.pageBold ?? false} onChange={event => edit(c => { c.list = { ...c.list, pageBold: event.target.checked }; })} /></Field>
-      <Field label="页码文字颜色"><input type="color" value={component.list?.pageTextColor ?? component.style?.textColor ?? project.ui.textColor} onChange={event => edit(c => { c.list = { ...c.list, pageTextColor: event.target.value }; })} /></Field>
-    </details>
-  </details>;
+    {notice && <p className="ui-collection-notice" role="status">{notice}</p>}
+  </div>;
+}
+
+function GalleryThumbnail({ id, assetUrl }: { id?: string; assetUrl: AssetUrl }) {
+  const [failedUrl, setFailedUrl] = useState<string>();
+  const url = id ? assetUrl(id) : undefined;
+  return <span className="ui-gallery-content-thumbnail">{url && url !== failedUrl ? <img src={url} alt="" loading="lazy" onError={() => setFailedUrl(url)} /> : <ImageIcon size={22} aria-hidden="true" />}</span>;
 }

@@ -1,17 +1,20 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
 import { VisualTransitionField, VisualTransitionsEditor } from './VisualTransitionsEditor';
-import type { VisualTransitions, ActorTransitionRule, Project } from '../core/model';
+import { makeId, type VisualTransitions, type ActorTransitionRule, type Project, type TextMotion } from '../core/model';
 import { createMediaVisual, mediaLifetimeNames, type MediaContent, type MediaLifetime } from '../core/media-command';
 import { defaultImageTransform } from '../core/image-transform';
 import { ImageTransformFields } from './ImageTransformFields';
 import { actionText } from '../core/text-script';
 import { UiAssetSelect } from './AssetPicker';
 import { NumberInput } from './NumberInput';
+import { TextMotionFields } from './TextMotionFields';
 
 export function MediaCommandPicker({ project, content, assetUrl, onInsert, onCancel }: { project: Project; content: MediaContent | 'hide'; assetUrl: (id?: string) => string | undefined; onInsert: (text: string) => void; onCancel: () => void }) {
   const [assetId, setAssetId] = useState(project.assets.find(asset => asset.kind === content)?.id);
-  const [id, setId] = useState<string>(content === 'hide' ? 'image' : content);
+  const [id, setId] = useState<string>(() => content === 'hide' ? 'image' : content === 'text' ? makeId('text') : content);
+  const [fontAssetId, setFontAssetId] = useState<string>();
+  const [textMotion, setTextMotion] = useState<TextMotion>();
   const [visualTransitions, setVisualTransitions] = useState<VisualTransitions>();
   const [transitionWait, setTransitionWait] = useState(false);
   const [exitTransition, setExitTransition] = useState<ActorTransitionRule>();
@@ -29,16 +32,20 @@ export function MediaCommandPicker({ project, content, assetUrl, onInsert, onCan
       {(content === 'image' || content === 'video') && <UiAssetSelect project={project} assetUrl={assetUrl} kind={content} category="all" label={content === 'image' ? '显示图片素材' : '显示视频素材'} value={assetId} empty="选择素材" onChange={setAssetId} />}
       {content === 'text' && <label className="text-command-field">文字<textarea aria-label="显示文字内容" value={text} onChange={event => setText(event.target.value)} /></label>}
       <label className="text-command-field">对象 ID<input aria-label="对象ID" value={id} onChange={event => setId(event.target.value)} /></label>
-      <p className="text-command-hint">相同 ID 替换同一对象；不同 ID 可同时显示。默认图片 image、视频 video、文字 text。</p>
+      <p className="text-command-hint">相同 ID 替换同一对象；不同 ID 可同时显示。{content === 'text' ? '每次新增文字会自动分配不同 ID。' : '隐藏时填写显示指令中的对象 ID。'}</p>
       {content === 'hide' && <><VisualTransitionField label="离场过渡" value={exitTransition} inherit onChange={setExitTransition} /><label className="check-field"><input type="checkbox" aria-label="等待离场过渡" checked={hideWait} onChange={event => setHideWait(event.target.checked)} />等待离场结束</label></>}
       {content !== 'hide' && <>
-        {content === 'image' ? <><ImageTransformFields value={transform} onChange={setTransform} /><label className="text-command-field">显示范围<select aria-label="图片显示范围" value={lifetime} onChange={event => { const value = event.target.value as MediaLifetime; setLifetime(value); setDuration(value === 'duration' ? duration || 3 : 0); }}>{Object.entries(mediaLifetimeNames).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label></> : <><div className="text-command-inline">{numeric('横向位置 %', x, setX)}{numeric('纵向位置 %', y, setY)}</div><div className="text-command-inline">{numeric('宽度 %', width, setWidth, 1, 400)}{numeric('高度 %', height, setHeight, 1, 400)}</div></>}
+        {content === 'image' ? <><ImageTransformFields value={transform} onChange={setTransform} /><label className="text-command-field">显示范围<select aria-label="图片显示范围" value={lifetime} onChange={event => { const value = event.target.value as MediaLifetime; setLifetime(value); setDuration(value === 'duration' ? duration || 3 : 0); }}>{Object.entries(mediaLifetimeNames).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label></> : <><div className="text-command-inline">{numeric('横向位置 %', x, setX)}{numeric('纵向位置 %', y, setY)}</div><div className="text-command-inline">{numeric('宽度 %', width, value => { if (value > 0) setWidth(value); })}{numeric('高度 %', height, value => { if (value > 0) setHeight(value); })}</div></>}
         <div className="text-command-inline">{(content !== 'image' || lifetime === 'duration') && numeric('显示时长（秒）', duration, setDuration, 0)}{numeric('图层', layer, setLayer)}</div>
         <p className="text-command-hint">{content === 'image' ? '默认仅本句：推进台词后隐藏。持续显示保留到隐藏对象或切换背景。' : '位置按对象中心计算；时长 0 持续显示，直到隐藏对象或切换背景。视频默认完整播放一次。'}</p>
         <label className="check-field"><input type="checkbox" aria-label="等待显示结束" checked={wait && duration > 0} disabled={duration === 0} onChange={event => setWait(event.target.checked)} />等待显示结束后继续台词</label>
         {content !== 'text' && <label className="text-command-field">适应方式<select aria-label="适应方式" value={fit} onChange={event => setFit(event.target.value as typeof fit)}><option value="contain">完整容纳</option><option value="cover">填满并裁切</option><option value="stretch">拉伸</option></select></label>}
         {content === 'video' && <><label className="check-field"><input type="checkbox" aria-label="循环视频" checked={loop} onChange={event => setLoop(event.target.checked)} />循环播放</label>{numeric('视频音量 %', volume, setVolume, 0, 100)}</>}
-        {content === 'text' && <>{numeric('文字字号', fontSize, setFontSize, 12, 300)}<label className="text-command-field">文字颜色<input aria-label="文字颜色" type="color" value={color} onChange={event => setColor(event.target.value)} /></label></>}
+        {content === 'text' && <>
+          <UiAssetSelect project={project} assetUrl={assetUrl} kind="font" label="文字字体" value={fontAssetId} empty="默认字体" onChange={setFontAssetId} />
+          {numeric('文字字号', fontSize, value => setFontSize(Math.round(value)), 1)}<label className="text-command-field">文字颜色<input aria-label="文字颜色" type="color" value={color} onChange={event => setColor(event.target.value)} /></label>
+          <TextMotionFields motion={textMotion} onChange={setTextMotion} />
+        </>}
       </>}
       {content !== 'hide' && <VisualTransitionsEditor value={visualTransitions} wait={transitionWait} onChange={setVisualTransitions} onWaitChange={setTransitionWait} />}
       {error && <p role="alert">{error}</p>}
@@ -46,7 +53,7 @@ export function MediaCommandPicker({ project, content, assetUrl, onInsert, onCan
     <div className="text-command-picker-actions"><button type="button" onClick={onCancel}>取消</button><button type="button" className="primary" disabled={(content === 'image' || content === 'video') && !assetId} onClick={() => {
       try {
         if (!/^[a-z][a-z0-9_]{0,63}$/.test(id)) throw new Error('对象 ID 请使用小写英文字母开头的字母、数字或下划线。');
-        const action = content === 'hide' ? { kind: 'hideVisual' as const, instanceId: id, exitTransition, wait: hideWait } : createMediaVisual(content, content === 'text' ? text : assetId!, { visualTransitions, transitionWait, instanceId: id, ...(content === 'image' ? { ...transform, lifetime } : { x: x / 100, y: y / 100, width: width / 100, height: height / 100 }), duration, layer, wait: duration > 0 && wait, fit, loop, volume: volume / 100, fontSize, color });
+        const action = content === 'hide' ? { kind: 'hideVisual' as const, instanceId: id, exitTransition, wait: hideWait } : createMediaVisual(content, content === 'text' ? text : assetId!, { visualTransitions, transitionWait, instanceId: id, ...(content === 'image' ? { ...transform, lifetime } : { x: x / 100, y: y / 100, width: width / 100, height: height / 100 }), duration, layer, wait: duration > 0 && wait, fit, loop, volume: volume / 100, fontSize, color, fontAssetId, textMotion });
         onInsert(actionText(project, action) + '\n');
       } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     }}>插入指令</button></div>

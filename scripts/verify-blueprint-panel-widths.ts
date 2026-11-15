@@ -8,6 +8,7 @@ import { createServer } from 'vite';
 import { createProject } from '../src/core/model';
 import { blueprintNodeDefaults, createBlueprintGraph, connectBlueprintPins, synchronizeBlueprintSignatures } from '../src/core/blueprint';
 import { launchDesktopFixture } from './lib/desktop-fixture';
+import { followUiPreviewPage, openUiPreviewForTest } from './lib/ui-preview-window';
 const root=path.resolve('.'), output=path.join(root,'artifacts/blueprint-panel-widths',new Date().toISOString().replaceAll(':','-'));
 await fs.mkdir(output,{recursive:true});
 const project=createProject('高级UI编辑验收');
@@ -16,28 +17,34 @@ const make=(name:string,operation:string,value:number)=>{const graph=createBluep
 const initialize=make('方案初始化','set',10),multiply=make('组件初始化一','multiply',2),add=make('组件初始化二','add',3);
 const components=[{id:'later',layer:2,events:{onShow:add}},{id:'earlier',layer:1,events:{onShow:multiply}},{id:'duplicate',layer:3,events:{onShow:add}}].map((c,index)=>({...c,kind:'text' as const,page:'main' as const,text:c.id,x:.1,y:index*.2,width:.5,height:.1}));
 project.ui.instances=[{id:'scheme',name:'方案',components,blueprintId:initialize}];project.ui.activeInstanceId='scheme';synchronizeBlueprintSignatures(project);
+// Screenshots stay out of the project folder: the editor imports new media found there, changing the project mid-test.
+const shots=path.join(output,'shots');await fs.mkdir(shots,{recursive:true});
 const projectFile=path.join(output,'project.vns.json');await fs.writeFile(projectFile,JSON.stringify(project));
 const server=await createServer({root,server:{host:'127.0.0.1',port:0,watch:{ignored:['**/artifacts/**','**/resources/**','**/release/**']}}});await server.listen();
-const app=await launchDesktopFixture({root,projectFile,profile:path.join(output,'profile'),devUrl:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port}),page=await app.firstWindow();
+const app=await launchDesktopFixture({root,projectFile,profile:path.join(output,'profile'),devUrl:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port}),editor=await app.firstWindow();let page=editor;
 try {
  await expect(page.locator('.project-title strong')).toHaveText(project.name,{timeout:45000});
- await page.locator('[data-workspace-tab="ui"]').click();await page.getByRole('button',{name:'高级 UI 蓝图',exact:true}).click();
+ // Node library and property widths belong to the full blueprint editor; the interface event graph docks its panels instead.
+ await page.locator('[data-workspace-tab="blueprint"]').click();await page.getByLabel('演出目标',{exact:true}).selectOption('graph:'+initialize);
  await page.getByRole('button',{name:'展开节点库',exact:true}).click();
  const palette=page.getByRole('separator',{name:'调整节点库宽度',exact:true});const before=(await page.getByLabel('节点库',{exact:true}).boundingBox())!.width;const r=(await palette.boundingBox())!;await page.mouse.move(r.x+3,r.y+30);await page.mouse.down();await page.mouse.move(r.x-40,r.y+30,{steps:8});await page.mouse.up();assert.ok((await page.getByLabel('节点库',{exact:true}).boundingBox())!.width<before);
  const props=page.getByRole('separator',{name:'调整蓝图属性宽度',exact:true});await props.focus();await page.keyboard.press('ArrowRight');await expect(props).toHaveAttribute('aria-valuenow','270');await page.keyboard.press('Home');await expect(props).toHaveAttribute('aria-valuenow','280');
  await page.getByRole('button',{name:'收起节点库',exact:true}).click();await expect(palette).toHaveCount(0);await page.getByRole('button',{name:'展开节点库',exact:true}).click();await expect(palette).toHaveAttribute('aria-valuenow','151');
+ await page.locator('[data-workspace-tab="ui"]').click();await page.getByLabel('界面编辑模式').getByRole('button',{name:'事件图',exact:true}).click();await page.getByLabel('事件图页面').selectOption('ui:main');
  const dock=page.getByLabel('高级界面面板布局',{exact:true});await expect(dock).toBeVisible();
- await dock.getByLabel('高级界面组件列表').getByRole('button',{name:'later',exact:true}).click();await expect(page.getByLabel('联动组件',{exact:true})).toHaveValue('later');
- await dock.locator('[data-dock-panel="settings"] > header').dragTo(dock.locator('[data-dock-panel="hierarchy"] > header'));await expect(dock.locator('[data-dock-panel="settings"]')).toHaveAttribute('data-dock-slot','left');
+ const bindings=dock.locator('button.ui-dock-disclosure');if(await bindings.getAttribute('aria-expanded')!=='true')await bindings.click();
+ await dock.locator('[data-ui-component-id="later"]').click();await expect(dock.getByLabel('联动组件',{exact:true})).toHaveValue('later');
+ await dock.locator('[data-dock-panel="settings"] > header').dragTo(dock.locator('[data-dock-panel="hierarchy"] > header'));await expect(dock.locator('[data-dock-panel="settings"]')).toHaveAttribute('data-dock-slot','left');await expect(dock.getByLabel('联动组件',{exact:true})).toHaveValue('later');
  const divider=dock.getByRole('separator',{name:'调整左侧面板宽度'});await divider.focus();await page.keyboard.press('ArrowRight');await expect(divider).toHaveAttribute('aria-valuenow','20');
- await page.screenshot({path:path.join(output,'layout.png')});
- await expect(page.locator('.dirty-dot')).toHaveCount(0);
+ await page.screenshot({path:path.join(shots,'layout.png')});
+ await expect(editor.locator('.dirty-dot')).toHaveCount(0);
  const savedBefore=await fs.readFile(projectFile,'utf8');
- await page.locator('.ui-logic-preview > summary').click();
+ page=await openUiPreviewForTest(app,editor);
  const value=page.getByLabel('预演参数 初始化值',{exact:true});await expect(value).toHaveValue('23');await value.fill('99');await expect(value).toHaveValue('99');
- await page.getByRole('button',{name:'返回界面设计',exact:true}).click();await page.getByLabel('设计页面', { exact: true }).selectOption({ label: '对话' });await page.getByRole('button',{name:'高级 UI 蓝图',exact:true}).click();await page.locator('.ui-logic-preview > summary').click();await expect(value).toHaveValue('10');
- await page.getByRole('button',{name:'返回界面设计',exact:true}).click();await page.getByLabel('设计页面', { exact: true }).selectOption({ label: '标题' });await page.getByRole('button',{name:'高级 UI 蓝图',exact:true}).click();await page.locator('.ui-logic-preview > summary').click();await expect(value).toHaveValue('23');
- await expect(page.locator('.dirty-dot')).toHaveCount(0);expect(await fs.readFile(projectFile,'utf8')).toBe(savedBefore);
+ // The preview follows the page chosen in the editor and starts that page afresh.
+ await editor.getByLabel('事件图页面').selectOption('ui:say');await followUiPreviewPage(page,'对话');await expect(value).toHaveValue('10');
+ await editor.getByLabel('事件图页面').selectOption('ui:main');await followUiPreviewPage(page,'标题');await expect(value).toHaveValue('23');
+ await expect(editor.locator('.dirty-dot')).toHaveCount(0);expect(await fs.readFile(projectFile,'utf8')).toBe(savedBefore);
  await fs.writeFile(path.join(output,'report.json'),JSON.stringify({status:'passed',checks:['节点库鼠标调整真实宽度','属性键盘调整和Home恢复','节点库折叠再开保持宽度','高级UI四面板独立布局及交换后状态保留','组件列表选择联动对象','分隔线键盘调整','方案初始化先于组件','组件按层级初始化','同一个显示蓝图只执行一次','切换页面不继承临时预演操作','返回原页重新初始化','工程和磁盘不变']}));console.log(output);
-} catch(error){await page.screenshot({path:path.join(output,'failure.png')});throw error;}
+} catch(error){await page.screenshot({path:path.join(output,'failure.png')}).catch(()=>undefined);throw error;}
 finally {await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().forEach(w=>w.destroy())).catch(()=>undefined);await app.close();await server.close();}

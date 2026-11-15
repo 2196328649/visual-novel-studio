@@ -25,6 +25,7 @@ export function VisualClipInspector({ project, graph, view, assetUrl, time, onSe
   const object = view.action, local = Math.max(0, time - view.at), enabled = time >= view.at && time < view.until;
   const fields = visualInputFields(view.object).filter(field => field.path[0] !== 'children' && (object.content !== 'group' || field.path[0] === 'parameterValues' || ['duration', 'width', 'height'].includes(field.key)));
   const computed = new Set(fields.filter(field => compositionFieldBinding(graph, view, field.path).computed).map(field => 'object_' + field.key));
+  for (const key of ['textAlign', 'textVerticalAlign', 'textEffects', 'textClip'] as const) if (compositionFieldBinding(graph, view, [key]).computed) computed.add('object_' + key);
   const animate = (kind: 'fade' | 'slide' | 'ink') => {
     const duration = object.duration, curves = { ...object.curves }, first = object.keyframes[0];
     const key = (at: number, value: number, easing: 'linear' | 'outquad' = 'linear') => ({ at, value, easing });
@@ -39,17 +40,21 @@ export function VisualClipInspector({ project, graph, view, assetUrl, time, onSe
   };
   return <div className="visual-clip-inspector" aria-label="通用片段属性">
     {object.content === 'group' && <div className="visual-composition-actions">{onOpen && <button className="small-button" onClick={onOpen}><Layers size={15} />进入组合</button>}{onSave && !object.compositionId && <button className="small-button" onClick={onSave}>保存为组合资源</button>}{object.compositionId && <><button className="small-button" onClick={onResource}>编辑组合资源</button><button className="small-button" onClick={onDetach}>转为本地组合</button></>}</div>}
-    <div className="segmented visual-inspector-tabs" role="tablist" aria-label="片段属性分类">{([['basic', '基础'], ['animation', '动画与效果'], ['parameters', '可替换参数']] as const).map(([id, name]) => <button type="button" role="tab" key={id} aria-selected={tab === id} onClick={() => setTab(id)}>{name}</button>)}</div>
+    <div className="segmented visual-inspector-tabs" role="tablist" aria-label="片段属性分类">{([['basic', '基础'], ['animation', '动画'], ['parameters', '可替换参数']] as const).map(([id, name]) => <button type="button" role="tab" key={id} aria-selected={tab === id} onClick={() => setTab(id)}>{name}</button>)}</div>
     {tab === 'basic' && <>
       {!enabled && <button className="visual-locate" onClick={() => onSeek(view.at + Math.min(.01, (view.until - view.at) / 2))}>定位到片段，调整当前画面</button>}
-      <TimelineVisualClipEditor project={project} object={object} linked={computed} linkedHint="此属性由组件连线控制。" assetUrl={assetUrl} onChange={onChange} time={local} keyframesEnabled={enabled} onPoseChange={onPose} onToggleKeyframe={onKeyframe} onSeek={at => onSeek(view.at + at)} />
+      <TimelineVisualClipEditor project={project} object={object} linked={computed} linkedHint="此属性由组件连线控制。" assetUrl={assetUrl} onChange={onChange} onTextEffectChange={(key, value) => {
+        const field = fields.find(item => item.key === 'textEffects_' + key);
+        if (field && !computed.has('object_' + field.key)) onParameterValue(field, value);
+      }} time={local} keyframesEnabled={enabled} onPoseChange={onPose} onToggleKeyframe={onKeyframe} onSeek={at => onSeek(view.at + at)} />
       <label className="visual-retime"><input type="checkbox" aria-label="同步缩放动画" checked={object.retimeOnDuration ?? false} onChange={event => onChange({ retimeOnDuration: event.target.checked })} />调整时长时同步缩放动画</label>
     </>}
     {tab === 'animation' && <div className="visual-effects">
       {object.content === 'group' && <label className="visual-retime"><input type="checkbox" aria-label="快进时跳过此演出" checked={object.chapterPresentation ?? false} onChange={event => onChange({ chapterPresentation: event.target.checked })} />快进时跳过此演出</label>}
       <div className="visual-animation-presets" aria-label="添加动画"><button onClick={() => animate('fade')}><Sparkles size={14} />淡入淡出</button><button onClick={() => animate('slide')}>滑入</button>{['text', 'image'].includes(object.content) && <button onClick={() => animate('ink')}>笔触消散</button>}</div>
       {onGlyphParticles && ['text', 'image'].includes(object.content) && <button className="visual-glyph-create" onClick={onGlyphParticles}>从此{object.content === 'text' ? '文字' : '图片'}生成粒子</button>}
-      <VisualObjectEditor project={project} object={object} effectsOnly onChange={onEffects} start={view.at} onSeek={onSeek} />
+      {(object.content === 'text' || object.glyphParticles?.source === 'text') && <p className="muted">字体、颜色和排版在“基础”页设置。</p>}
+      <VisualObjectEditor project={project} object={object} effectsOnly textAppearanceInBasics onChange={onEffects} start={view.at} onSeek={onSeek} />
     </div>}
     {tab === 'parameters' && <div className="visual-parameters" aria-label="片段可替换参数">
       <p className="muted">公开后可在上层替换；组合参数可继续向外传递。</p>

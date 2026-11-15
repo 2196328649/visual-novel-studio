@@ -1,9 +1,13 @@
 import { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Project } from '../core/model';
 import { shareProjectBranches } from '../core/project-history';
+import { mutateProject } from '../core/project-mutation';
 import type { Commit } from './editor';
 
-export const NumericEditContext = createContext<{ begin: () => void; finish: (cancel?: boolean) => void } | undefined>(undefined);
+/** The owner captures its complete authored state, which may be a project
+ * transaction or an unfinished field's set/reset/unchanged state. */
+export interface NumericEditControls { begin: () => void; finish: (cancel?: boolean) => void }
+export const NumericEditContext = createContext<NumericEditControls | undefined>(undefined);
 
 /** Keep numeric gestures in the preview; serialize and record one undo step at
  * the end. Unchanged project branches retain the preview reader's caches. */
@@ -27,8 +31,7 @@ export function useLiveParameterEdit(project: Project, commit?: Commit) {
   const edit: Commit = useCallback((label, change, options) => {
     const current = session.current;
     if (!current || current.base !== latest.current.project) { latest.current.commit?.(label, change, options); return; }
-    const draft = structuredClone(current.value); change(draft);
-    const next = shareProjectBranches(current.value, draft);
+    const next = shareProjectBranches(current.value, mutateProject(current.value, change));
     if (next === current.value) return;
     current.value = next; current.label = label; current.edits.push(change);
     setPreview({ base: current.base, value: next });

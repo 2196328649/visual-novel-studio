@@ -1,9 +1,39 @@
-.ui-inspector-shell > .inspector-scroll { padding: 12px 12px 22px; overflow-x: hidden; scrollbar-gutter: stable; }
-.ui-inspector { min-width: 0; }
-#root .ui-inspector-shell .ui-inspector-tabs { display: flex; align-items: center; position: sticky; z-index: 3; top: -12px; width: calc(100% + 24px); height: auto; min-height: 48px; box-sizing: border-box; margin: -12px -12px 12px; padding: 9px 12px; gap: 4px; border: 0; border-radius: 0; background: var(--editor-panel); }
+.ui-inspector-shell > .inspector-scroll { padding: 12px 12px 22px; overflow-x: hidden; scrollbar-gutter: stable; scroll-padding-block-start: var(--ui-inspector-sticky-height, 96px); }
+.ui-inspector { min-width: 0; container: ui-inspector / inline-size; }
+.ui-inspector-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
+.ui-inspector-view { min-width: 0; }
+.ui-inspector-view[hidden] { display: none !important; }
+.ui-inspector-region { min-width: 0; margin: 0 0 16px; }
+.ui-inspector-region-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 9px; margin: 0 0 8px; padding: 0 2px; font-size: 12px; line-height: 1.6; font-weight: 600; color: var(--editor-text); overflow-wrap: anywhere; }
+.ui-inspector-region-title > span { font-size: 11px; font-weight: 400; color: var(--editor-muted); }
+.ui-inspector-region-title > strong { min-width: 0; font-size: 12px; font-weight: 600; }
+.ui-inspector-region[data-ui-inspector-region="function"] { padding-top: 11px; border-top: 1px solid var(--editor-border); }
+.ui-inspector-view[data-searching="true"] > .ui-inspector-region:not(:has([data-ui-inspector-group][data-search-match="true"]:not([hidden]):not([hidden] *))) { display: none; }
+.ui-inspector-part-scope { margin: 9px 0 0; padding: 7px 9px; border-left: 2px solid var(--editor-accent); background: color-mix(in srgb, var(--editor-raised) 60%, var(--editor-panel)); font-size: 11px; line-height: 1.65; color: var(--editor-text); overflow-wrap: anywhere; }
+.ui-inspector-object { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 8px; padding-bottom: 9px; }
+.ui-inspector-object > strong { font-size: 13px; color: var(--editor-text); }
+.ui-inspector-object > span { min-width: 0; font-size: 11px; line-height: 1.5; color: var(--editor-muted); overflow-wrap: anywhere; }
+.ui-inspector-search { display: flex; align-items: center; gap: 6px; min-width: 0; margin-bottom: 11px; padding: 0 7px; border: 1px solid var(--editor-border); border-radius: 5px; background: var(--editor-input, var(--editor-panel)); }
+.ui-inspector-search > svg { flex: none; color: var(--editor-muted); }
+.ui-inspector-search > input { flex: 1; width: 0; min-width: 0; padding: 7px 0; border: 0; background: transparent; box-shadow: none; }
+.ui-inspector-search:focus-within { outline: 1px solid var(--editor-accent); }
+.ui-inspector-search > input:focus { outline: 0; }
+.ui-inspector-search input::-webkit-search-cancel-button { display: none; }
+.ui-inspector-search > button { flex: none; width: 24px; height: 26px; min-height: 0; padding: 4px; }
+.ui-inspector-source, .ui-inspector-notice, .ui-inspector-no-matches { font-size: 11px; line-height: 1.6; margin: 6px 0 10px; color: var(--editor-muted); overflow-wrap: anywhere; }
+.ui-inspector-notice { color: var(--editor-text); border-left: 2px solid var(--editor-accent); padding-left: 8px; }
+.ui-inspector-view:has([data-ui-inspector-group][data-search-match="true"]:not([hidden]):not([hidden] *)) > .ui-inspector-no-matches { display: none; }
+#root .ui-inspector-shell .ui-inspector-header { position: sticky; z-index: 3; top: -12px; width: calc(100% + 24px); margin: -12px -12px 12px; padding: 0 12px 9px; box-sizing: border-box; border-bottom: 1px solid var(--editor-border); background: var(--editor-panel); }
+#root .ui-inspector-shell .ui-inspector-tabs { display: flex; align-items: center; position: static; width: 100%; height: auto; min-height: 45px; box-sizing: border-box; margin: 0; padding: 7px 0; gap: 4px; border: 0; border-radius: 0; background: transparent; }
 #root .ui-inspector-shell .ui-inspector-tabs > button { flex: 1; min-width: 0; min-height: 30px; font-size: 12px; border: 0; background: transparent; color: var(--editor-muted); }
 #root .ui-inspector-shell .ui-inspector-tabs > button.active { background: var(--editor-raised); color: var(--editor-text); font-weight: 600; }
 #root .ui-inspector-shell .ui-inspector-tabs > button:hover { color: var(--editor-text); }
+.ui-inspector-breadcrumb { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 7px; min-width: 0; padding: 1px 2px 0; font-size: 11px; line-height: 1.6; color: var(--editor-muted); overflow-wrap: anywhere; }
+.ui-inspector-breadcrumb:focus-visible { outline: 1px solid var(--editor-accent); outline-offset: 3px; border-radius: 2px; }
+.ui-inspector-breadcrumb > strong { min-width: 0; max-width: 100%; font-size: 12px; font-weight: 600; color: var(--editor-text); }
+#root .ui-inspector-shell .ui-inspector-breadcrumb > button { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; height: auto; min-height: 26px; padding: 2px 0; gap: 5px; text-align: left; white-space: normal; font-size: 11px; line-height: 1.6; }
+.ui-inspector-breadcrumb > button > svg { flex: none; }
+.ui-inspector-breadcrumb > button > span { min-width: 0; overflow-wrap: anywhere; }
 .ui-inspector-selection { padding: 0 2px 12px; }
 .ui-inspector-selection .field { margin: 0; }
 .ui-inspector-selection input { font-weight: 600; }
@@ -22,16 +52,44 @@
 .ui-group-body { padding: 11px 10px; min-width: 0; }
 .ui-inspector .field { margin-bottom: 10px; gap: 5px; }
 .ui-inspector .field-control { min-width: 0; }
-.ui-inspector .field-label { color: var(--editor-muted); font-size: 11px; }
+.ui-inspector .field-label { color: var(--editor-muted); font-size: 11px; overflow-wrap: anywhere; }
 .ui-inspector .field :is(input, select, textarea) { min-width: 0; }
+/* Intrinsic wrapping also works in nested fieldsets when optional fields appear. */
+.ui-inspector .field-simple > .field-control { flex-direction: row; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 6px; }
+.ui-inspector .field-simple > .field-control > .field-label { flex: 1 1 80px; min-width: 0; }
+.ui-inspector .field-simple > .field-control > :is(input, select) { flex: 2 1 112px; width: 0; min-width: min(112px, 100%); max-width: 100%; }
+.ui-inspector .field-simple.field-with-help > .field-control { padding-right: 22px; }
+.ui-inspector .field-simple.field-with-help > .field-control > .field-label { padding-right: 0; }
+.ui-inspector .field-simple.field-with-help > .field-help > summary { top: 7px; }
+.ui-inspector .ui-inspector-selection > .field-simple > .field-control { flex-wrap: nowrap; }
+.ui-inspector .ui-inspector-selection > .field-simple > .field-control > .field-label { flex: 0 0 52px; }
+.ui-inspector .ui-inspector-selection > .field-simple > .field-control > :is(input, select) { min-width: 0; flex: 1; }
+/* Keep help outside the clickable label and leave room beside the switch. */
+#root .ui-inspector .field-toggle.field-with-help { flex-direction: column; align-items: stretch; }
+.ui-inspector .field-toggle.field-with-help > .field-control { padding-right: 24px; }
+.ui-inspector .field-toggle.field-with-help > .field-control > .field-label { padding-right: 0; }
+.ui-inspector .field-toggle.field-with-help > .field-help > summary { top: 9px; }
+/* Reset stays beside the first row even when the explanation is expanded. */
+.ui-inspector .ui-design-property-control:has(> :is(.field-simple, .field-toggle)) { align-items: flex-start; }
+.ui-inspector .ui-design-property-control > .field-simple + .ui-design-reset { margin-top: 4px; }
+.ui-inspector .ui-design-property-control > .field-toggle + .ui-design-reset { margin-top: 12px; }
+.ui-inspector .ui-layout-property-field { align-items: flex-start; }
+.ui-inspector .ui-layout-property-field > .ui-layout-reset { margin-top: 1px; }
 .ui-group-body > :last-child, .ui-inspector-selection > .field { margin-bottom: 0; }
 .ui-inspector .field-row { gap: 8px; }
 .ui-inspector .field-row > .field { margin-bottom: 8px; }
 .ui-inspector-transform { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 8px; }
 .ui-inspector-transform > .field { margin: 0; }
-.ui-inspector-number { position: relative; min-width: 0; }
-.ui-inspector-number > span { position: absolute; z-index: 1; left: 9px; top: 50%; transform: translateY(-50%); color: var(--editor-muted); font: 10px ui-monospace, monospace; pointer-events: none; }
-.ui-inspector-number input { padding-left: 26px; font-variant-numeric: tabular-nums; }
+.ui-inspector-geometry > .ui-inspector-transform { grid-template-columns: repeat(auto-fit, minmax(min(100%, 136px), 1fr)); gap: 7px 8px; }
+.ui-inspector-geometry > .ui-inspector-transform > .field { gap: 3px; }
+.ui-inspector-number { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.ui-inspector-number input { flex: 1; width: 0; padding-inline: 7px; font-variant-numeric: tabular-nums; }
+.ui-inspector-number > small { flex: none; min-width: 12px; color: var(--editor-muted); font-size: 10px; pointer-events: none; }
+.ui-inspector-geometry { margin-bottom: 11px; }
+.ui-inspector-geometry > .field { margin-top: 10px; }
+.ui-inspector-unit { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 5px; margin-bottom: 9px; }
+.ui-inspector-unit > span { font-size: 11px; line-height: 1.5; color: var(--editor-muted); }
+.ui-inspector-unit > select { width: auto; min-width: 0; padding: 4px 6px; font-size: 11px; }
 .ui-inspector .inspector-section-title { padding: 10px 0 8px; margin: 8px 0 0; font-size: 11px; border-color: var(--editor-border); }
 .ui-group-body > .inspector-section-title:first-child { padding-top: 0; margin-top: 0; border-top: 0; }
 #root .ui-inspector-shell .ui-inspector .ui-group-body details.ui-property-group { margin: 8px 0; padding: 0; border: 0; }
@@ -39,6 +97,10 @@
 #root .ui-inspector-shell .ui-inspector .ui-group-body details.ui-property-group > summary::after { content: '＋'; font-size: 13px; }
 #root .ui-inspector-shell .ui-inspector .ui-group-body details.ui-property-group[open] > summary { margin-bottom: 10px; }
 #root .ui-inspector-shell .ui-inspector .ui-group-body details.ui-property-group[open] > summary::after { content: '−'; }
+#root .ui-inspector-shell .ui-inspector .ui-group-body details.ui-inspector-group > summary::after,
+#root .ui-inspector-shell .ui-inspector .ui-group-body details.ui-inspector-group[open] > summary::after { content: none; }
+#root .ui-inspector-shell .ui-inspector .ui-group-body details.ui-inspector-group[open] > summary { margin-bottom: 0; }
+#root .ui-inspector-shell .ui-inspector .ui-group-body details.ui-inspector-group > .ui-group-body { padding: 9px 3px 3px; }
 .ui-inspector .ui-child-objects .button-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .ui-inspector .ui-child-objects .button-row > button { padding: 6px; justify-content: center; font-size: 11px; }
 .ui-inspector .ui-child-list { max-height: 170px; overflow: auto; }
@@ -48,3 +110,27 @@
 .ui-inspector-empty > strong { font-size: 13px; font-weight: 500; color: var(--editor-text); }
 .ui-inspector-empty > p { margin: 0; font-size: 12px; line-height: 1.7; }
 @media (prefers-reduced-motion: reduce) { .ui-group-chevron { transition: none; } }
+@container ui-inspector (max-width: 248px) {
+  .ui-inspector .field-row { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .ui-inspector .ui-group-value { max-width: 45%; }
+  .ui-inspector .ui-inspector-object { flex-direction: column; align-items: flex-start; }
+  .ui-inspector .ui-child-objects .button-row { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Derived from the public property registry; contained in the inspector scroll area. */
+.ui-blueprint-capabilities dl { margin: 8px 0 0; }
+.ui-blueprint-capabilities dl > div { border-top: 1px solid var(--border, #343b43); padding: 7px 0; }
+.ui-blueprint-capabilities dt { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; font-size: 12px; }
+.ui-blueprint-capabilities dt span { margin-left: auto; color: var(--muted, #8996a4); font-size: 10px; }
+.ui-blueprint-capabilities dd { margin: 4px 0 0; color: var(--muted, #8996a4); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+
+/* Errors must not push the authoring canvas or hide the close control. */
+.ui-command-error { position: fixed; right: 18px; bottom: 18px; z-index: 1000; max-width: min(430px, calc(100vw - 36px)); padding: 12px 16px; border: 1px solid #ca9c5b; border-radius: 8px; background: #292722; color: #f4e3ca; box-shadow: 0 8px 30px #0005; }
+.ui-command-error .text-button { margin-left: 12px; }
+.ui-layout-fields .field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.ui-layout-fields output { display: block; margin: 8px 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+/* Groups also render in dialogs portalled outside #root (作品设置 · 全局界面). */
+details.ui-inspector-group > summary { display: flex; align-items: center; gap: 7px; min-height: 35px; padding: 8px 4px; list-style: none; cursor: pointer; }
+details.ui-inspector-group > summary::-webkit-details-marker { display: none; }
+details.ui-inspector-group > summary::marker { content: ''; }
+details.ui-inspector-group > summary::after { content: none; }

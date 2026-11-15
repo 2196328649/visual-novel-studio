@@ -1,3 +1,5 @@
+import { openUiGlobalSettings } from './lib/ui-design-controls';
+import { setUiCanvasPreview } from './lib/ui-design-controls';
 import { openDisclosure } from './lib/ui-disclosures';
 import { expect, type ElectronApplication, type Page } from '@playwright/test';
 import { createServer } from 'vite';
@@ -41,7 +43,7 @@ try {
   await page.locator('.ui-canvas').screenshot({ path: path.join(output, 'dialogue-tooltip.png') });
   expect(await page.getByLabel('添加标准组件').locator('option[value="binding:tooltip"]').count()).toBe(1);
   await uiPage('存读档');
-  await page.getByLabel('存档预览内容').selectOption('filled');
+  await setUiCanvasPreview(page, '存档预览内容', 'filled');
   await page.locator('[data-hierarchy-id="ai_save_slots"]').click();
   await page.getByText('存档格内部布局', { exact: true }).click();
   await expect(page.getByLabel('读取按钮使用图片内文字')).toBeChecked();
@@ -49,7 +51,7 @@ try {
   const saveSkin = project.assets.find(a => a.id === project.ui.components.find(c => c.id === 'ai_save_slots')!.list!.slotSaveSkin!.idle)!.path;
   expect(await page.locator('.ui-canvas img').evaluateAll((images, suffix) => images.some(image => decodeURIComponent((image as HTMLImageElement).src).endsWith(suffix)), saveSkin)).toBe(true);
   await page.locator('.ui-canvas').screenshot({ path: path.join(output, 'save-preview.png') });
-  await page.getByLabel('存读档预览页面').selectOption('load');
+  await setUiCanvasPreview(page, '存读档预览页面', 'load');
   expect(await page.locator('.ui-canvas img').evaluateAll((images, suffix) => images.some(image => decodeURIComponent((image as HTMLImageElement).src).endsWith(suffix)), saveSkin)).toBe(false);
   await page.locator('.ui-canvas').screenshot({ path: path.join(output, 'load-preview.png') });
   checks.push('中文悬停提示及添加入口；存读档预览分别显示保存/读取皮肤，皮肤内文字可编辑。');
@@ -89,7 +91,7 @@ try {
   await uiPage('章节标题');
   await expect(page.locator('.chapter-backdrop-card').first()).toHaveCSS('mask-image', /ai_presentation_mask/);
   await expect(page.locator('.chapter-ripple-scene').first()).toHaveAttribute('data-ripple-ready', 'true');
-  await page.getByRole('tab', { name: '游戏设置', exact: true }).click();
+  await openUiGlobalSettings(page);
   const menuPage = page.getByLabel('菜单快捷键打开', { exact: true });
   await expect(menuPage).toHaveValue('preferences');
   await menuPage.selectOption('pause'); await expect(menuPage).toHaveValue('pause');
@@ -102,6 +104,7 @@ try {
   await rippleToggle.check(); await expect(page.locator('.chapter-ripple-scene')).toHaveAttribute('data-ripple-ready', 'true');
   await expect(page.getByLabel('波动幅度', { exact: true })).toBeVisible();
   checks.push('菜单快捷键页面可选；章节背景波动可以从真实游戏设置中关闭和恢复，并重新生成可见 WebGL 画面。');
+  await page.getByRole('dialog', { name: '作品设置', exact: true }).getByRole('button', { name: '完成', exact: true }).click();
   await page.getByRole('button', { name: '播放进场', exact: true }).click();
   const preview = page.getByLabel('章节进场预览', { exact: true });
   await expect(preview.locator('.chapter-ripple-scene')).toHaveAttribute('data-ripple-ready', 'true');

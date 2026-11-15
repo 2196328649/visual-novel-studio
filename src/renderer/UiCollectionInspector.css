@@ -1,0 +1,19 @@
+.ui-collection-fields { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ui-collection-fields .field { margin: 0; }
+.ui-collection-fields p { margin: 0; }
+.ui-collection-source { color: var(--editor-muted); font-size: 12px; line-height: 1.65; }
+.ui-collection-manage { align-self: flex-start; }
+.ui-collection-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; }
+.ui-collection-field-grid > div { min-width: 0; }
+.ui-collection-field-grid .field-control { min-width: 0; }
+.ui-collection-field-grid input { min-width: 0; width: 100%; }
+.ui-collection-field-grid small { display: block; }
+.ui-collection-entry { padding: 10px; border: 1px solid var(--editor-border); border-radius: 6px; }
+.ui-collection-guidance { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ui-collection-link { align-self: flex-start; white-space: normal; text-align: left; }
+.ui-collection-part-fields { display: flex; flex-direction: column; gap: 10px; padding: 0; margin: 0; min-width: 0; border: 0; }
+.ui-collection-part-fields:disabled { opacity: .6; }
+.ui-collection-rect, .ui-collection-typography, .ui-collection-skin { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ui-collection-reset { align-self: flex-end; font-size: 11px; }
+.ui-collection-inactive { display: flex; flex-wrap: wrap; gap: 4px 8px; padding: 8px; border: 1px solid var(--editor-border); border-radius: 4px; font-size: 12px; line-height: 1.6; }
+.ui-canvas .ui-component.selected [data-collection-selected="true"] { outline: 2px solid #59b5ec; outline-offset: -2px; }

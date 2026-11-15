@@ -247,7 +247,7 @@ test('exposed visual content and duration drive preview and native scheduling', 
   const duration = graph.exposedInputs.find(pin => pin.dataType === 'number')!;
   assert.ok(compiled.files['game/story.rpy'].includes('"duration": vn_bp_in_' + graph.id + '_' + duration.id));
   const node = graph.nodes.find(node => node.type === 'savedAction')!;
-  assert.ok(compiled.files['game/story.rpy'].includes('float(vn_bp_visual_' + node.id + '["duration"])'));
+  assert.ok(compiled.files['game/story.rpy'].includes('float(vn_bp_local("vn_bp_visual_' + node.id + '")["duration"])'));
 });
 
 test('nonblocking visual instances survive subsequent lines and expire after known waits', () => {

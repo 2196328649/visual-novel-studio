@@ -1,3 +1,4 @@
+import { checkedUiPreviewAction, type UiPreviewActionHandler, type UiPreviewActionResult } from '../core/ui-preview-actions';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { UiPreviewWindowContext } from '../core/bridge';
 import type { AiEditorResult } from '../core/ai-editor-commands';
@@ -9,7 +10,9 @@ export interface UiPreviewWindowControls {
  close: () => Promise<AiEditorResult>;
 }
 
-export function useUiPreviewWindow(project: Project, components: UiComponent[], pageId: string, assetUrl: AssetUrl) {
+export function useUiPreviewWindow(project: Project, components: UiComponent[], pageId: string, assetUrl: AssetUrl, onAction?: UiPreviewActionHandler, onClosed?: () => void) {
+ const actionRef = useRef(onAction); actionRef.current = onAction;
+ const closedRef = useRef(onClosed); closedRef.current = onClosed;
  const [open, setOpen] = useState(false), [error, setError] = useState('');
  const context = useMemo<UiPreviewWindowContext>(() => ({ project, components, pageId }), [project, components, pageId]);
  const signature = useMemo(() => JSON.stringify(context), [context]);
@@ -31,15 +34,30 @@ export function useUiPreviewWindow(project: Project, components: UiComponent[], 
  useEffect(() => {
   mounted.current = true;
   const unsubscribe = window.studio?.onUiPreviewWindowState?.(value => { setOpen(value); if (!value) lastSent.current = ''; });
+  let actionPending = false;
   const onMessage = (event: MessageEvent) => {
    if (event.source !== popup.current || event.origin !== location.origin) return;
+   if (event.data?.kind === 'studio:ui-preview-action' && typeof event.data.requestId === 'string' && event.data.requestId.length <= 80) {
+    const target = popup.current!, requestId = event.data.requestId;
+    const reply = (result: UiPreviewActionResult) => { if (!target.closed) target.postMessage({ kind: 'studio:ui-preview-action-result', requestId, result }, location.origin); };
+    if (actionPending) { reply({ status: 'failed', message: '上一个预演操作仍在等待主编辑器处理。' }); return; }
+    actionPending = true;
+    void (async () => {
+     try {
+      const action = checkedUiPreviewAction(current.current.context.project, event.data.action);
+      if (!actionRef.current) throw new Error('当前编辑器没有可用的定位入口。');
+      window.focus(); reply(await actionRef.current(action));
+     } catch (error) { reply({ status: 'failed', message: error instanceof Error ? error.message : String(error) }); }
+     finally { actionPending = false; }
+    })();
+   }
    if (event.data?.kind === 'studio:ui-preview-ready') { setOpen(true); void send(true); }
-   if (event.data?.kind === 'studio:ui-preview-closed') { setOpen(false); lastSent.current = ''; }
+   if (event.data?.kind === 'studio:ui-preview-closed') { closedRef.current?.(); setOpen(false); lastSent.current = ''; }
   };
-  const close = () => { popup.current?.close(); void window.studio?.closeUiPreviewWindow?.().catch(() => undefined); };
+  const close = () => { if (popup.current) closedRef.current?.(); popup.current?.close(); void window.studio?.closeUiPreviewWindow?.().catch(() => undefined); };
   window.addEventListener('message', onMessage);
   window.addEventListener('beforeunload', close);
-  const timer = window.studio ? undefined : window.setInterval(() => { if (popup.current?.closed) { popup.current = null; setOpen(false); lastSent.current = ''; } }, 500);
+  const timer = window.studio ? undefined : window.setInterval(() => { if (popup.current?.closed) { closedRef.current?.(); popup.current = null; setOpen(false); lastSent.current = ''; } }, 500);
   return () => { mounted.current = false; unsubscribe?.(); window.removeEventListener('message', onMessage); window.removeEventListener('beforeunload', close); window.clearInterval(timer); close(); };
  }, [send]);
  useEffect(() => {

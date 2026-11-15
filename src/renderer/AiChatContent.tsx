@@ -18,5 +18,5 @@ export function AiChatContent({text}:{text:string}) {
   })}</div>;
 }
 export function AiUsageLabel({usage}:{usage:AiUsage}) {
-  return <small className="ai-usage" title="服务商返回的 token 统计。缓存命中由服务商决定；未返回不等于未命中。多次内部调用会合并统计。">{usage.reportedRequests ? `输入 ${usage.inputTokens.toLocaleString()} · 输出 ${usage.outputTokens.toLocaleString()} token` : '服务商未返回 token 用量'} · {usage.cacheReportedRequests ? `缓存命中 ${usage.cachedTokens.toLocaleString()} token${usage.cacheReportedRequests<usage.requests?'（部分调用）':''}` : '缓存用量未返回'}{usage.requests>1?` · ${usage.requests} 次调用`:''}</small>;
+  return <details className="ai-usage-details"><summary>用量</summary><small className="ai-usage" title="服务商返回的 token 统计。缓存命中由服务商决定；未返回不等于未命中。多次内部调用会合并统计。">{usage.reportedRequests ? `输入 ${usage.inputTokens.toLocaleString()} · 输出 ${usage.outputTokens.toLocaleString()} token` : '服务商未返回 token 用量'} · {usage.cacheReportedRequests ? `缓存命中 ${usage.cachedTokens.toLocaleString()} token${usage.cacheReportedRequests<usage.requests?'（部分调用）':''}` : '缓存用量未返回'}{usage.requests>1?` · ${usage.requests} 次调用`:''}</small></details>;
 }

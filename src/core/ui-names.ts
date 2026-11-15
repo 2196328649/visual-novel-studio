@@ -1,18 +1,15 @@
 import type { UiComponent, UiTheme } from './model';
 import { playerPreferenceKeys, playerPreferences } from './preferences';
+import { builtinUiPages } from './ui-page-catalog';
 
-export const uiPageNames: Record<UiComponent['page'], string> = {
-  main: '标题', say: '对话', choice: '选项', save: '存读档', preferences: '设置', voiceSettings: '角色音量', pause: '暂停菜单', history: '对话历史',
-  gallery: '画廊', musicRoom: '音乐室', voiceCollection: '语音收藏', chapterSelect: '章节选择', chapterTitle: '章节标题',
-  messageBox: '消息框', staff: '制作人员', keyboard: '虚拟键盘', custom: '自定义页面', flowchart: '剧情流程图', gameOver: '游戏结束',
-};
+export const uiPageNames = { ...Object.fromEntries(Object.entries(builtinUiPages).map(([id, definition]) => [id, definition.name])), custom: '自定义页面' } as Record<UiComponent['page'], string>;
 export function availableUiPages(theme: UiTheme) {
   return Object.entries(uiPageNames).filter(([page]) => !theme.disabledPages?.includes(page as UiComponent['page']));
 }
 export const componentNames: Record<UiComponent['kind'], string> = {
   text: '文字', button: '按钮', image: '图片', video: '循环视频', spine: '骨骼动画', panel: '面板', progress: '进度条', choiceList: '选项列表', saveSlots: '存档槽', preference: '设置滑条', preferenceChoice: '设置下拉菜单', pauseMenu: '暂停菜单',
   historyList: '历史列表', galleryGrid: '画廊网格', musicTrackList: '音乐列表', voiceCollection: '语音收藏列表', chapterList: '章节列表',
-  chapterTitle: '章节标题', messageBox: '消息框', staffRoll: '制作人员名单', keyboard: '虚拟键盘', flowchart: '剧情流程图', gameOver: '游戏结束',
+  chapterTitle: '章节标题', messageBox: '确认对话框', staffRoll: '制作人员名单', keyboard: '虚拟键盘', flowchart: '玩家剧情图', gameOver: '游戏结束',
 };
 export const preferenceNames = Object.fromEntries(playerPreferenceKeys.map(key => [key, playerPreferences[key].name])) as Record<NonNullable<UiComponent['preference']>, string>;
 export const bindingNames: Record<NonNullable<UiComponent['binding']>, string> = { title: '作品名称', speaker: '当前说话人', dialogue: '当前对白', tooltip: '按钮悬停提示', confirmation: '确认提示', minigameTitle: '小游戏标题', minigamePrompt: '小游戏提示', minigameStatus: '小游戏状态' };

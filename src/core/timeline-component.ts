@@ -53,3 +53,13 @@ export function useTimelineDefault(graph: BlueprintGraph, nodeId: string, pinId:
   if (!graph.links.some(item => item.fromNodeId === input.id)) graph.nodes = graph.nodes.filter(item => item.id !== input.id);
   if (!graph.nodes.some(item => item.type === 'getInput' && item.properties.inputId === pin.id)) graph.exposedInputs = graph.exposedInputs.filter(item => item.id !== pin.id);
 }
+
+/** A graph that only forwards its inputs/outputs to one timeline. Authors who
+ * open it for editing want that timeline, not the plumbing around it. */
+export function timelineWrapperCall(project: Project, graph?: BlueprintGraph) {
+  if (!graph || isTimelineComponent(graph)) return undefined;
+  const calls = graph.nodes.filter(node => node.type === 'callFunction');
+  if (calls.length !== 1 || !graph.nodes.every(node => node === calls[0] || node.type.startsWith('event') || ['getInput', 'setOutput', 'comment'].includes(node.type))) return undefined;
+  const timeline = timelineForNode(project, calls[0]);
+  return timeline && timeline.id !== graph.id ? { timelineId: timeline.id, callNodeId: calls[0].id } : undefined;
+}

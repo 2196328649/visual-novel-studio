@@ -1,3 +1,4 @@
+import { cloneData } from "../core/project-mutation";
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { Asset, Project } from '../core/model';
@@ -13,12 +14,13 @@ type Measure = (file: string) => { width: number; height: number; visibleBounds?
 export class AssetDiscovery {
   private seen = new Map<string, string>();
   private running = false;
-  async scan(directory: string, project: Project, measure?: Measure): Promise<Project | undefined> {
+  /** `saved` is the last saved copy: saving can move files into category folders before the editor's copy has the new paths. */
+  async scan(directory: string, project: Project, measure?: Measure, saved?: Project): Promise<Project | undefined> {
     if (this.running) return;
     this.running = true;
     try {
       const resourceRoot = containedPath(directory, project.resourceSettings?.directory ?? 'assets');
-      const known = new Set(project.assets.flatMap(asset => assetFiles(asset).map(file => key(assetSourcePath(directory, asset, file)))));
+      const known = new Set([...project.assets, ...saved?.assets ?? []].flatMap(asset => assetFiles(asset).map(file => key(assetSourcePath(directory, asset, file)))));
       const files = new Map<string, { file: string; signature: string }>();
       const walk = async (folder: string, recursive: boolean, depth = 0): Promise<void> => {
         if (depth > 24) return;
@@ -43,7 +45,7 @@ export class AssetDiscovery {
       await walk(path.join(directory, 'game'), false);
       for (const name of ['images', 'audio', 'fonts']) await walk(path.join(directory, 'game', name), true);
       if (!files.size) return;
-      const next = structuredClone(project), ids = new Set(project.assets.map(asset => asset.id));
+      const next = cloneData(project), ids = new Set(project.assets.map(asset => asset.id));
       let added = 0;
       for (const [id, { file, signature }] of files) {
         try {
@@ -54,7 +56,7 @@ export class AssetDiscovery {
           asset.path = path.relative(directory, file).replaceAll('\\', '/');
           asset.sourcePath = asset.path;
           asset.category = inferAssetCategory(asset);
-          if (asset.kind === 'image' && measure) {
+          if (asset.kind === 'image' && measure && (!asset.width || !asset.height)) {
             const size = measure(file);
             if (!(size.width > 0 && size.height > 0)) throw new Error('图片尚未复制完成');
             Object.assign(asset, size);

@@ -11,6 +11,8 @@ import { createProject } from '../src/core/model';
 import { createBlueprintGraph } from '../src/core/blueprint';
 import { parseAiResponse, prepareAiChanges, applyAiChanges, type AiOperation } from '../src/core/ai';
 import { projectToText } from '../src/core/text-script';
+import { applyProjectEdit } from '../src/core/ai-project-edit';
+import { parameterResetsWithSettings, storyParametersId } from '../src/core/parameter-sets';
 
 const set = (path: any[], value: any): AiOperation => ({ kind: 'editProject', path, action: 'set', value });
 test('AI project edits cover UI, blueprint structure, parameter sets and settings atomically', () => {
@@ -115,4 +117,72 @@ test('AI creates reusable timeline calls with asset defaults and overrides then 
  assert.equal(performanceTimeline(changed,changed.blueprints.find(g=>g.id===child.id)!).clips[0].at,1.25);
  assert.deepEqual(changed.blueprints.find(g=>g.id===caller.id),restored.blueprints.find((g:any)=>g.id===caller.id));
  assert.ok(compileProject(changed).files['game/story.rpy']);assert.equal(project.blueprints.length,0);
+});
+
+test('generic group and variable edits preserve reset policy while honoring explicit changes', () => {
+ const project = createProject();
+ project.parameterSets = [{ id: 'old_group', name: '旧组', kind: 'settings' }];
+ project.variables = [
+  { id: 'old', name: '旧值', type: 'boolean', initial: false, persistent: false, parameterSetId: 'old_group' },
+  { id: 'story', name: '进度', type: 'number', initial: 0, persistent: true },
+ ];
+ const edit = (ops: AiOperation[]) => applyAiChanges(project, prepareAiChanges(project, ops, []));
+ const renamed = edit([set(['parameterSets', { id: 'old_group' }, 'name'], '改名')]);
+ assert.equal(Object.hasOwn(renamed.variables[0], 'resetWithSettings'), false);
+ const defaults = edit([set(['parameterSets', { id: 'old_group' }, 'defaults'], { persistent: false, resetWithSettings: false })]);
+ assert.equal(parameterResetsWithSettings(defaults, defaults.variables[0]), true);
+ const organized = edit([set(['parameterSets'], [{ id: 'other_group', name: '另一个组', kind: 'story' }, project.parameterSets[0]])]);
+ assert.deepEqual(organized.variables, project.variables);
+ const reclassified = edit([set(['parameterSets', { id: 'old_group' }, 'kind'], 'story')]);
+ assert.equal(reclassified.variables[0].resetWithSettings, true);
+ const moved = edit([set(['variables', { id: 'old' }, 'parameterSetId'], storyParametersId), set(['variables', { id: 'story' }, 'parameterSetId'], 'old_group')]);
+ assert.equal(moved.variables[0].resetWithSettings, true); assert.equal(moved.variables[1].resetWithSettings, false);
+ const replacement = edit([set(['variables', { id: 'old' }], { ...project.variables[0], parameterSetId: storyParametersId }), set(['parameterSets'], [])]);
+ assert.equal(replacement.variables[0].resetWithSettings, true); assert.equal(replacement.variables[0].persistent, false);
+ const removedGroup = edit([
+  { kind: 'editProject', path: ['parameterSets', { id: 'old_group' }], action: 'remove' },
+  { kind: 'editProject', path: ['variables', { id: 'old' }, 'parameterSetId'], action: 'remove' },
+ ]);
+ assert.equal(removedGroup.variables[0].resetWithSettings, true);
+ const explicit = edit([set(['variables'], [{ ...project.variables[0], resetWithSettings: false, parameterSetId: storyParametersId }, project.variables[1]])]);
+ assert.equal(explicit.variables[0].resetWithSettings, false);
+ assert.equal(project.variables[0].resetWithSettings, undefined);
+});
+
+test('generic invalid paths and actions reject before legacy reset fields are materialized', () => {
+ const project = createProject();
+ project.parameterSets = [{ id: 'legacy', name: '旧组', kind: 'settings' }];
+ project.variables = [{ id: 'old', name: '旧值', type: 'boolean', initial: false, persistent: true, parameterSetId: 'legacy' }];
+ const before = structuredClone(project);
+ for (const operation of [
+  { kind: 'editProject', path: ['parameterSets', { id: 'missing' }, 'kind'], action: 'set', value: 'story' },
+  { kind: 'editProject', path: ['variables', { id: 'old' }, 'parameterSetId'], action: 'append', value: 'invalid' },
+  { kind: 'editProject', path: ['parameterSets', { id: 'legacy' }, 'missing'], action: 'remove' },
+ ] as const) {
+  assert.throws(() => applyProjectEdit(project, structuredClone(operation) as any));
+  assert.deepEqual(project, before);
+ }
+ assert.throws(() => prepareAiChanges(project, [set(['variables', { id: 'old' }, 'parameterSetId'], storyParametersId), set(['width'], -1)], []));
+ assert.deepEqual(project, before);
+});
+
+test('AI creation uses the final group defaults regardless of batch order and preserves explicit false', () => {
+ for (const kind of ['story', 'settings'] as const) for (const reverse of [false, true]) {
+  const project = createProject(); project.parameterSets = [];
+  const enabled = kind === 'story';
+  const group: AiOperation = { kind: 'editProject', action: 'append', path: ['parameterSets'], value: { id: 'new_group', name: '新组', kind, defaults: { persistent: enabled, resetWithSettings: enabled } } };
+  const variable: AiOperation = { kind: 'editProject', action: 'append', path: ['variables'], value: { id: 'new_var', name: '新值', type: 'number', initial: 0, parameterSetId: 'new_group' } };
+  const operations = reverse ? [variable, group] : [group, variable];
+  const next = applyAiChanges(project, prepareAiChanges(project, operations, []));
+  assert.equal(next.variables[0].persistent, enabled); assert.equal(next.variables[0].resetWithSettings, enabled);
+  const changeDefaults = set(['parameterSets', { id: 'new_group' }, 'defaults'], { persistent: !enabled, resetWithSettings: !enabled });
+  const changed = applyAiChanges(next, prepareAiChanges(next, [changeDefaults], []));
+  assert.deepEqual(changed.variables, next.variables);
+  const batch = applyAiChanges(project, prepareAiChanges(project, [...operations, changeDefaults], []));
+  assert.equal(batch.variables[0].persistent, enabled); assert.equal(batch.variables[0].resetWithSettings, enabled);
+  const explicit = { ...variable, value: { ...(variable.value as object), persistent: false, resetWithSettings: false } } as AiOperation;
+  const overrides = applyAiChanges(project, prepareAiChanges(project, reverse ? [explicit, group] : [group, explicit], []));
+  assert.equal(overrides.variables[0].persistent, false); assert.equal(overrides.variables[0].resetWithSettings, false);
+  assert.deepEqual(project.variables, []); assert.deepEqual(project.parameterSets, []);
+ }
 });

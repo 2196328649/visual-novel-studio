@@ -62,7 +62,7 @@ const env = Object.fromEntries(Object.entries({ ...process.env, VNS_PROJECT_PATH
 let app: ElectronApplication | undefined, page: Page | undefined, assistant: Page | undefined, phase = 'launch';
 const checks: string[] = [], errors: string[] = [];
 const launch = async () => {
-  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env, timeout: 60000 });
+  app = await electron.launch({ executablePath: require('electron'), args: [root], cwd: root, env: { ...env, VNS_TEST_DISCARD_ON_CLOSE: '1' }, timeout: 60000 });
   app.on('window', window => window.on('pageerror', error => errors.push(error.message)));
   page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message));
   await expect(page.locator('.project-title strong')).toHaveText(project.name);

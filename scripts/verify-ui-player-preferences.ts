@@ -8,6 +8,7 @@ import { createServer } from 'vite';
 import { createProject } from '../src/core/model';
 import { blueprintNodeDefaults, createBlueprintGraph, connectBlueprintPins, synchronizeBlueprintSignatures } from '../src/core/blueprint';
 import { launchDesktopFixture } from './lib/desktop-fixture';
+import { openUiPreviewForTest } from './lib/ui-preview-window';
 const root=path.resolve('.'), output=path.join(root,'artifacts/ui-player-preferences',new Date().toISOString().replaceAll(':','-'));
 await fs.mkdir(output,{recursive:true});
 const project=createProject('高级UI编辑验收');
@@ -24,13 +25,13 @@ const format=blueprintNodeDefaults('formatText');format.properties.format='音�
 const key=blueprintNodeDefaults('eventKey');key.properties={pageId:'ui:preferences',key:'K_e'};const setter=blueprintNodeDefaults('setPlayerPreference');setter.properties={preference:'musicVolume',value:.4};graph.nodes.push(key,setter);synchronizeBlueprintSignatures(project);connectBlueprintPins(graph,key.id,'exec',setter.id,'exec_in');
 const projectFile=path.join(output,'project.vns.json');await fs.writeFile(projectFile,JSON.stringify(project));
 const server=await createServer({root,server:{host:'127.0.0.1',port:0,watch:{ignored:['**/artifacts/**','**/resources/**','**/release/**']}}});await server.listen();
-const app=await launchDesktopFixture({root,projectFile,profile:path.join(output,'profile'),devUrl:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port}),page=await app.firstWindow();
+const app=await launchDesktopFixture({root,projectFile,profile:path.join(output,'profile'),devUrl:'http://127.0.0.1:'+(server.httpServer!.address() as {port:number}).port}),editor=await app.firstWindow();let page=editor;
 try {
  await expect(page.locator('.project-title strong')).toHaveText(project.name,{timeout:45000});
- await page.locator('[data-workspace-tab="ui"]').click();await page.getByLabel('设计页面', { exact: true }).selectOption({ label: '设置' });await page.getByRole('button',{name:'高级 UI 蓝图',exact:true}).click();
- await expect(page.locator('.dirty-dot')).toHaveCount(0);
+ await page.locator('[data-workspace-tab="ui"]').click();await page.getByLabel('界面编辑模式').getByRole('button',{name:'事件图',exact:true}).click();await page.getByLabel('事件图页面').selectOption('ui:preferences');
+ await expect(editor.locator('.dirty-dot')).toHaveCount(0);
  const savedBefore=await fs.readFile(projectFile,'utf8');
- await page.locator('.ui-logic-preview > summary').click();
+ page=await openUiPreviewForTest(app,editor);
  const object=page.locator('[data-preview-component="title_probe"]');
  await expect(object).toContainText('音量 0.8');
  const volume=page.getByLabel('预演音乐',{exact:true});await volume.focus();await page.keyboard.press('Home');await expect(object).toContainText('音量 0');await page.keyboard.press('ArrowRight');await expect(object).toContainText('音量 0.01');
@@ -39,7 +40,7 @@ try {
  const choice=page.getByLabel('预演窗口',{exact:true});await choice.selectOption({label:'1920 × 1080'});await expect(choice.locator('option:checked')).toHaveText('1920 × 1080');
  const opacity=page.getByLabel('预演透明度',{exact:true});await opacity.focus();await page.keyboard.press('Home');await page.keyboard.press('ArrowRight');await expect(object).toHaveCSS('opacity','0.01');
  await page.getByRole('button',{name:'恢复测试值',exact:true}).click();await expect(volume).toHaveValue('0.8');await expect(speed).toHaveValue('35');await expect(choice.locator('option:checked')).toHaveText('1280 × 720');
- await expect(page.locator('.dirty-dot')).toHaveCount(0);expect(await fs.readFile(projectFile,'utf8')).toBe(savedBefore);
+ await expect(editor.locator('.dirty-dot')).toHaveCount(0);expect(await fs.readFile(projectFile,'utf8')).toBe(savedBefore);
  await fs.writeFile(path.join(output,'report.json'),JSON.stringify({status:'passed',checks:['音量滑块联动读取玩家选项蓝图','蓝图设置玩家选项回写预演控件','文字速度瞬间显示端点及回退','窗口选项选择与恢复','对话透明度预演影响绑定外观','预演不写工程默认值'],changesRealPlayerSettings:false}));console.log(output);
-} catch(error){await page.screenshot({path:path.join(output,'failure.png')});throw error;}
+} catch(error){await page.screenshot({path:path.join(output,'failure.png')}).catch(()=>undefined);throw error;}
 finally {await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().forEach(w=>w.destroy())).catch(()=>undefined);await app.close();await server.close();}

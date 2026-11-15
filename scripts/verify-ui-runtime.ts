@@ -76,6 +76,9 @@ function testcases(project: Project): string {
     before testcase:
         $ _test.timeout = 8.0
         $ _test.transition_timeout = 0.05
+        # A cross-line stage dissolve stays "ongoing" until an interaction ends, and Ren'Py's
+        # click keeps waiting for it (RecursionError). Transitions have their own scripts.
+        $ preferences.transitions = 0
         $ preferences.text_cps = 0
         $ preferences.afm_enable = False
     teardown:

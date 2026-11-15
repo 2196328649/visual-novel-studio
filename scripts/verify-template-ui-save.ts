@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { launchDesktopFixture } from './lib/desktop-fixture';
 import type { Project } from '../src/core/model';
+import { setUiNativeContent } from './lib/ui-design-controls';
 
 const root = path.resolve('.'), output = path.join(root, 'artifacts/template-ui-save', new Date().toISOString().replaceAll(':', '-'));
 const app = await launchDesktopFixture({ root, profile: path.join(output, 'profile'), projectHub: true });
@@ -18,8 +19,8 @@ try {
   await expect(page.locator('.template-editing-badge')).toBeVisible();
   const template = await page.evaluate(() => window.studio!.getInitial());
   await page.locator('[data-workspace-tab="ui"]').click();
-  const layout = page.getByLabel('当前页面布局', { exact: true });
-  await layout.selectOption('custom');
+  const layout = page.getByLabel('显示系统默认内容', { exact: true });
+  await setUiNativeContent(page, false);
   await expect(page.locator('.dirty-dot')).toBeVisible();
   const before = JSON.parse(await fs.readFile(template.path!, 'utf8')) as Project;
   await page.getByRole('button', { name: '保存并返回模板库', exact: true }).click();
@@ -28,7 +29,7 @@ try {
   expect(after.ui).not.toEqual(before.ui);
   await page.getByRole('article', { name: '模板 界面模板', exact: true }).getByRole('button', { name: '打开编辑', exact: true }).click();
   await page.locator('[data-workspace-tab="ui"]').click();
-  await expect(layout).toHaveValue('custom');
+  await expect(layout).not.toBeChecked();
   await expect(page.locator('.dirty-dot')).toHaveCount(0);
   await page.screenshot({ path: path.join(output, 'saved-ui-template.png') });
   expect(errors).toEqual([]);

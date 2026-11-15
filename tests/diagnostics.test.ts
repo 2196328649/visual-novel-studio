@@ -18,3 +18,26 @@ test('runtime state uses explicit JSON events and ignores unrelated output', () 
     kind: 'position', message: '', nodeId: 'passage_1', lineId: 'line_1', variables: { affection: 2, met: true },
   });
 });
+
+
+test('startup and title telemetry carries variables without inventing a story location', () => {
+  assert.deepEqual(runtimePosition('VNS_EVENT:{"nodeId":null,"lineId":null,"variables":{"visits":1,"enabled":false,"name":"title"}}'), {
+    kind: 'position', message: '', nodeId: undefined, lineId: undefined,
+    variables: { visits: 1, enabled: false, name: 'title' },
+  });
+  const story = runtimePosition('VNS_EVENT:{"nodeId":"passage_1","lineId":"line_1","variables":{"visits":1}}');
+  const title = runtimePosition('VNS_EVENT:{"nodeId":null,"lineId":null,"variables":{"visits":2}}');
+  assert.equal(story?.nodeId, 'passage_1');
+  assert.equal(title?.nodeId, undefined);
+  assert.equal(title?.lineId, undefined);
+  assert.equal(title?.variables?.visits, 2);
+});
+
+test('non-story telemetry still rejects malformed payloads and invalid locations', () => {
+  for (const value of [null, [], {}, { variables: { visits: 1 } }, { nodeId: 0 }, { nodeId: false }, { nodeId: '' }, { nodeId: 'unknown/path' }]) {
+    assert.equal(runtimePosition('VNS_EVENT:' + JSON.stringify(value)), undefined);
+  }
+  assert.deepEqual(runtimePosition('VNS_EVENT:{"nodeId":null,"lineId":"old_line","variables":{"ok":2,"bad":null,"array":[],"object":{},"infinite":1e999}}'), {
+    kind: 'position', message: '', nodeId: undefined, lineId: undefined, variables: { ok: 2 },
+  });
+});

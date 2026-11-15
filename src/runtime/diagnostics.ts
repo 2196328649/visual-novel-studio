@@ -26,11 +26,15 @@ export function runtimePosition(line: string): RuntimeEvent | undefined {
   if (!line.startsWith('VNS_EVENT:')) return;
   try {
     const data = JSON.parse(line.slice('VNS_EVENT:'.length));
-    if (!data || typeof data.nodeId !== 'string' || !/^[a-z][a-z0-9_]{0,63}$/.test(data.nodeId)) return;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+    // Before the story (and after returning to the title) the runtime explicitly
+    // sends null. Keep its state snapshot while clearing any old story location.
+    if (data.nodeId !== null && (typeof data.nodeId !== 'string' || !/^[a-z][a-z0-9_]{0,63}$/.test(data.nodeId))) return;
+    const nodeId = data.nodeId ?? undefined;
     const variables: Record<string, VariableValue> = {};
     if (data.variables && typeof data.variables === 'object') for (const [id, value] of Object.entries(data.variables)) {
       if (['string', 'boolean'].includes(typeof value) || typeof value === 'number' && Number.isFinite(value)) variables[id] = value as VariableValue;
     }
-    return { kind: 'position', message: '', nodeId: data.nodeId, lineId: typeof data.lineId === 'string' ? data.lineId : undefined, variables };
+    return { kind: 'position', message: '', nodeId, lineId: nodeId && typeof data.lineId === 'string' ? data.lineId : undefined, variables };
   } catch { return; }
 }

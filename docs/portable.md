@@ -2,7 +2,7 @@
 
 适用于 Windows 10/11 64 位，无需安装 Node、Python 或 Ren’Py。
 
-1. 将 `Visual-Novel-Studio-0.8.0-portable-win-x64.zip` **全部解压**到普通文件夹，例如 `E:\叙事工坊` 或桌面。
+1. 将 `Visual-Novel-Studio-0.8.1-portable-win-x64.zip` **全部解压**到普通文件夹，例如桌面上的“叙事工坊”文件夹。
 2. 打开解压后的文件夹，双击 **Visual Novel Studio.exe**。
 3. 首次启动会准备随附的游戏运行时；然后可新建空白作品或哀鸿模板。
 4. 在右上角“作品设置 → 游戏导出”中选择 Windows 和 ZIP／单 EXE，设置输出位置，就绪后点击“导出”；如提示环境缺失，再点击“一键配置”。ZIP 需解压；单 EXE 直接运行，均不需要编辑器。

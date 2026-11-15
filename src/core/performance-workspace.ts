@@ -1,3 +1,4 @@
+import { cloneData } from "./project-mutation";
 import { projectGraphs, addProjectGraphs } from './project-resources';
 import { availableBlueprintName } from './blueprint-names';
 import { makeId, type BlueprintGraph, type Project, type StageAction, type StoryNode } from './model';
@@ -69,13 +70,13 @@ export function performanceWorkspaceDraft(project: Project, target?: Performance
   if (!target?.nodeId || target.graphId) return unchanged;
   const actions = targetPerformance(project, target);
   if (actions.length === 1 && actions[0].kind === 'blueprint') return { ...unchanged, target: { ...target, graphId: actions[0].blueprintId } };
-  const preview = structuredClone(project);
+  const preview = cloneData(project);
   const editable = editablePerformanceTarget(preview, target);
   const graph = projectGraphs(preview).find(graph => graph.id === editable.graphId);
   if (!graph) return unchanged;
   return { project: preview, target: editable, materialize: (draft: Project) => {
-    for (const dependency of projectGraphs(preview)) if (dependency.id !== graph.id && !projectGraphs(project).some(item => item.id === dependency.id) && !projectGraphs(draft).some(item => item.id === dependency.id)) addProjectGraphs(draft, structuredClone(dependency));
-    if (!projectGraphs(draft).some(item => item.id === graph.id)) bindPerformanceBlueprint(draft, editable, structuredClone(graph), graph.performanceKind === 'standalone' ? '独立演出' : '台词演出');
+    for (const dependency of projectGraphs(preview)) if (dependency.id !== graph.id && !projectGraphs(project).some(item => item.id === dependency.id) && !projectGraphs(draft).some(item => item.id === dependency.id)) addProjectGraphs(draft, cloneData(dependency));
+    if (!projectGraphs(draft).some(item => item.id === graph.id)) bindPerformanceBlueprint(draft, editable, cloneData(graph), graph.performanceKind === 'standalone' ? '独立演出' : '台词演出');
   } };
 }
 

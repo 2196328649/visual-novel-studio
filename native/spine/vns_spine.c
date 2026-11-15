@@ -31,6 +31,7 @@ typedef struct VnsSpine {
     int batch_count, batch_capacity;
     float *world;
     int world_capacity;
+    int completed;
 } VnsSpine;
 
 /* Texture files are loaded by the host. Retain the atlas' declared dimensions:
@@ -39,7 +40,13 @@ void _spAtlasPage_createTexture(spAtlasPage *self, const char *path) { (void) se
 void _spAtlasPage_disposeTexture(spAtlasPage *self) { (void) self; }
 char *_spUtil_readFile(const char *path, int *length) { (void) path; *length = 0; return NULL; }
 
-VNS_API int vns_spine_abi(void) { return 1; }
+VNS_API int vns_spine_abi(void) { return 2; }
+
+static void vns_animation_event(spAnimationState *state, spEventType type, spTrackEntry *entry, spEvent *event) {
+    (void) event;
+    VnsSpine *p = (VnsSpine *) state->rendererObject;
+    if (p && type == SP_ANIMATION_COMPLETE && entry && !entry->loop && entry == spAnimationState_getCurrent(state, 0)) p->completed = 1;
+}
 
 VNS_API void vns_spine_dispose(VnsSpine *p) {
     if (!p) return;
@@ -78,6 +85,8 @@ VNS_API VnsSpine *vns_spine_create(const char *json, const char *atlas, char *er
     p->state_data = spAnimationStateData_create(p->data);
     p->state_data->defaultMix = 0.2f;
     p->state = spAnimationState_create(p->state_data);
+    p->state->rendererObject = p;
+    p->state->listener = vns_animation_event;
     p->clip = spSkeletonClipping_create();
     p->batch_capacity = p->skeleton->slotsCount + 1;
     p->batches = (VnsBatch *) calloc(p->batch_capacity, sizeof(VnsBatch));
@@ -91,6 +100,9 @@ VNS_API int vns_spine_play(VnsSpine *p, const char *animation, const char *skin,
     if (animation && *animation && !a) return 0;
     spSkin *s = skin && *skin ? spSkeletonData_findSkin(p->data, skin) : p->data->defaultSkin;
     if (skin && *skin && !s) return 0;
+    spAnimationState_clearTracks(p->state);
+    spSkeleton_setToSetupPose(p->skeleton);
+    p->completed = 0;
     spSkeleton_setSkin(p->skeleton, s);
     spSkeleton_setSlotsToSetupPose(p->skeleton);
     if (a) {
@@ -102,6 +114,49 @@ VNS_API int vns_spine_play(VnsSpine *p, const char *animation, const char *skin,
     }
     spAnimationState_apply(p->state, p->skeleton);
     spSkeleton_updateWorldTransform(p->skeleton, SP_PHYSICS_RESET);
+    return 1;
+}
+
+/* Configuration changes preserve the current track and physical pose. */
+VNS_API int vns_spine_skin(VnsSpine *p, const char *skin) {
+    if (!p) return 0;
+    spSkin *s = skin && *skin ? spSkeletonData_findSkin(p->data, skin) : p->data->defaultSkin;
+    if (skin && *skin && !s) return 0;
+    spSkeleton_setSkin(p->skeleton, s);
+    spSkeleton_setSlotsToSetupPose(p->skeleton);
+    spAnimationState_apply(p->state, p->skeleton);
+    return 1;
+}
+
+VNS_API void vns_spine_loop(VnsSpine *p, int loop) {
+    if (!p) return;
+    spTrackEntry *entry = spAnimationState_getCurrent(p->state, 0);
+    if (!entry || entry->loop == loop) return;
+    float at = spTrackEntry_getAnimationTime(entry);
+    entry->trackTime = at - entry->animationStart;
+    entry->trackLast = entry->nextTrackLast = entry->trackTime;
+    entry->animationLast = entry->nextAnimationLast = at;
+    entry->loop = loop;
+}
+
+/* Internal save restoration is O(1); do not replay hours of physics in a loop. */
+VNS_API void vns_spine_restore(VnsSpine *p, float position) {
+    if (!p || !isfinite(position) || position < 0) return;
+    spTrackEntry *entry = spAnimationState_getCurrent(p->state, 0);
+    if (!entry) return;
+    float duration = entry->animationEnd - entry->animationStart;
+    entry->trackTime = duration > 0 ? (entry->loop ? fmodf(position, duration) : fminf(position, duration)) : 0;
+    spAnimationState_update(p->state, 0);
+    spAnimationState_apply(p->state, p->skeleton);
+    spSkeleton_updateWorldTransform(p->skeleton, SP_PHYSICS_RESET);
+}
+
+VNS_API int vns_spine_observe(VnsSpine *p, float *position, float *duration, int *completed) {
+    if (!p || !position || !duration || !completed) return 0;
+    spTrackEntry *entry = spAnimationState_getCurrent(p->state, 0);
+    *duration = entry ? entry->animationEnd - entry->animationStart : 0;
+    *position = entry ? spTrackEntry_getAnimationTime(entry) - entry->animationStart : 0;
+    *completed = p->completed;
     return 1;
 }
 

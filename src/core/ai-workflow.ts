@@ -1,5 +1,6 @@
+import { cloneData } from "./project-mutation";
 import { projectSchema, type Project } from './model';
-import { validateProject } from './validate';
+import { assertNoNewAiProjectErrors } from './ai-project-validation';
 import { assertTimelineEditDoesNotOverlap } from './timeline-edit-validation';
 import { aiLines } from './ai';
 import { editableProjectFields } from './ai-project-edit';
@@ -35,7 +36,7 @@ export function changedDialogueCount(before: Project, after: Project) {
   }
   return changed + previous.size;
 }
-const storyFields = ['name', 'chapters', 'scenes', 'nodes', 'entryId', 'characters', 'variables', 'effects', 'blueprints', 'timelinePresets', 'assets', 'contentBrowser'] as const;
+const storyFields = ['name', 'chapters', 'scenes', 'nodes', 'storyGroups', 'entryId', 'characters', 'variables', 'effects', 'blueprints', 'timelinePresets', 'textPresets', 'gameFlow', 'assets', 'contentBrowser'] as const;
 export function aiWorkflowFingerprint(project: Project) {
   const normalized = projectSchema.parse(project);
   return projectFingerprint(storyFields.map(key => normalized[key]));
@@ -52,18 +53,32 @@ function projectFingerprint(value: unknown) {
 }
 export function applyAiWorkflow(project: Project, proposal: AiWorkflowProposal): Project {
   const agent = proposal.kind === 'agent';
-  if (project.id !== proposal.projectId || proposal.project.id !== project.id || (agent ? aiAgentFingerprint(project) : aiWorkflowFingerprint(project)) !== proposal.fingerprint) throw new Error(agent ? '生成方案期间工程或文本已修改，请根据当前工程重新生成，避免覆盖刚才的编辑。' : '生成方案期间剧情、角色或资源已修改，请根据当前工程重新生成。界面设置可继续独立编辑。');
-  const parsed = projectSchema.parse(proposal.project), next = structuredClone(project);
+  if (project.id !== proposal.projectId || proposal.project.id !== project.id || (agent ? aiAgentFingerprint(project) : aiWorkflowFingerprint(project)) !== proposal.fingerprint) throw new Error(agent ? '生成方案期间工程或文本已修改，请根据当前工程重新生成，避免覆盖刚才的编辑。' : '生成方案期间剧情、游戏流程、角色或资源已修改，请根据当前工程重新生成。界面设置可继续独立编辑。');
+  const parsed = projectSchema.parse(proposal.project), next = cloneData(project);
   const fields = agent ? proposal.changedFields ?? [] : [...storyFields, 'scriptText' as const];
   for (const field of fields) {
     if (field !== 'scriptText' && !editableProjectFields.includes(field)) throw new Error('方案包含不支持的工程字段。');
     if (parsed[field] === undefined) delete (next as Record<string, unknown>)[field];
-    else Object.assign(next, { [field]: structuredClone(parsed[field]) });
+    else Object.assign(next, { [field]: cloneData(parsed[field]) });
   }
-  const key = (issue: ReturnType<typeof validateProject>[number]) => JSON.stringify([issue.nodeId, issue.lineId, issue.message]);
-  const previousErrors = new Set(validateProject(project).filter(issue => issue.severity === 'error').map(key));
-  const error = validateProject(next).find(issue => issue.severity === 'error' && !previousErrors.has(key(issue)));
-  if (error) throw new Error(`方案无法应用：${error.message}`);
+  // A valid proposal can become invalid when only its changed fields are merged.
+  // Preserve unchanged draft issues that were already accepted by this workflow.
+  const merged = projectSchema.safeParse(next);
+  if (!merged.success) {
+    const issueKey = (issue: { code: string; path: PropertyKey[]; message: string }) => JSON.stringify([issue.code, issue.path, issue.message]);
+    const previous = projectSchema.safeParse(project);
+    const existing = new Map<string, number>();
+    if (!previous.success) for (const issue of previous.error.issues) {
+      const key = issueKey(issue); existing.set(key, (existing.get(key) ?? 0) + 1);
+    }
+    const added = merged.error.issues.find(issue => {
+      const key = issueKey(issue), remaining = existing.get(key) ?? 0;
+      if (!remaining) return true;
+      existing.set(key, remaining - 1); return false;
+    });
+    if (added) throw new Error(`方案无法应用：${added.message}`);
+  }
+  assertNoNewAiProjectErrors(project, next, '方案无法应用：');
   assertTimelineEditDoesNotOverlap(project, next);
   return next;
 }

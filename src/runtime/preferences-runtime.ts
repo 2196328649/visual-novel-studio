@@ -1,10 +1,12 @@
 import type { Project } from '../core/model';
-import { playerPreferences } from '../core/preferences';
+import { playerPreferenceKeys, preferenceInfo } from '../core/preferences';
 import { pythonLiteral } from './literals';
 
 /** One player preference store for native menus, authored controls and blueprints. */
 export function createPreferencesRuntime(project: Project): string {
-  const defaults = Object.fromEntries(Object.entries(playerPreferences).map(([key, info]) => [key, project.playerDefaults?.[key as keyof typeof playerPreferences] ?? info.initial]));
+  // Each setting as the author presents it: name, slider range and engine limits.
+  const info = Object.fromEntries(playerPreferenceKeys.map(key => { const { help: _help, ...item } = preferenceInfo(project, key); return [key, item]; }));
+  const defaults = Object.fromEntries(playerPreferenceKeys.map(key => [key, info[key].initial]));
   const fields = { textSpeed: 'text_cps', autoForwardTime: 'afm_time', fullscreen: 'fullscreen', skipAll: 'skip_unseen', voiceSustain: 'voice_sustain' };
   const mixers = { masterVolume: 'main', musicVolume: 'music', soundVolume: 'sfx', ambientVolume: 'ambient', voiceVolume: 'voice' };
   const tags = Object.fromEntries([["", "vn_voice_other"], ...project.characters.map(c => [c.id, `vn_voice_${c.id}`])]);
@@ -17,7 +19,7 @@ default persistent.vn_dialogue_opacity = ${pythonLiteral(defaults.dialogueOpacit
 init python:
     renpy.music.register_channel("ambient", mixer="ambient", loop=True)
     vn_preference_defaults = ${pythonLiteral(defaults)}
-    vn_preference_info = ${pythonLiteral(playerPreferences)}
+    vn_preference_info = ${pythonLiteral(info)}
     vn_preference_fields = ${pythonLiteral(fields)}
     vn_preference_mixers = ${pythonLiteral(mixers)}
     vn_voice_tags = ${pythonLiteral(tags)}
@@ -77,27 +79,39 @@ init python:
             size = _preferences.physical_size or (${project.width}, ${project.height})
             return "%dx%d" % (size[0], size[1])
 
-    def vn_preference_set(key, value, character_id=None, refresh=True):
+    def vn_preference_validate(key, value, character_id=None, require_available=False):
         info = vn_preference_info.get(key)
         if not info:
             raise Exception("玩家设置不存在，请重新选择。")
         kind = info["type"]
-        valid = isinstance(value, bool) if kind == "boolean" else isinstance(value, str) if kind == "string" else not isinstance(value, bool) and isinstance(value, (int, float)) and info["min"] <= value <= info["max"]
+        limit = info.get("limit") or {}
+        valid = isinstance(value, bool) if kind == "boolean" else isinstance(value, str) if kind == "string" else not isinstance(value, bool) and isinstance(value, (int, float)) and limit.get("min", 0) <= value and (limit.get("max") is None or value <= limit["max"])
         if not valid or (info.get("options") and value not in info["options"]):
             raise Exception(info["name"] + "的值无效，请检查蓝图输入。")
+        available = key != "fullscreen" or not value or renpy.can_fullscreen()
+        if require_available and not available:
+            raise Exception("当前环境无法应用全屏设置；本次设置不会写入任何一项。")
+        target = vn_preference_tag(character_id) if key == "characterVolume" else vn_window_dimensions(value) if key == "windowSize" else None
+        return key, value, target, available
+
+    def vn_preference_commit(prepared):
+        key, value, target, available = prepared
+        if not available: return False
         if key in vn_preference_fields:
-            if key == "fullscreen" and value and not renpy.can_fullscreen():
-                return
             setattr(_preferences, vn_preference_fields[key], value)
         elif key in vn_preference_mixers:
             MixerValue(vn_preference_mixers[key]).set_mixer(float(value) * (1.0 if config.quadratic_volumes else config.volume_db_range))
         elif key == "characterVolume":
-            persistent._character_volume[vn_preference_tag(character_id)] = float(value)
+            persistent._character_volume[target] = float(value)
         elif key == "dialogueOpacity":
             persistent.vn_dialogue_opacity = float(value)
         elif key == "windowSize":
-            renpy.set_physical_size(vn_window_dimensions(value))
-        if refresh:
+            renpy.set_physical_size(target)
+        return True
+
+    def vn_preference_set(key, value, character_id=None, refresh=True):
+        applied = vn_preference_commit(vn_preference_validate(key, value, character_id))
+        if refresh and applied:
             renpy.restart_interaction()
 
     @renpy.pure
@@ -115,42 +129,42 @@ init python:
                 vn_preference_set(self.key, self.value, self.character_id)
 
         def get_selected(self):
+            if self.component_id and (vn_ui_controls[self.component_id]["primary"] in vn_ui_overrides.get(self.component_id, {}) or vn_ui_property_control(self.component_id, vn_ui_controls[self.component_id]["primary"]) is not None):
+                return vn_preference_equal(vn_ui_control_get(self.component_id), self.value)
             return vn_preference_option_selected(self.key, self.value, self.character_id)
 
-        def get_sensitive(self):
-            if self.component_id and not vn_ui_control_available(self.component_id):
+        def get_sensitive(self, component_available=None):
+            if self.component_id and not (vn_ui_control_available(self.component_id) if component_available is None else component_available):
                 return False
+            if self.component_id and vn_ui_property_control(self.component_id, vn_ui_controls[self.component_id]["primary"]) is not None:
+                return True
             if self.key == "windowSize":
                 return vn_window_option_available(self.value)
             return self.key != "fullscreen" or not self.value or renpy.can_fullscreen()
 
     @renpy.pure
     class VnPreferenceValue(BarValue, DictEquality):
-        def __init__(self, key, character_id=None, reverse=False, component_id=None):
-            self.component_id = component_id
+        def __init__(self, key, character_id=None, reverse=False, component_id=None, screen_available=None):
+            self.component_id, self.screen_available = component_id, screen_available
             self.key, self.character_id = key, character_id
             self.reverse = reverse
-            self.maximum = float(vn_preference_info[key]["max"])
-            self.alt = vn_preference_info[key]["name"]
+            info = vn_preference_info[key]
+            self.range = {"min": float(info["min"]), "max": float(info["max"]), "step": float(info["step"])}
+            self.alt = info["name"]
 
         def get_adjustment(self):
-            value = vn_preference_get(self.key, self.character_id)
-            # Native text-speed bars put instant text at the right-hand end.
-            if self.key == "textSpeed":
-                value = self.maximum if value == 0 else value - 1
+            if self.component_id: return vn_ui_control_bar_adjustment(self.component_id, self.changed, self.reverse, self.screen_available)
+            # The adjustment runs 0..1; native text-speed bars put instant text at the right-hand end.
+            ratio = vn_preference_ratio(self.key, self.character_id)
             if self.reverse:
-                value = self.maximum - value
-            return ui.adjustment(adjustable=vn_ui_control_available(self.component_id), range=self.maximum, value=value, changed=self.changed, step=1 if self.key == "textSpeed" else self.maximum / 100.0)
+                ratio = 1.0 - ratio
+            start, travel, instant = vn_ui_range_travel(self.range, self.key == "textSpeed")
+            return ui.adjustment(adjustable=True, range=1.0, value=ratio, changed=self.changed, step=min(1.0, self.range["step"] / travel) if travel > 0 else 1.0)
 
         def changed(self, value):
-            if self.reverse:
-                value = self.maximum - value
-            if self.key == "textSpeed":
-                value = 0 if value >= self.maximum else min(self.maximum, value + 1)
-            if self.component_id:
-                vn_ui_control_set(self.component_id, value)
-            else:
-                vn_preference_set(self.key, value, self.character_id)
+            if self.component_id: return vn_ui_control_bar_changed(self.component_id, value, self.reverse)
+            ratio = 1.0 - value if self.reverse else value
+            vn_preference_set(self.key, vn_ui_range_user_value(self.range, ratio, self.key == "textSpeed"), self.character_id)
 
         def get_style(self):
             return "slider", "vslider"
@@ -164,12 +178,43 @@ init python:
 
     def vn_preference_ratio(key, character_id=None):
         value = vn_preference_get(key, character_id)
-        maximum = vn_preference_info[key]["max"]
-        if key == "textSpeed":
-            return 1.0 if value == 0 else max(0.0, min(1.0, (value - 1) / maximum))
-        return max(0.0, min(1.0, value / maximum))
+        info = vn_preference_info[key]
+        span = {"min": info["min"], "max": info["max"], "step": info["step"]}
+        start, travel, instant = vn_ui_range_travel(span, key == "textSpeed")
+        if instant and value == 0:
+            return 1.0
+        return 0.0 if travel <= 0 else max(0.0, min(1.0, (value - start) / travel))
+
+    def vn_preference_fit(key, value):
+        # Keep a stored value inside the author's range; instant text stays when the range allows it.
+        info = vn_preference_info[key]
+        if info["type"] != "number" or isinstance(value, bool) or not isinstance(value, (int, float)):
+            return value
+        if key == "textSpeed" and value == 0 and info["min"] == 0:
+            return value
+        return max(info["min"], min(info["max"], value))
+
+    def vn_fit_preferences():
+        # A player's settings from an earlier build may lie outside a range the author has since changed.
+        for key, info in vn_preference_info.items():
+            if info["type"] != "number":
+                continue
+            if key == "characterVolume":
+                for tag, value in list(persistent._character_volume.items()):
+                    persistent._character_volume[tag] = vn_preference_fit(key, value)
+                continue
+            value = vn_preference_get(key)
+            fitted = vn_preference_fit(key, value)
+            if not vn_preference_equal(fitted, value):
+                vn_preference_set(key, fitted, refresh=False)
+
+    config.start_callbacks.append(vn_fit_preferences)
 
     def vn_reset_preferences():
+        # A dynamic input/range can reject an otherwise valid initial value.
+        # Check the complete parameter write before changing mute, display or
+        # any built-in preference; commit this same prepared set afterwards.
+        parameter_reset = vn_parameter_prepare_settings_reset()
         # Unmute first: Ren'Py can raise a zero volume when clearing mute.
         # Applying authored values afterwards preserves an intentional zero.
         for mixer in vn_preference_mixers.values():
@@ -180,7 +225,7 @@ init python:
         vn_preference_set("fullscreen", vn_preference_defaults["fullscreen"], refresh=False)
         for character_id in vn_voice_tags:
             vn_preference_set("characterVolume", vn_preference_defaults["characterVolume"], character_id, refresh=False)
-        vn_parameter_reset_settings(refresh=False)
+        vn_parameter_reset_settings(refresh=False, _prepared=parameter_reset)
         renpy.save_persistent()
         renpy.restart_interaction()
 

@@ -1,3 +1,4 @@
+import { cloneData } from "./project-mutation";
 import { z } from 'zod';
 import { effectiveCharacter, makeId, projectSchema, type Project, type StageAction, type StoryNode } from './model';
 import { assetCategories } from './asset-library';
@@ -6,6 +7,8 @@ import { validateProject } from './validate';
 import { defaultShowCharacter } from './character-presets';
 import type { AiWorkflowDetail } from './ai-workflow';
 import { endingPerformanceNodes } from './ending-migration';
+import { pruneStoryGroups } from './story-groups';
+import { assertNoNewAiProjectErrors } from './ai-project-validation';
 
 const key = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/);
 const optionalId = key.nullish();
@@ -50,7 +53,7 @@ voiceId只可使用voices中的音频，且文件名或提供的索引必须足�
 export function buildAiStory(original: Project, raw: unknown) {
   const story = aiStorySchema.parse(raw);
   if (story.beats.reduce((n, beat) => n + beat.lines.length, 0) > 500) throw new Error('框架超过500句，请先生成较短框架，再逐段扩写。');
-  const project = structuredClone(original), warnings: string[] = [], details: AiWorkflowDetail[] = [];
+  const project = cloneData(original), warnings: string[] = [], details: AiWorkflowDetail[] = [];
   const missing = new Set<string>(), categories = assetCategories(project);
   const beats = new Map(story.beats.map(beat => [beat.key, beat]));
   const sceneKeys = new Set(story.scenes.map(scene => scene.key));
@@ -151,10 +154,12 @@ export function buildAiStory(original: Project, raw: unknown) {
   }
   project.entryId = nodeIds.get(story.entry)!;
   delete project.scriptText;
+  pruneStoryGroups(project);
   if (missing.size) warnings.push(`以下新角色待添加立绘：${[...missing].join('、')}；已预留自动显示演出。`);
   if (!voices) warnings.push('本框架未绑定配音。可提供录音目录及台词索引继续匹配；当前对话服务不生成录音。');
   const parsed = projectSchema.parse(project);
   const errors = validateProject(parsed).filter(d => d.severity === 'error');
   if (errors.length) throw new Error(errors.map(d => d.message).slice(0, 8).join('；'));
+  assertNoNewAiProjectErrors(original, parsed, '新剧情无法应用：');
   return { project: parsed, summary: story.summary, warnings, details, counts: { lines: story.beats.reduce((n, b) => n + b.lines.length, 0), portraitLines, expressions, voices, scenes: story.scenes.length, choices, endings } };
 }

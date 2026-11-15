@@ -1,3 +1,4 @@
+import { cloneData } from "../core/project-mutation";
 import { selectBrowserAsset } from './resource-selection';
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type DragEvent } from 'react';
 import { AudioLines, Bone, Boxes, ChevronRight, Clapperboard, FileCode2, Film, Folder, FolderOpen, FolderPlus, GitBranch, Image, LayoutGrid, List, Search, SlidersHorizontal, Star, Type, Upload, UserRound, X, Plus, Pencil, Trash2, PanelBottomClose } from 'lucide-react';
@@ -178,7 +179,7 @@ export function ContentBrowser({ project, commit, open, onClose, assetUrl, onOpe
   const copy = () => {
     const keys = selection.filter(key => key.startsWith('asset:') || key.startsWith('folder:'));
     if (!keys.length) return;
-    setCopied({ project: structuredClone(project), keys }); setCut([]); setNotice(`已复制 ${keys.length} 项`);
+    setCopied({ project: cloneData(project), keys }); setCut([]); setNotice(`已复制 ${keys.length} 项`);
   };
   const cutSelection = () => { setCopied(undefined); setCut(selection); setNotice(`已剪切 ${selection.length} 项`); };
   const reveal = async () => { if (!active?.key.startsWith('asset:') || !onRevealAsset) return; try { await onRevealAsset(active.id); } catch (error) { setNotice(error instanceof Error ? error.message : String(error)); } };
@@ -314,7 +315,7 @@ export function ContentBrowser({ project, commit, open, onClose, assetUrl, onOpe
         {active.path && <small className="content-path" title={assetById.get(active.id)?.externalPath ?? active.path}>{assetById.get(active.id)?.externalPath ?? assetById.get(active.id)?.sourcePath ?? active.path}</small>}
       </> : <div className="content-detail-empty"><Boxes size={30} /><span>{selectedFolder?.name ?? (selection.length ? '已选 ' + selection.length + ' 项' : '选择资源查看预览')}</span><small>空白处拖动框选 · Ctrl / Shift 多选<br />右键操作 · Ctrl+X / V 移动<br />F2 改名 · Delete 删除 · 撤销恢复</small></div>}</aside>
     </div>
-    <div className="content-status"><span>{busy ? '正在导入，请稍候…' : notice || `${visible.length} 项资源${childFolders.length ? ` · ${childFolders.length} 个文件夹` : ''}${selection.length ? ` · 已选 ${selection.length} 项` : ''}`}</span><span className="content-status-help">空白处框选 · 右键操作 · {variant === 'dock' ? 'Ctrl+空格 收起' : '双击打开 · 拖拽分组'}</span>{mode === 'grid' && <label className="content-tile-size">缩略图<input type="range" aria-label="资源缩略图大小" min={96} max={192} step={16} value={tileSize} onChange={event => setTileSize(Number(event.target.value))} /></label>}</div>
+    <div className="content-status"><span>{busy ? '正在导入，请稍候…' : notice || `${visible.length} 项资源${childFolders.length ? ` · ${childFolders.length} 个文件夹` : ''}${selection.length ? ` · 已选 ${selection.length} 项` : ''}`}</span>{!busy && !notice && scope === 'folder' && !!query.trim() && results.matching.length > visible.length && <button type="button" className="text-button content-show-all-matches" onClick={() => setScope('all')}>显示全部 {results.matching.length} 个匹配</button>}<span className="content-status-help">空白处框选 · 右键操作 · {variant === 'dock' ? 'Ctrl+空格 收起' : '双击打开 · 拖拽分组'}</span>{mode === 'grid' && <label className="content-tile-size">缩略图<input type="range" aria-label="资源缩略图大小" min={96} max={192} step={16} value={tileSize} onChange={event => setTileSize(Number(event.target.value))} /></label>}</div>
     {context && <div className="content-context-menu" role="menu" aria-label="资源操作" style={{ left: Math.max(0, context.x), top: Math.max(8, context.y), maxHeight: 'calc(100vh - 16px)', overflowY: 'auto', width: 264 }} onPointerDown={event => event.stopPropagation()} onClick={() => setContext(undefined)}>
       <button role="menuitem" disabled={selection.length !== 1} onClick={() => selectedFolder ? navigate(selectedFolder.id) : active && openItem(active)}>打开<span>Enter</span></button>
       <button role="menuitem" disabled={selection.length !== 1} onClick={renameSelection}>重命名<span>F2</span></button>

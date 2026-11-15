@@ -1,20 +1,32 @@
 import { useContext, useEffect, useRef, useState, type InputHTMLAttributes } from 'react';
 import { NumericEditContext } from './NumericEditContext';
 
-/** Numeric editing keeps unfinished text local; only finite values reach the
- * project. Bounds belong to domain validation, never to typing or deletion. */
+/** Numeric editing keeps unfinished text local; only finite, in-range values
+ * reach the project. min/max should only exclude values that would be invalid,
+ * and never interrupt typing or deletion. */
 export function NumberInput({ value, onChange, onBlur, onFocus, onKeyDown, type = 'number', min: _min, max: _max, step = 'any', ...props }: InputHTMLAttributes<HTMLInputElement>) {
   const numericEdit = useContext(NumericEditContext);
   const numericEditRef = useRef(numericEdit); numericEditRef.current = numericEdit;
   const input = useRef<HTMLInputElement>(null);
+  const focused = useRef(false);
+  const focusedValue = useRef<string | undefined>(undefined);
   const current = useRef({ value, step, min: _min, max: _max, disabled: props.disabled, readOnly: props.readOnly });
   current.current = { value, step, min: _min, max: _max, disabled: props.disabled, readOnly: props.readOnly };
   const [draft, setDraft] = useState(String(value ?? ''));
   const published = useRef(value);
   useEffect(() => {
-    if (String(value ?? '') !== String(published.current ?? '')) setDraft(String(value ?? ''));
+    if (String(value ?? '') !== String(published.current ?? '')) {
+      const text = String(value ?? ''); setDraft(text);
+      // Undo or another owner can replace the value while this field retains
+      // focus. Subsequent Esc must agree with that new authored baseline.
+      if (focused.current) focusedValue.current = text;
+    }
     published.current = value;
   }, [value]);
+  useEffect(() => () => {
+    // Removing a focused property field does not always dispatch blur.
+    if (focused.current) numericEditRef.current?.finish();
+  }, []);
   useEffect(() => {
     const field = input.current, label = field?.closest('label');
     if (type !== 'number' || !field || !label) return;
@@ -22,7 +34,7 @@ export function NumberInput({ value, onChange, onBlur, onFocus, onKeyDown, type 
     const labelText = label.querySelector<HTMLElement>('.field-label') ?? label;
     const originalTitle = labelText.getAttribute('title');
     if (!originalTitle) labelText.title = '左右拖动调整数值；Shift 精调，Ctrl 加速';
-    let drag: { start: number; value: number; x: number; pointerId: number; unit: number } | undefined;
+    let drag: { start: number; text: string; value: number; x: number; pointerId: number; unit: number } | undefined;
     let dragged = false;
     const publish = (next: number) => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, String(Number(next.toFixed(8))));
@@ -32,19 +44,29 @@ export function NumberInput({ value, onChange, onBlur, onFocus, onKeyDown, type 
       const previous = drag; drag = undefined;
       label.classList.remove('number-dragging');
       if (previous && label.hasPointerCapture(previous.pointerId)) label.releasePointerCapture(previous.pointerId);
-      if (revert && previous) publish(previous.start);
+      if (revert && previous) {
+        // A transaction restores the author's full state. Republishing a number
+        // would turn an unchanged or reset multi-edit field into a set operation.
+        if (numericEditRef.current) setDraft(previous.text);
+        else publish(previous.start);
+      }
       if (previous) numericEditRef.current?.finish(revert);
     };
     const down = (event: PointerEvent) => {
       const options = current.current;
       if (event.button !== 0 || options.disabled || options.readOnly || (event.target as Element).closest('input,button,select,textarea,a,summary,[role="button"]')) return;
-      const start = Number(field.value);
-      if (!Number.isFinite(start)) return;
       event.preventDefault(); event.stopPropagation(); dragged = false;
+      // Mixed, automatic and reset fields have no numeric starting point.
+      // Focus the value instead, so Esc belongs to this field and cannot clear
+      // the canvas selection left focused by the previous hierarchy click.
+      if (!field.value.trim() || !Number.isFinite(field.valueAsNumber)) { field.focus({ preventScroll: true }); return; }
       (document.activeElement as HTMLElement | null)?.blur?.();
+      // Blur can reconcile an unfinished draft; scrub from the committed value.
+      const text = field.value, start = field.valueAsNumber;
+      if (!field.isConnected || !text.trim() || !Number.isFinite(start)) return;
       const explicitStep = Number(options.step);
       const unit = Number.isFinite(explicitStep) && explicitStep > 0 ? explicitStep : Math.max(.01, 10 ** (Math.floor(Math.log10(Math.abs(start) || 1)) - 1));
-      drag = { start, value: start, x: event.clientX, pointerId: event.pointerId, unit };
+      drag = { start, text, value: start, x: event.clientX, pointerId: event.pointerId, unit };
       numericEditRef.current?.begin();
       label.setPointerCapture(event.pointerId); label.classList.add('number-dragging');
     };
@@ -64,9 +86,15 @@ export function NumberInput({ value, onChange, onBlur, onFocus, onKeyDown, type 
       // release position so a fast drag always reaches its final value.
       move(event); finish();
     };
-    const lost = () => finish();
+    const lost = () => finish(true);
     const cancel = () => finish(true);
-    const key = (event: KeyboardEvent) => { if (drag && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancel(); } };
+    const key = (event: KeyboardEvent) => {
+      if (!drag) return;
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancel(); }
+      // Saving or undoing ends the owner's edit. Retire this pointer gesture as
+      // well, so a later Esc cannot restore its old display over the new value.
+      else if ((event.ctrlKey || event.metaKey) && ['s', 'z', 'y'].includes(event.key.toLowerCase())) finish();
+    };
     const click = (event: MouseEvent) => { if (dragged) { event.preventDefault(); event.stopPropagation(); dragged = false; } };
     label.addEventListener('pointerdown', down);
     label.addEventListener('pointermove', move);
@@ -82,20 +110,49 @@ export function NumberInput({ value, onChange, onBlur, onFocus, onKeyDown, type 
     };
   }, [type]);
   if (type !== 'number') return <input {...props} type={type} value={value} onChange={onChange} onBlur={onBlur} onFocus={onFocus} onKeyDown={onKeyDown} />;
-  return <input {...props} ref={input} type="number" step={step} value={draft} onFocus={event => { numericEdit?.begin(); onFocus?.(event); }} onKeyDown={event => {
-    if (event.key === 'Escape' && numericEdit) { event.preventDefault(); event.stopPropagation(); numericEdit.finish(true); }
-    else if (event.key === 'Enter') { numericEdit?.finish(); numericEdit?.begin(); }
+  const lower = _min === undefined || _min === '' ? -Infinity : Number(_min), upper = _max === undefined || _max === '' ? Infinity : Number(_max);
+  const inRange = (next: number) => next >= lower && next <= upper;
+  // Typing "24" passes through "2"; an out-of-range draft is held locally and
+  // only clamped to the nearest bound once the edit is committed.
+  const clampDraft = (field: HTMLInputElement, change: Parameters<NonNullable<typeof onChange>>[0]) => {
+    const next = field.valueAsNumber;
+    if (!field.value.trim() || !Number.isFinite(next) || inRange(next)) return false;
+    const bounded = Math.max(lower, Math.min(upper, next));
+    field.value = String(bounded); setDraft(field.value); published.current = bounded;
+    numericEdit?.begin(); onChange?.(change);
+    return true;
+  };
+  const reconcileDraft = (field: HTMLInputElement) => {
+    if (!field.value.trim() || !Number.isFinite(field.valueAsNumber) || field.valueAsNumber !== Number(value)) {
+      field.value = String(value ?? ''); setDraft(field.value);
+    }
+  };
+  return <input {...props} ref={input} type="number" step={step} value={draft} onFocus={event => { focused.current = true; focusedValue.current = String(value ?? ''); numericEdit?.begin(); onFocus?.(event); }} onKeyDown={event => {
+    if (event.key === 'Escape' && numericEdit) {
+      event.preventDefault(); event.stopPropagation();
+      setDraft(focusedValue.current ?? String(value ?? '')); focusedValue.current = undefined;
+      numericEdit.finish(true);
+    }
+    else if (event.key === 'Enter') {
+      if (!clampDraft(event.currentTarget, event as unknown as Parameters<NonNullable<typeof onChange>>[0])) reconcileDraft(event.currentTarget);
+      numericEdit?.finish(); focusedValue.current = event.currentTarget.value; numericEdit?.begin();
+    }
     onKeyDown?.(event);
   }} onChange={event => {
     setDraft(event.target.value);
-    if (event.target.value.trim() && Number.isFinite(event.target.valueAsNumber)) {
+    focusedValue.current ??= String(value ?? '');
+    if (event.target.value.trim() && Number.isFinite(event.target.valueAsNumber) && inRange(event.target.valueAsNumber)) {
+      numericEdit?.begin();
       published.current = event.target.valueAsNumber;
       onChange?.(event);
     }
   }} onBlur={event => {
+    focused.current = false;
+    focusedValue.current = undefined;
+    const clamped = clampDraft(event.target, event as unknown as Parameters<NonNullable<typeof onChange>>[0]);
     // Domain validation may reject or clamp a finite edit without changing the
     // published prop. Reconcile on blur so the field never reports a false value.
-    if (!event.target.value.trim() || !Number.isFinite(event.target.valueAsNumber) || event.target.valueAsNumber !== Number(value)) setDraft(String(value ?? ''));
+    if (!clamped) reconcileDraft(event.target);
     numericEdit?.finish();
     onBlur?.(event);
   }} />;

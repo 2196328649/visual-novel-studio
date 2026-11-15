@@ -57,7 +57,7 @@ try {
   await expect(page.getByLabel('关键帧数值', { exact: true })).toHaveValue('0.9'); await choose(target(base, 0, 1)); await history('Control+z');
   await expect.poll(async () => (await clip(custom.id)).tracks[0].keys[1].value).toBe(.6); assert.equal((await clip(sameName.id)).duration, 3); await history('Control+y');
   await expect.poll(async () => (await clip(custom.id)).tracks[0].keys[1].value).toBe(.9);
-  await button('保存界面').click(); await expect(button('保存界面')).toBeDisabled();
+  await button('保存界面').click(); await expect(page.locator('.ui-save-status')).toHaveText('已保存'); await expect(button('保存界面')).toBeDisabled();
   const saved = JSON.parse(await fs.readFile(projectFile, 'utf8')); assert.equal(saved.ui.activeInstanceId, 'scheme'); assert.deepEqual(saved.ui.animations.find((a: any) => a.id === base.id), base); assert.deepEqual(saved.ui.animations.find((a: any) => a.id === scoped.id), scoped); assert.deepEqual(saved.ui.components, project.ui.components);
   checks.push('定位后真实选择进入下一次AI修改；导航不占用历史，保存保留游戏默认方案');
   phase = 'stale command'; const stale = await propose(target(base, 0, 0)); await page.locator('[data-animation-key="' + base.tracks[0].keys[0].id + '"]').click(); await button('删除关键帧').click(); const beforeStale = await current();

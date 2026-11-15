@@ -1,0 +1,30 @@
+.parameter-behavior-fields { display: grid; gap: 8px; min-width: 0; font-size: 12px; }
+.parameter-behavior-row { display: grid; grid-template-columns: minmax(78px, .55fr) minmax(0, 1fr); align-items: center; gap: 10px; min-width: 0; }
+.parameter-behavior-row > span { color: var(--muted, var(--editor-muted)); }
+.parameter-behavior-row > select, .parameter-behavior-row > output { width: 100%; min-width: 0; }
+.parameter-behavior-row > output { padding: 6px 0; }
+.parameter-behavior-reset { min-width: 0; }
+.parameter-behavior-reset > summary { display: flex; align-items: center; gap: 6px; padding: 5px 0; list-style: none; cursor: pointer; color: var(--muted, var(--editor-muted)); font-size: 11px; }
+.parameter-behavior-reset > summary::before { content: '▸'; width: 9px; flex: none; }
+.parameter-behavior-reset[open] > summary::before { content: '▾'; }
+.parameter-behavior-reset > summary > span { margin-left: auto; color: var(--editor-panel-text, var(--editor-text)); }
+.parameter-behavior-reset > summary:focus-visible { outline: 2px solid var(--editor-accent); outline-offset: 2px; border-radius: 3px; }
+.parameter-behavior-fields .parameter-behavior-checkbox { display: flex; align-items: center; gap: 7px; margin: 6px 0; font-size: 12px; cursor: pointer; }
+.parameter-behavior-fields input[type=checkbox] { flex: none; width: 14px; height: 14px; padding: 0; margin: 0; accent-color: var(--editor-accent); }
+.parameter-behavior-reset p { margin: 4px 0; font-size: 11px; line-height: 1.6; color: var(--muted, var(--editor-muted)); }
+.parameter-behavior-fields.is-compact { gap: 3px; }
+.parameter-behavior-fields.is-compact .parameter-behavior-row { grid-template-columns: 78px minmax(0, 1fr); }
+.ui-parameter-binding-fields:has(> .parameter-behavior-fields) { height: auto; min-height: 0; }
+.ui-parameter-binding-fields > .parameter-behavior-fields,
+.ui-parameter-binding-fields > .ui-field-help,
+.ui-parameter-binding-fields > .ui-parameter-creation-defaults { flex-basis: 100%; }
+.ui-parameter-bindings-embedded .workspace-toolbar .parameter-behavior-fields input[type=checkbox] { width: 14px; }
+.ui-parameter-bindings-embedded .workspace-toolbar.ui-parameter-binding-fields input[type=checkbox] { width: 14px; min-width: 14px; height: 14px; padding: 0; }
+.ui-parameter-creation-defaults { white-space: normal; text-align: left; overflow-wrap: anywhere; }
+/* Compact disclosures must not inherit the application's large section cards. */
+#root .parameter-behavior-fields > details.parameter-behavior-reset:not(.field-help) > summary { min-height: 26px; padding: 4px 0; margin: 0; border: 0; border-radius: 3px; background: transparent; color: var(--muted, var(--editor-muted)); font-size: 11px; font-weight: 400; gap: 6px; }
+#root .parameter-behavior-fields > details.parameter-behavior-reset[open]:not(.field-help) > summary { margin-bottom: 0; }
+#root .parameter-behavior-fields > details.parameter-behavior-reset:not(.field-help) > summary::before { content: '▸'; }
+#root .parameter-behavior-fields > details.parameter-behavior-reset[open]:not(.field-help) > summary::before { content: '▾'; }
+#root .parameter-behavior-fields > details.parameter-behavior-reset:not(.field-help) > summary::after { content: none; }
+#root .parameter-behavior-fields > details.parameter-behavior-reset[open]:not(.field-help) > summary::after { content: none; }

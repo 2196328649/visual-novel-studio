@@ -6,14 +6,11 @@ import { editorLayoutStateSchema } from '../core/editor-layout';
 import { readOnlyAiEditorCommand } from '../core/ai-editor-commands';
 import { aiDraftProjectSchema } from '../core/ai-draft-schema';
 import { aiReadResponseSchema, readAiProject } from '../core/ai-project-read';
-import { promises as fs } from 'node:fs';
 import { z } from 'zod';
-import { aiConfigSchema, aiEndpoint, aiModelsEndpoint, aiRequestMessages, aiExpressionMessages, defaultAiConfig, parseAiResponse, prepareAiChanges, applyAiChanges, type AiOperation, type AiConfig, type AiConfigUpdate, type AiConfigView, type AiRequest, type AiResponse } from '../core/ai';
-import { projectSchema } from '../core/model';
-import { atomicWrite, WriteQueue } from './project-store';
+import { aiEndpoint, aiModelsEndpoint, aiRequestMessages, aiExpressionMessages, parseAiResponse, prepareAiChanges, applyAiChanges, type AiOperation, type AiConfig, type AiConfigResetResult, type AiConfigUpdate, type AiConfigView, type AiRequest, type AiResponse } from '../core/ai';
+import { AiConfigStore, type AiSecretStorage } from './ai-config-store';
 import { aiAttachmentPathsSchema, aiAttachmentsSchema } from '../core/ai-attachments';
 
-interface SecretStorage { isEncryptionAvailable(): boolean; encryptString(value: string): Buffer; decryptString(value: Buffer): string }
 const requestSchema = z.object({ mode: z.enum(['chat','edit']).optional(), id: z.string().regex(/^[a-z0-9_-]{1,100}$/i), prompt: z.string().trim().min(1).max(10000), project: aiDraftProjectSchema, editorLayoutState:editorLayoutStateSchema.optional(), selectedParameter: z.object({setId:z.string().min(1).max(200),variableId:z.string().min(1).max(200).optional()}).strict().optional(), selectedContentKeys: z.array(z.string().min(1).max(220)).max(20000).optional(), selectedBlueprint: blueprintSelectionSchema.optional(), selectedUiPage: uiPageSelectionSchema.optional(), selectedUiAnimation: uiAnimationSelectionSchema.optional(), selectedUiComponentId: z.string().min(1).max(200).optional(), lineIds: z.array(z.string()).max(20000), history: aiHistorySchema.optional(), readOnly: z.boolean().optional(), allowExternalFiles: z.boolean().optional(), attachmentPaths: aiAttachmentPathsSchema.optional(), attachments: aiAttachmentsSchema.optional() }).strict();
 
 export class AiRetryableError extends Error {
@@ -33,55 +30,55 @@ export class AiService {
     if(input!==undefined||output!==undefined){usage.reportedRequests++;usage.inputTokens+=input??0;usage.outputTokens+=output??0;}
     if(cached!==undefined){usage.cacheReportedRequests++;usage.cachedTokens+=cached;}
   }
-  private config: AiConfig = { ...defaultAiConfig };
-  private key = '';
-  private storage: AiConfigView['keyStorage'] = 'none';
-  private loaded?: Promise<void>;
-  private writes = new WriteQueue();
+  private configStore: AiConfigStore;
+  private settingsMutation = false;
+  private settingsJobs = new Map<string, { cancelled: boolean }>();
   private controllers = new Map<string, AbortController>();
   private readJobs = new Map<string, { cancelled: boolean }>();
-  constructor(private options: { file: string; vault: SecretStorage; fetch?: typeof fetch; chunk?: (id: string, text: string) => void }) {}
+  constructor(private options: { file: string; vault: AiSecretStorage; fetch?: typeof fetch; chunk?: (id: string, text: string) => void }) {
+    this.configStore = new AiConfigStore(options);
+  }
+  getConfig(): Promise<AiConfigView> { return this.configStore.get(); }
 
-  private load() {
-    return this.loaded ??= (async () => {
-      let raw: { config?: unknown; encryptedKey?: string };
-      try { raw = JSON.parse(await fs.readFile(this.options.file, 'utf8')); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw new Error('无法读取 AI 配置，请检查配置文件是否损坏。'); }
-      const parsed = aiConfigSchema.safeParse(raw.config);
-      if (parsed.success) this.config = parsed.data;
-      if (raw.encryptedKey && this.options.vault.isEncryptionAvailable()) {
-        try { this.key = this.options.vault.decryptString(Buffer.from(raw.encryptedKey, 'base64')); this.storage = this.key ? 'encrypted' : 'none'; }
-        catch { this.key = ''; this.storage = 'none'; }
-      }
-    })();
+  private async changeConfig<T>(action: () => Promise<T>): Promise<T> {
+    if (this.settingsMutation) throw new Error('AI 设置正在保存或恢复，请稍后重试。');
+    if (this.settingsJobs.size || this.controllers.size || this.readJobs.size || this.usage.size) throw new Error('已有 AI 请求正在进行，请先停止请求再修改设置。');
+    this.settingsMutation = true;
+    try { return await action(); }
+    finally { this.settingsMutation = false; }
   }
-  async getConfig(): Promise<AiConfigView> {
-    await this.load();
-    return { ...this.config, hasKey: !!this.key, keyStorage: this.storage };
+  saveConfig(update: AiConfigUpdate): Promise<AiConfigView> {
+    return this.changeConfig(() => this.configStore.save(update));
   }
-  private resolveSettings(update: AiConfigUpdate) {
-    const { apiKey, clearKey, ...raw } = update;
-    const parsed = aiConfigSchema.safeParse(raw);
-    if (!parsed.success) throw new Error('请检查 API 地址、模型和超时设置。');
-    const config = parsed.data;
-    aiEndpoint(config.baseUrl);
-    if (apiKey !== undefined && (typeof apiKey !== 'string' || apiKey.length > 16384 || /[\r\n]/.test(apiKey))) throw new Error('API 密钥格式无效。');
-    const changedHost = new URL(aiEndpoint(this.config.baseUrl)).origin !== new URL(aiEndpoint(config.baseUrl)).origin;
-    return { config, key: clearKey ? '' : apiKey?.trim() || (changedHost ? '' : this.key) };
+  resetConfig(recoveryId: string): Promise<AiConfigResetResult> {
+    return this.changeConfig(() => this.configStore.reset(recoveryId));
   }
-  async saveConfig(update: AiConfigUpdate): Promise<AiConfigView> {
-    return this.writes.run(async () => {
-      await this.load();
-      const { config, key } = this.resolveSettings(update);
-      const persistent = !!key && config.rememberKey && this.options.vault.isEncryptionAvailable();
-      const encryptedKey = persistent ? this.options.vault.encryptString(key).toString('base64') : undefined;
-      await atomicWrite(this.options.file, JSON.stringify({ version: 1, config, encryptedKey }, null, 2));
-      this.config = config; this.key = key; this.storage = key ? persistent ? 'encrypted' : 'session' : 'none';
-      return this.getConfig();
-    });
+  private async withSettings<T>(id: string, update: AiConfigUpdate | undefined, action: (config: AiConfig, key: string) => Promise<T>): Promise<T> {
+    if (typeof id !== 'string' || !/^[a-z0-9_-]{1,100}$/i.test(id)) throw new Error('AI 请求编号无效。');
+    if (this.settingsMutation) throw new Error('AI 设置正在保存或恢复，请稍后重试。');
+    if (this.settingsJobs.size) throw new Error('已有 AI 请求正在进行，请等待完成或停止请求。');
+    const job = { cancelled: false }; this.settingsJobs.set(id, job);
+    try {
+      const { config, key } = await this.configStore.resolve(update);
+      if (job.cancelled) throw new Error('AI 请求已停止，工程没有修改。');
+      const result = await action(config, key);
+      if (job.cancelled) throw new Error('AI 请求已停止，工程没有修改。');
+      return result;
+    } catch (error) {
+      if (job.cancelled) throw new Error('AI 请求已停止，工程没有修改。');
+      throw error;
+    } finally { if (this.settingsJobs.get(id) === job) this.settingsJobs.delete(id); }
   }
-  cancel(id: string) { const job = this.readJobs.get(id); if (job) job.cancelled = true; this.controllers.get(id)?.abort(); }
-  cancelAll() { for (const job of this.readJobs.values()) job.cancelled = true; for (const controller of this.controllers.values()) controller.abort(); }
+  cancel(id: string) {
+    const settings = this.settingsJobs.get(id); if (settings) settings.cancelled = true;
+    const job = this.readJobs.get(id); if (job) job.cancelled = true;
+    this.controllers.get(id)?.abort();
+  }
+  cancelAll() {
+    for (const job of this.settingsJobs.values()) job.cancelled = true;
+    for (const job of this.readJobs.values()) job.cancelled = true;
+    for (const controller of this.controllers.values()) controller.abort();
+  }
 
   private async requestJson(id: string, config: AiConfig, key: string, url: string, body?: unknown, onText?: (text: string) => void): Promise<any> {
     if (!/^[a-z0-9_-]{1,100}$/i.test(id)) throw new Error('AI 请求编号无效。');
@@ -136,18 +133,20 @@ export class AiService {
       throw new Error(redact(error instanceof Error ? error.message === 'fetch failed' ? '无法连接 API，请检查地址、网络和服务状态。' : error.message : 'AI 请求失败。'));
     } finally { clearTimeout(timer); this.controllers.delete(id); }
   }
-  private async complete(id: string, messages: { role: string; content: string }[], structured: boolean, stream = false): Promise<string> {
-    await this.load();
-    const config = this.config, key = this.key;
-    if (!config.model) throw new Error('请先在 AI 设置中填写 API 地址和模型名称。');
-    const data = await this.requestJson(id, config, key, aiEndpoint(config.baseUrl), { model: config.model, messages, stream, ...(stream ? { stream_options: { include_usage: true } } : {}), ...(structured && config.jsonMode ? { response_format: { type: 'json_object' } } : {}) }, stream ? text=>this.options.chunk?.(id,text) : undefined);
-    this.recordUsage(id,data?.usage);
-    const choice = data?.choices?.[0];
-    if (choice?.message?.refusal) throw new Error('模型拒绝了此次请求，请修改问题后再试。');
-    if (choice?.finish_reason === 'content_filter') throw new Error('服务商未完成回复，请调整问题后重试。');
-    if (choice?.finish_reason === 'length') throw new AiRetryableError('回复达到模型长度限制，请减少台词数量或缩小修改范围后重试。', 'length');
-    if (typeof choice?.message?.content !== 'string') throw new Error('API 回复缺少 choices[0].message.content，请检查接口类型。');
-    return key ? choice.message.content.replaceAll(key, '[已隐藏密钥]') : choice.message.content;
+  private async complete(id: string, messages: { role: string; content: string }[], structured: boolean, stream: boolean | 'configured' = false): Promise<string> {
+    return this.withSettings(id, undefined, async (config, key) => {
+      const streaming = stream === 'configured' ? config.streamChat !== false : stream;
+      if (!config.model) throw new Error('请先在 AI 设置中填写 API 地址和模型名称。');
+      const data = await this.requestJson(id, config, key, aiEndpoint(config.baseUrl), { model: config.model, messages, stream: streaming, ...(streaming ? { stream_options: { include_usage: true } } : {}), ...(structured && config.jsonMode ? { response_format: { type: 'json_object' } } : {}) }, streaming ? text=>this.options.chunk?.(id,text) : undefined);
+      this.recordUsage(id,data?.usage);
+      const choice = data?.choices?.[0];
+      if (choice?.message?.refusal) throw new Error('模型拒绝了此次请求，请修改问题后再试。');
+      if (choice?.finish_reason === 'content_filter') throw new Error('服务商未完成回复，请调整问题后重试。');
+      if (choice?.finish_reason === 'length') throw new AiRetryableError('回复达到模型长度限制，请减少台词数量或缩小修改范围后重试。', 'length');
+      if (typeof choice?.message?.content !== 'string') throw new Error('API 回复缺少 choices[0].message.content，请检查接口类型。');
+      if (!choice.message.content.trim()) throw new Error('AI 返回了空回复，请重试或检查模型设置。');
+      return key ? choice.message.content.replaceAll(key, '[已隐藏密钥]') : choice.message.content;
+    });
   }
   async chat(raw: AiRequest): Promise<AiResponse> {
     const request=requestSchema.parse(raw);
@@ -156,16 +155,15 @@ export class AiService {
     // Keep conversational messages identical across turns; put changing reference data last.
     messages[messages.length-1].content=messages[messages.length-1].content.replace(/^用户请求：[\s\S]*?\n以下JSON/, '以下JSON');
     messages.splice(1+(request.history?.length??0),0,{role:'user',content:request.prompt});
-    await this.load();
-    return {message:await this.complete(request.id,messages,false,this.config.streamChat!==false),operations:[]};
+    return {message:await this.complete(request.id,messages,false,'configured'),operations:[]};
   }
   async listModels(id: string, update: AiConfigUpdate): Promise<string[]> {
-    await this.load();
-    const { config, key } = this.resolveSettings(update);
-    const data = await this.requestJson(id, config, key, aiModelsEndpoint(config.baseUrl));
-    const parsed = z.object({ data: z.array(z.object({ id: z.string().trim().min(1).max(200) })).max(10000) }).safeParse(data);
-    if (!parsed.success) throw new Error('服务没有返回兼容的模型列表，可以手动填写模型名称。');
-    return [...new Set(parsed.data.data.map(model => key ? model.id.replaceAll(key, '[已隐藏密钥]') : model.id))].sort((a, b) => a.localeCompare(b));
+    return this.withSettings(id, update, async (config, key) => {
+      const data = await this.requestJson(id, config, key, aiModelsEndpoint(config.baseUrl));
+      const parsed = z.object({ data: z.array(z.object({ id: z.string().trim().min(1).max(200) })).max(10000) }).safeParse(data);
+      if (!parsed.success) throw new Error('服务没有返回兼容的模型列表，可以手动填写模型名称。');
+      return [...new Set(parsed.data.data.map(model => key ? model.id.replaceAll(key, '[已隐藏密钥]') : model.id))].sort((a, b) => a.localeCompare(b));
+    });
   }
   async test(id: string): Promise<string> {
     await this.complete(id, [{ role: 'user', content: '请只回复：连接成功。' }], false);

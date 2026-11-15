@@ -1,8 +1,8 @@
-import { NumberInput } from './NumberInput';
+import { BlueprintValueInput } from './BlueprintValueInput';
 import { ActorInstanceField, ActorLifetimeSelect } from './ActorInstanceFields';
 import type { ShowActor } from '../core/actor-instance';
-import { effectiveCharacter, type BlueprintGraph, type BlueprintPin, type Project, type VariableValue, type VisualObject } from '../core/model';
-import { blueprintInputTarget, speakerExpression, rawSavedBlueprintAction } from '../core/blueprint-authoring';
+import { effectiveCharacter, type BlueprintGraph, type BlueprintPin, type Project, type VariableValue } from '../core/model';
+import { blueprintActorInstanceTargets, blueprintInputTarget, speakerExpression, rawSavedBlueprintAction } from '../core/blueprint-authoring';
 import { visualInputFields } from '../core/visual-object';
 import { UiAssetSelect } from './AssetPicker';
 import type { AssetUrl } from './StageEditor';
@@ -10,44 +10,56 @@ import { browserBridge } from './browserBridge';
 import { CharacterPresetSelect } from './CharacterPresets';
 import { blueprintAssetFilter } from '../core/blueprint-assets';
 
-export function BlueprintParameterValue({ project, graph, pin, value, onChange, assetUrl, speakerId, label = pin.name }: {
-  project: Project; graph: BlueprintGraph; pin: BlueprintPin; value: VariableValue; onChange: (value: VariableValue) => void; assetUrl?: AssetUrl; speakerId?: string; label?: string;
+export function BlueprintParameterValue({ project, graph, pin, value, onChange, assetUrl, speakerId, label = pin.name, compact = false }: {
+  project: Project; graph: BlueprintGraph; pin: BlueprintPin; value: VariableValue; onChange: (value: VariableValue) => void; assetUrl?: AssetUrl; speakerId?: string; label?: string; compact?: boolean;
 }) {
   const target = blueprintInputTarget(graph, pin.id, project);
-  const expression = target.pinId === 'expressionId';
+  const actorTargets = pin.dataType === 'string' ? blueprintActorInstanceTargets(graph, pin.id, project) : [];
+  const common = (options: { min?: number; max?: number; step?: number } = {}) => <BlueprintValueInput compact={compact} project={project} type={pin.dataType} value={value} label={label} {...options} onChange={next => {
+    // Clearing a reference means an explicit empty input. Only the override
+    // checkbox restores the graph default; unfinished numeric text stays local.
+    if (next === undefined) { if (['character', 'scene', 'ui', 'component', 'string'].includes(pin.dataType)) onChange(''); }
+    else onChange(next);
+  }} />;
+  if (actorTargets.length && typeof value === 'string') {
+    const actor = actorTargets.length === 1 ? actorTargets[0] : undefined;
+    const characterId = actor?.type === 'showCharacter' && !actor.properties.characterId ? speakerId : typeof actor?.properties.characterId === 'string' ? actor.properties.characterId : undefined;
+    return <ActorInstanceField project={project} characterId={characterId} value={String(value ?? '')} label={label} onChange={value => onChange(value ?? '1')} />;
+  }
+  const expression = pin.dataType === 'string' && target.pinId === 'expressionId';
   const characterId = target.node?.type === 'showCharacter' && !target.node.properties.characterId ? speakerId : String(target.node?.properties.characterId ?? '');
   const character = effectiveCharacter(project, characterId ?? '');
-  if (target.pinId === 'characterId' && target.node?.type === 'showCharacter') return <select aria-label={label} value={String(value)} onChange={event => onChange(event.target.value)}><option value="">当前台词角色（自动）</option>{project.characters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>;
-  if (target.pinId === 'lifetime') return <ActorLifetimeSelect value={(value || undefined) as ShowActor['lifetime']} label={label} onChange={value => onChange(value ?? '')} />;
-  if (target.pinId === 'instanceId') return <ActorInstanceField project={project} characterId={characterId} value={String(value ?? '')} label={label} onChange={value => onChange(value ?? '')} />;
-  if (target.pinId === 'presetId') return <CharacterPresetSelect project={project} characterId={characterId} value={String(value)} label={label} onChange={onChange} />;
+  if (pin.dataType === 'character' && typeof value === 'string' && target.pinId === 'characterId' && target.node?.type === 'showCharacter') return <select aria-label={label} value={value} onChange={event => onChange(event.target.value)}><option value="">当前台词角色（自动）</option>{value && !project.characters.some(c => c.id === value) && <option value={value}>原角色已不存在：{value}</option>}{project.characters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>;
+  if (pin.dataType === 'string' && target.pinId === 'lifetime' && target.node?.type === 'showCharacter') {
+    if (value !== '' && value !== 'line' && value !== 'persistent') return common();
+    return <ActorLifetimeSelect value={(value || undefined) as ShowActor['lifetime']} label={label} onChange={value => onChange(value ?? '')} />;
+  }
+  if (pin.dataType === 'string' && typeof value === 'string' && target.pinId === 'presetId' && target.node?.type === 'showCharacter') return <CharacterPresetSelect project={project} characterId={characterId} value={value} label={label} onChange={onChange} />;
   const url = assetUrl ?? (id => { const asset = project.assets.find(asset => asset.id === id); return asset ? (window.studio ?? browserBridge).assetUrl(asset.path) : undefined; });
-  if (expression && character) {
+  if (expression && character && typeof value === 'string') {
     const expressions = character.expressions;
     const selected = speakerExpression(project, characterId, value);
-    return <div className="blueprint-expression-value"><select aria-label={label} value={String(value)} onChange={event => onChange(event.target.value)}><option value="">角色默认表情</option>{expressions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>{selected && <img alt={`表情预览：${selected.name}`} src={url(selected.assetId)} />}</div>;
+    return <div className="blueprint-expression-value"><select aria-label={label} value={value} onChange={event => onChange(event.target.value)}><option value="">角色默认表情</option>{value && !expressions.some(item => item.id === value) && <option value={value}>{selected ? `表情名称引用：${selected.name}` : `原表情已不存在：${value}`}</option>}{expressions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>{selected && <img alt={`表情预览：${selected.name}`} src={url(selected.assetId)} />}</div>;
   }
   const object = target.node && rawSavedBlueprintAction(target.node);
   const property = object?.kind === 'visual' ? visualInputFields(object).find(field => 'object_' + field.key === target.pinId)?.path.at(-1) : undefined;
-  if (property === 'outlineColor' || property === 'shadowColor') return <input type="color" aria-label={label} value={String(value)} onChange={event => onChange(event.target.value)} />;
-  if (property === 'outlineWidth' || property === 'shadowBlur' || property === 'outlineOpacity' || property === 'shadowOpacity') {
+  if (pin.dataType === 'string' && (property === 'outlineColor' || property === 'shadowColor') && typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)) return <input type="color" aria-label={label} value={value} onChange={event => onChange(event.target.value)} />;
+  if (pin.dataType === 'number' && (property === 'outlineWidth' || property === 'shadowBlur' || property === 'outlineOpacity' || property === 'shadowOpacity')) {
     const opacity = property === 'outlineOpacity' || property === 'shadowOpacity';
-    return <NumberInput aria-label={label} min={0} max={opacity ? 1 : undefined} step={opacity ? .05 : 1} value={Number(value)} onChange={event => { const value = event.target.valueAsNumber; if (Number.isFinite(value) && value >= 0 && (!opacity || value <= 1)) onChange(value); }} />;
+    return common({ min: 0, max: opacity ? 1 : undefined, step: opacity ? .05 : 1 });
   }
-  if (property === 'textAlign' || property === 'textVerticalAlign') {
+  if (pin.dataType === 'string' && typeof value === 'string' && (property === 'textAlign' || property === 'textVerticalAlign')) {
     const choices = property === 'textAlign' ? { left: '左对齐', center: '居中', right: '右对齐' } : { top: '顶部', center: '居中', bottom: '底部' };
-    return <select aria-label={label} value={String(value || 'center')} onChange={event => onChange(event.target.value)}>{Object.entries(choices).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>;
+    return <select aria-label={label} value={value} onChange={event => onChange(event.target.value)}>{!Object.hasOwn(choices, value) && <option value={value}>{value ? `原对齐值不可用：${value}` : '未设置'}</option>}{Object.entries(choices).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>;
   }
   if (pin.dataType === 'asset') {
     const { kind, category } = blueprintAssetFilter(project, graph, pin);
-    return <UiAssetSelect project={project} kind={kind} category={category} allowEmpty={!pin.required} value={String(value) || undefined} onChange={value => onChange(value ?? '')} label={label} assetUrl={url} empty={kind === 'font' ? '使用对象原字体' : '无'} />;
+    return <UiAssetSelect buttonOnly={compact} project={project} kind={kind} category={category} allowEmpty={!pin.required} value={String(value) || undefined} onChange={value => onChange(value ?? '')} label={label} assetUrl={url} empty={kind === 'font' ? '使用对象原字体' : '无'} />;
   }
-  if (pin.dataType === 'boolean') return <select aria-label={label} value={String(value)} onChange={event => onChange(event.target.value === 'true')}><option value="true">是</option><option value="false">否</option></select>;
-  if (pin.dataType === 'number') return <NumberInput aria-label={label} type="number" step="any" value={Number(value)} onChange={event => { if (Number.isFinite(event.target.valueAsNumber)) onChange(event.target.valueAsNumber); }} />;
-  if (pin.dataType === 'character' || pin.dataType === 'scene') return <select aria-label={label} value={String(value)} onChange={event => onChange(event.target.value)}><option value="">请选择</option>{(pin.dataType === 'character' ? project.characters : project.scenes).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>;
-  if (target.pinId === 'effect' && target.node?.type === 'showChapter') return <select aria-label={label} value={String(value)} onChange={event => onChange(event.target.value)}><option value="">作品默认</option><option value="ink">笔触消散</option><option value="fade">淡入淡出</option><option value="none">无动画</option></select>;
-  if (target.pinId === 'direction' && target.node?.type === 'shake') return <select aria-label={label} value={String(value)} onChange={event => onChange(event.target.value)}><option value="vertical">纵向</option><option value="horizontal">横向</option></select>;
-  return <input aria-label={label} value={String(value)} placeholder={expression ? '留空使用角色默认表情' : undefined} onChange={event => onChange(event.target.value)} />;
+  if (pin.dataType === 'string' && typeof value === 'string' && target.pinId === 'effect' && target.node?.type === 'showChapter') return <select aria-label={label} value={value} onChange={event => onChange(event.target.value)}>{!['', 'ink', 'fade', 'none'].includes(value) && <option value={value}>原效果已不存在：{value}</option>}<option value="">作品默认</option><option value="ink">笔触消散</option><option value="fade">淡入淡出</option><option value="none">无动画</option></select>;
+  if (pin.dataType === 'string' && typeof value === 'string' && target.pinId === 'direction' && target.node?.type === 'shake') return <select aria-label={label} value={value} onChange={event => onChange(event.target.value)}>{!['vertical', 'horizontal'].includes(value) && <option value={value}>原方向不可用：{value}</option>}<option value="vertical">纵向</option><option value="horizontal">横向</option></select>;
+  if (expression && typeof value === 'string') return <input aria-label={label} value={value} placeholder="留空使用角色默认表情" onChange={event => onChange(event.target.value)} />;
+  return common();
 }
 
 export function BlueprintCallFields({ project, graph, inputs = {}, onChange, assetUrl, speakerId }: {

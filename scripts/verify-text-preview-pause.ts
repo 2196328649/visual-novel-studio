@@ -6,22 +6,24 @@ import { createProject, type Project } from '../src/core/model';
 import { applyTextScript } from '../src/core/text-script';
 import { launchDesktopFixture } from './lib/desktop-fixture';
 import { openStoryMode } from './lib/story-workspace';
+import { cleanVerificationDirectories } from './lib/verification-cleanup';
 
 const baseline = process.argv.includes('--baseline');
 const root = path.resolve('.');
 const output = path.join(root, 'artifacts/text-preview-pause', new Date().toISOString().replaceAll(':', '-'));
-await fs.mkdir(output, { recursive: true });
+const fixture = path.join(output, 'project');
+await fs.mkdir(fixture, { recursive: true });
 const wav = Buffer.alloc(44 + 8000 * 2 * 8);
 wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16);
 wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(8000, 24); wav.writeUInt32LE(16000, 28);
 wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(wav.length - 44, 40);
-await fs.writeFile(path.join(output, 'silence.wav'), wav);
+await fs.writeFile(path.join(fixture, 'silence.wav'), wav);
 const base = createProject('文本响应与暂停预览验收');
 base.assets.push({ id: 'music', name: '静音', path: 'silence.wav', kind: 'audio' });
-const source = '# 段落：正文【passage】\n' + Array.from({ length: 1500 }, (_, i) => `@等待：0.01\n${i === 1499 ? '@背景音乐：静音\n' : ''}旁白：第${i + 1}句，窗外灯火明灭，我们继续讲述这个故事。`).join('\n');
+const source = '# 段落：正文【passage】\n' + Array.from({ length: 1500 }, (_, i) => `@等待：0.01\n${i === 1499 ? '@背景音乐：静音\n@配音：静音\n' : ''}旁白：第${i + 1}句，窗外灯火明灭，我们继续讲述这个故事。`).join('\n');
 const parsed = applyTextScript(base, source);
 assert.deepEqual(parsed.issues, []);
-const projectFile = path.join(output, 'project.vns.json');
+const projectFile = path.join(fixture, 'project.vns.json');
 await fs.writeFile(projectFile, JSON.stringify(parsed.project));
 let app = await launchDesktopFixture({ root, projectFile, profile: path.join(output, 'profile') });
 let page = await app.firstWindow();
@@ -95,13 +97,19 @@ try {
       HTMLMediaElement.prototype.play = function () { state.previewMedia.push(this); return play.call(this); };
     });
     await page.getByRole('button', { name: '播放预览', exact: true }).click();
-    await expect.poll(() => page.evaluate(() => (window as unknown as { previewMedia: HTMLMediaElement[] }).previewMedia.some(audio => !audio.paused))).toBe(true);
+    await expect.poll(() => page.evaluate(() => (window as unknown as { previewMedia: HTMLMediaElement[] }).previewMedia.some(audio => !audio.isConnected && !audio.paused && audio.currentTime > .05))).toBe(true);
+    const bgm = page.getByLabel('试听音乐：静音', { exact: true });
+    expect(await bgm.evaluate(element => (element as HTMLAudioElement).paused)).toBe(true);
+    await bgm.evaluate(element => (element as HTMLAudioElement).play());
+    await expect.poll(() => bgm.evaluate(element => (element as HTMLAudioElement).currentTime)).toBeGreaterThan(.05);
+    await page.getByLabel('试听配音：静音', { exact: true }).evaluate(element => (element as HTMLAudioElement).play());
+    await expect.poll(() => page.evaluate(() => (window as unknown as { previewMedia: HTMLMediaElement[] }).previewMedia.filter(audio => !audio.paused).length)).toBe(3);
     await page.getByRole('button', { name: '暂停实时预览', exact: true }).click();
     await expect(page.locator('.story-preview-content')).toHaveAttribute('data-preview-phase', 'suspended');
     await expect(page.locator('.text-live-preview')).toHaveCount(0);
     await expect(page.locator('.passage-performances')).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => (window as unknown as { previewMedia: HTMLMediaElement[] }).previewMedia.every(audio => audio.paused))).toBe(true);
-    checks.push('暂停实时预览卸载画面和演出编辑区域，正在播放的音频全部停止。');
+    checks.push('播放预览只自动播放台词配音；BGM 手动试听。暂停实时预览卸载画面和演出编辑区域，并停止自动配音及两个手动播放器。');
     phase = 'paused typing';
     await input.press('Control+End');
     metrics.paused = await measureTyping(page, input, 'mnopqrstuvwx');
@@ -114,6 +122,8 @@ try {
     await input.press('Control+End');
     await page.getByRole('button', { name: '恢复实时预览', exact: true }).click();
     await expect(page.locator('.ui-dialogue-preview')).toContainText('abcdefghijklmnopqrstuvwx');
+    expect(await bgm.evaluate(element => (element as HTMLAudioElement).paused)).toBe(true);
+    await expect.poll(() => page.evaluate(() => (window as unknown as { previewMedia: HTMLMediaElement[] }).previewMedia.every(audio => audio.paused))).toBe(true);
     checks.push('暂停期间可持续输入、撤销和重做；恢复立即显示当前文本和选中台词。');
     phase = 'save and restore preference';
     await page.getByRole('button', { name: '暂停实时预览', exact: true }).click();
@@ -125,6 +135,7 @@ try {
     assert.equal(node.lines.length, 1500);
     assert.ok(node.lines.at(-1)!.text.endsWith('abcdefghijklmnopqrstuvwx'));
     assert.deepEqual(node.lines.at(-1)!.actions.map(action => action.kind), ['pause', 'music']);
+    assert.equal(node.lines.at(-1)!.voiceId, 'music');
     await page.screenshot({ path: path.join(output, 'preview-paused.png') });
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach(window => window.destroy()));
     await app.close();
@@ -149,5 +160,8 @@ try {
   throw error;
 } finally {
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach(window => window.destroy())).catch(() => {});
-  await app.close(); console.log(output);
+  await app.close();
+  const cleanup = await cleanVerificationDirectories(output, ['project', 'profile']);
+  assert.deepEqual(cleanup.errors, []);
+  console.log(output);
 }

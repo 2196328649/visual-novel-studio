@@ -35,9 +35,9 @@ test('Chinese semantic nodes, typed reusable calls, nested loops and resource li
   }
   assert.match(story, /transform vn_animate_/);
   assert.match(story, /vn_bp_number/);
-  assert.match(story, /while vn_bp_index_bp_outer <= vn_bp_last_bp_outer:\n        \$ vn_bp_index_bp_inner/);
+  assert.match(story, /while vn_bp_task_alive\(vn_bp_task\) and vn_bp_local\("vn_bp_index_bp_outer"\) <= vn_bp_local\("vn_bp_last_bp_outer"\):\n        if not vn_bp_task_alive\(vn_bp_task\):\n            \$ vn_bp_leave_frame\(\)\n            return\n        \$ vn_ui_lifecycle_require_operation\("forLoop", None\)\n        \$ vn_bp_index_bp_inner/);
   assert.match(story, /\$ vn_bp_result_bp_call_first_doubled = vn_bp_out_bp_values_doubled/);
-  assert.match(story, /\$ vn_var_first_result = vn_bp_result_bp_call_first_doubled/);
+  assert.match(story, /\$ vn_parameter_set\("first_result", vn_bp_local\("vn_bp_result_bp_call_first_doubled"\), False\)/);
   assert.match(story, /call vn_blueprint_bp_values\(2, False, "雨夜"\)/);
   assert.match(story, /call vn_blueprint_bp_values\(5, True, ""\)/);
   assert.match(result.files['game/screens.rpy'], /vn_music_entries/);

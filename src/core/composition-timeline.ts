@@ -1,7 +1,9 @@
+import { cloneData } from "./project-mutation";
 import { actionSchema, makeId, type BlueprintGraph, type BlueprintNode, type Project, type VariableValue, type VisualObject } from './model';
 import { rawSavedBlueprintAction } from './blueprint-authoring';
 import { arrangePerformanceTimeline, performanceTimeline, timelineNodeActions } from './performance-timeline';
-import { visualInstancePath } from './visual-selection';
+import { renewVisualIdentities, visualInstancePath } from './visual-selection';
+import { visualAtPath } from './visual-parameters';
 import { retimeVisualObject, setVisualPropertiesAt, toggleVisualKeyframe, updateVisualNodeObject, visualInputFields, visualPropertyAnimated, type VisualClipPatch, type VisualCurveProperty, type VisualTransformProperty } from './visual-object';
 
 export interface CompositionObjectView {
@@ -84,7 +86,7 @@ export function compositionFieldBinding(graph: BlueprintGraph, view: Composition
 
 /** Effect editors display the resolved clock; write only changed properties to the source clock. */
 export function editCompositionEffects(project: Project, graph: BlueprintGraph, nodeId: string, instanceId: string, next: VisualObject) {
-  const view = compositionObject(project, graph, nodeId, instanceId), object = structuredClone(view.object);
+  const view = compositionObject(project, graph, nodeId, instanceId), object = cloneData(view.object);
   const normalized = view.scale === 1 ? next : retimeVisualObject(next, next.duration / view.scale);
   for (const key of Object.keys(next) as (keyof VisualObject)[]) {
     if (JSON.stringify(next[key]) !== JSON.stringify(view.action[key])) (object as unknown as Record<string, unknown>)[key] = normalized[key];
@@ -92,12 +94,17 @@ export function editCompositionEffects(project: Project, graph: BlueprintGraph, 
   updateVisualNodeObject(view.node, object);
 }
 
-function writeField(graph: BlueprintGraph, view: CompositionObjectView, tail: (string | number)[], value: VariableValue) {
+function writeField(graph: BlueprintGraph, view: CompositionObjectView, tail: (string | number)[], value: VariableValue | undefined) {
   const binding = compositionFieldBinding(graph, view, tail);
   if (binding.computed) throw new Error('此属性由蓝图计算，请在组件连线中修改。');
-  if (binding.input) binding.input.defaultValue = value;
-  else if (binding.pinId) view.node.properties[binding.pinId] = value;
-  else throw new Error('当前对象没有此属性。');
+  if (!binding.pinId) throw new Error('当前对象没有此属性。');
+  if (value === undefined) {
+    // Reset the override, retaining the authored resource/parameter fallback.
+    // Public inputs cannot store undefined, so restore their pin's default.
+    delete view.node.properties[binding.pinId];
+    if (binding.input) binding.input.defaultValue = visualInputFields(view.root).find(field => 'object_' + field.key === binding.pinId)!.value;
+  } else if (binding.input) binding.input.defaultValue = value;
+  else view.node.properties[binding.pinId] = value;
 }
 
 export function setCompositionField(project: Project, graph: BlueprintGraph, nodeId: string, instanceId: string, tail: (string | number)[], value: VariableValue) {
@@ -130,7 +137,7 @@ export function setCompositionTiming(project: Project, graph: BlueprintGraph, no
 
 export function patchCompositionObject(project: Project, graph: BlueprintGraph, nodeId: string, instanceId: string, patch: VisualClipPatch) {
   const before = performanceTimeline(project, graph);
-  const view = compositionObject(project, graph, nodeId, instanceId), object = structuredClone(view.object);
+  const view = compositionObject(project, graph, nodeId, instanceId), object = cloneData(view.object);
   const { firstFrame, ...properties } = patch;
   for (const key of Object.keys(properties)) if (compositionFieldBinding(graph, view, [key]).computed) throw new Error('此属性由蓝图计算，请在组件连线中修改。');
   if (object.content === 'video' && properties.assetId !== undefined && properties.assetId !== view.action.assetId) {
@@ -138,10 +145,10 @@ export function patchCompositionObject(project: Project, graph: BlueprintGraph, 
     // Keep source metadata attached to the new asset even when its value is public.
     object.assetId = properties.assetId;
   }
-  const bound: [string, VariableValue][] = [];
+  const bound: [string, VariableValue | undefined][] = [];
   for (const [key, value] of Object.entries(properties)) {
     const binding = compositionFieldBinding(graph, view, [key]);
-    if (binding.pinId && value !== undefined && ['string', 'number', 'boolean'].includes(typeof value)) bound.push([key, value as VariableValue]);
+    if (binding.pinId && (value === undefined || ['string', 'number', 'boolean'].includes(typeof value))) bound.push([key, value as VariableValue | undefined]);
     else Object.assign(object, { [key]: value });
   }
   if (firstFrame) Object.assign(object.keyframes[0], firstFrame);
@@ -153,8 +160,11 @@ export function patchCompositionObject(project: Project, graph: BlueprintGraph, 
 
 export function setCompositionPose(project: Project, graph: BlueprintGraph, nodeId: string, instanceId: string, time: number, patch: Partial<Record<VisualTransformProperty, number>>) {
   const view = compositionObject(project, graph, nodeId, instanceId);
-  if (!Number.isFinite(time) || time < view.at || time >= view.until) throw new Error('请把播放头移到片段的可见区间内。');
-  const object = structuredClone(view.object), local = (time - view.at) / view.scale;
+  // A property without keyframes has one value for the whole clip, so it can be
+  // edited from anywhere; only animated properties need a time inside the clip.
+  const outside = !Number.isFinite(time) || time < view.at || time >= view.until;
+  if (outside && (Object.keys(patch) as VisualTransformProperty[]).some(key => visualPropertyAnimated(view.object, key))) throw new Error('请把播放头移到片段的可见区间内。');
+  const object = cloneData(view.object), local = outside ? 0 : (time - view.at) / view.scale;
   for (const key of Object.keys(patch) as VisualTransformProperty[]) {
     const value = patch[key]!;
     if (!Number.isFinite(value)) throw new Error('属性值必须是有限数值。');
@@ -167,7 +177,7 @@ export function setCompositionPose(project: Project, graph: BlueprintGraph, node
 export function toggleCompositionKeyframe(project: Project, graph: BlueprintGraph, nodeId: string, instanceId: string, time: number, key: VisualTransformProperty) {
   const view = compositionObject(project, graph, nodeId, instanceId);
   if (!Number.isFinite(time) || time < view.at || time >= view.until) throw new Error('请把播放头移到片段的可见区间内。');
-  const object = structuredClone(view.object), duration = object.duration;
+  const object = cloneData(view.object), duration = object.duration;
   // A non-retimed duration override may extend past the authored duration.
   object.duration = view.action.duration / view.scale;
   toggleVisualKeyframe(object, (time - view.at) / view.scale, key);
@@ -176,7 +186,7 @@ export function toggleCompositionKeyframe(project: Project, graph: BlueprintGrap
 }
 
 export function setCompositionCurve(project: Project, graph: BlueprintGraph, nodeId: string, instanceId: string, key: VisualCurveProperty, frames: NonNullable<VisualObject['curves']>[VisualCurveProperty]) {
-  const view = compositionObject(project, graph, nodeId, instanceId), object = structuredClone(view.object);
+  const view = compositionObject(project, graph, nodeId, instanceId), object = cloneData(view.object);
   object.curves = { ...object.curves };
   if (frames?.length) object.curves[key] = frames.map(frame => ({ ...frame, at: frame.at / view.scale, value: key === 'rippleSpeed' ? frame.value * view.scale : frame.value })).sort((a, b) => a.at - b.at);
   else delete object.curves[key];
@@ -189,7 +199,7 @@ export function addCompositionChild(project: Project, graph: BlueprintGraph, nod
   const view = compositionObject(project, graph, nodeId, groupId);
   if (view.object.content !== 'group' || (view.object.children?.length ?? 0) >= 128) throw new Error('组合最多容纳 128 个对象。');
   if (!Number.isFinite(startAt) || startAt < 0) throw new Error('开始时间必须是有限的非负数。');
-  const object = structuredClone(view.object);
+  const object = cloneData(view.object);
   const sourceLimit = child.content === 'video' && child.sourceDuration !== undefined ? Math.max(0, child.sourceDuration - (child.mediaOffset ?? 0)) : Infinity;
   const added = retimeVisualObject(child, Math.min(child.duration, sourceLimit, Math.max(.05, view.action.duration - startAt)) / view.scale);
   added.startAt = startAt / view.scale;
@@ -200,7 +210,7 @@ export function addCompositionChild(project: Project, graph: BlueprintGraph, nod
 }
 
 export function removeCompositionChild(project: Project, graph: BlueprintGraph, nodeId: string, groupId: string, instanceId: string) {
-  const view = compositionObject(project, graph, nodeId, groupId), object = structuredClone(view.object);
+  const view = compositionObject(project, graph, nodeId, groupId), object = cloneData(view.object);
   if (!object.children?.some(child => child.instanceId === instanceId)) throw new Error('找不到组合内的片段。');
   object.children = object.children.filter(child => child.instanceId !== instanceId);
   updateVisualNodeObject(view.node, object);
@@ -214,35 +224,66 @@ export function reorderCompositionChild(project: Project, graph: BlueprintGraph,
   if (before < 0 || !Number.isInteger(index) || index < 0 || index >= children.length) throw new Error('轨道位置无效。');
   const [moved] = children.splice(before, 1); children.splice(index, 0, moved);
   const layers = new Map(children.map((child, i) => [child.object.instanceId, children.length - i - 1]));
-  const object = structuredClone(model.group.object);
+  const object = cloneData(model.group.object);
   object.children!.forEach(child => { child.layer = layers.get(child.instanceId)!; });
   updateVisualNodeObject(model.group.node, object);
 }
 
 export function duplicateCompositionChild(project: Project, graph: BlueprintGraph, nodeId: string, groupId: string, instanceId: string) {
-  const model = compositionTimeline(project, graph, nodeId, groupId), source = model.children.find(child => child.object.instanceId === instanceId);
-  if (!source || model.children.length >= 128) throw new Error('无法复制此片段。');
-  const duplicate = structuredClone(source.object);
-  const ids = new Map<string, string>();
-  const identify = (object: VisualObject) => { ids.set(object.instanceId, makeId('object')); object.children?.forEach(identify); }; identify(duplicate);
-  const renew = (object: VisualObject) => { object.instanceId = ids.get(object.instanceId)!; object.parameters?.forEach(parameter => parameter.targets.forEach(target => { target.instanceId = ids.get(target.instanceId) ?? target.instanceId; })); object.children?.forEach(renew); };
-  renew(duplicate); duplicate.name = (duplicate.name + ' 副本').slice(0, 120);
-  const parent = structuredClone(model.group.object), newIndex = parent.children!.length;
-  parent.children!.push(duplicate);
-  const prefix = source.path.flatMap(index => ['children', index]);
-  const oldFields = visualInputFields(source.root).filter(field => prefix.every((part, i) => field.path[i] === part));
-  updateVisualNodeObject(source.node, parent);
-  const root = actionSchema.parse(JSON.parse(String(source.node.properties.action))) as VisualObject;
-  const nextPrefix = [...model.group.path.flatMap(index => ['children', index]), 'children', newIndex];
-  const newFields = visualInputFields(root);
-  // Copies retain live inputs, including shared text used by particle sources.
-  for (const old of oldFields) {
-    const nextPath = [...nextPrefix, ...old.path.slice(prefix.length)];
-    const next = newFields.find(field => JSON.stringify(field.path) === JSON.stringify(nextPath))!;
-    const oldPin = 'object_' + old.key, nextPin = 'object_' + next.key;
-    if (source.node.properties[oldPin] !== undefined) source.node.properties[nextPin] = source.node.properties[oldPin];
-    for (const link of graph.links.filter(link => link.toNodeId === nodeId && link.toPinId === oldPin)) graph.links.push({ ...link, id: makeId('link'), toPinId: nextPin });
+  return duplicateCompositionSelection(project, graph, nodeId, groupId, [instanceId])[0];
+}
+
+/** Copy a selection in one edit, keeping each clip's clock and relative painting order. */
+export function duplicateCompositionSelection(project: Project, graph: BlueprintGraph, nodeId: string, groupId: string, instanceIds: string[]) {
+  const model = compositionTimeline(project, graph, nodeId, groupId), selected = new Set(instanceIds);
+  const sources = model.children.filter(child => selected.has(child.object.instanceId));
+  if (!sources.length || sources.length !== selected.size) throw new Error('所选片段已不存在，请重新选择。');
+  if (model.children.length + sources.length > 128) throw new Error('组合最多容纳 128 个对象，请减少要复制的片段。');
+  if (model.group.object.compositionId) throw new Error('请先打开组合资源，或转为本地组合。');
+
+  const root = cloneData(model.group.root), parent = visualAtPath(root, model.group.path), ids = new Map<string, string>();
+  const copies = sources.map(source => {
+    const object = renewVisualIdentities(cloneData(source.object), id => {
+      const next = makeId('object'); ids.set(id, next); return next;
+    });
+    object.name = (object.name + ' 副本').slice(0, 120);
+    const index = parent.children!.length; parent.children!.push(object);
+    return { source, object, index };
+  });
+  // Ancestor parameters that controlled a source also control its copy. A copied
+  // group's own parameter targets were remapped within its fresh identity tree.
+  let ancestor = root;
+  for (let depth = 0; depth <= model.group.path.length; depth++) {
+    for (const parameter of ancestor.parameters ?? []) {
+      const targets = parameter.targets.flatMap(target => ids.has(target.instanceId) ? [{ ...target, instanceId: ids.get(target.instanceId)! }] : []);
+      if (parameter.targets.length + targets.length > 128) throw new Error('复制后，同一组合参数控制的属性超过 128 项，请减少要复制的片段。');
+      parameter.targets.push(...targets);
+    }
+    if (depth < model.group.path.length) ancestor = ancestor.children![model.group.path[depth]];
   }
-  reorderCompositionChild(project, graph, nodeId, groupId, duplicate.instanceId, model.children.indexOf(source));
-  return duplicate.instanceId;
+  const copyIds = new Map(copies.map(copy => [copy.source.object.instanceId, copy.object.instanceId]));
+  const order = model.children.flatMap(child => {
+    const id = child.object.instanceId, copyId = copyIds.get(id);
+    return copyId ? [copyId, id] : [id];
+  });
+  const layers = new Map(order.map((id, index) => [id, order.length - index - 1]));
+  parent.children!.forEach(child => { child.layer = layers.get(child.instanceId)!; });
+
+  const oldFields = visualInputFields(model.group.root), newFields = new Map(visualInputFields(root).map(field => [JSON.stringify(field.path), field]));
+  const inputs = copies.flatMap(({ source, index }) => {
+    const prefix = source.path.flatMap(index => ['children', index]);
+    const nextPrefix = [...model.group.path.flatMap(index => ['children', index]), 'children', index];
+    return oldFields.filter(field => prefix.every((part, i) => field.path[i] === part)).map(field => {
+      const next = newFields.get(JSON.stringify([...nextPrefix, ...field.path.slice(prefix.length)]));
+      if (!next) throw new Error('无法保留复制片段的参数。');
+      const oldPin = 'object_' + field.key, pinId = 'object_' + next.key;
+      return { pinId, value: model.group.node.properties[oldPin], links: graph.links.filter(link => link.toNodeId === nodeId && link.toPinId === oldPin) };
+    });
+  });
+  updateVisualNodeObject(model.group.node, root);
+  for (const input of inputs) {
+    if (input.value !== undefined) model.group.node.properties[input.pinId] = input.value;
+    graph.links.push(...input.links.map(link => ({ ...link, id: makeId('link'), toPinId: input.pinId })));
+  }
+  return copies.map(copy => copy.object.instanceId);
 }

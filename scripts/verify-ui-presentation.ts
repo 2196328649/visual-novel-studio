@@ -1,3 +1,4 @@
+import { setUiCanvasPreview } from './lib/ui-design-controls';
 import { openStoryMode } from './lib/story-workspace';
 import { chromium, expect, type Page } from '@playwright/test';
 import { createServer } from 'vite';
@@ -152,7 +153,7 @@ try {
   await page.waitForTimeout(950);
   await page.locator('.ui-canvas').screenshot({ path: path.join(output, 'chapter-preview.png') });
   await expect(page.getByLabel('章节进场预览', { exact: true })).toHaveCount(0, { timeout: 6000 });
-  await page.getByLabel('预览章节', { exact: true }).selectOption('ai_title_two');
+  await setUiCanvasPreview(page, '预览章节', 'ai_title_two');
   await expect(page.locator('.ui-canvas .ui-chapter-text img')).toHaveAttribute('src', /ai_presentation_title_two.png/);
   await expect(page.locator('.chapter-backdrop-card').first()).toHaveCSS('mask-image', /ai_presentation_mask.png/);
   await page.locator('.ui-canvas').screenshot({ path: path.join(output, 'chapter-two-design.png') });

@@ -1,3 +1,4 @@
+import { cloneData } from "../core/project-mutation";
 import type { ProjectSession, StudioBridge } from "../core/bridge";
 import { version as studioVersion } from "../../package.json";
 import { exportSettings } from '../core/export-settings';
@@ -5,6 +6,7 @@ import { exportText } from '../core/text-exchange';
 import { normalizeChapterCompositions } from '../core/chapter-composition';
 import { migrateLegacyEndings } from '../core/ending-migration';
 import { normalizeGeneratedChapterBlueprints } from '../core/chapter-performances';
+import { projectRecoveryOptionsSchema } from '../core/project-draft-schema';
 import {
   createProject,
   makeId,
@@ -46,7 +48,14 @@ export const browserBridge: StudioBridge = {
     const raw = localStorage.getItem(key);
     if (raw) {
       try {
-        return session(JSON.parse(raw));
+        const saved = JSON.parse(raw);
+        if (saved.project) {
+          const options = projectRecoveryOptionsSchema.parse(saved);
+          const result = session(saved.project);
+          if (options.uiDraft && options.uiDraft.id !== result.project.id) throw new Error('恢复草稿不属于此工程。');
+          return { ...result, recovered: true, uiDraft: options.uiDraft, recoveredProjectDirty: options.projectDirty ?? true };
+        }
+        return session(saved);
       } catch {
         /* An invalid browser draft must not stop the editor from opening. */
       }
@@ -60,6 +69,8 @@ export const browserBridge: StudioBridge = {
       : null;
   },
   async save(project) {
+    const saved = session(project);
+    project = saved.project;
     localStorage.setItem(key, JSON.stringify(project));
     const url = URL.createObjectURL(
       new Blob([JSON.stringify(project, null, 2)], {
@@ -71,11 +82,11 @@ export const browserBridge: StudioBridge = {
     anchor.download = `${project.name}.vns.json`;
     anchor.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    return session(project);
+    return saved;
   },
-  async autosave(project) {
-    localStorage.setItem(key, JSON.stringify(project));
-    return { savedAt: Date.now() };
+  async autosave(project, options = {}) {
+    localStorage.setItem(key, JSON.stringify(options.clear ? project : { project, ...options }));
+    return { savedAt: options.clear ? 0 : Date.now() };
   },
   async importAssets(project, options) {
     const files = await chooseFiles(
@@ -83,7 +94,7 @@ export const browserBridge: StudioBridge = {
       !options?.single,
     );
     if (!files.length) return null;
-    const next = structuredClone(project);
+    const next = cloneData(project);
     for (const file of files) {
       const dataUrl = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
